@@ -1,0 +1,16 @@
+[package]
+name = "prgtkrs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+gtk = { version = "*", features = ["v3_22"] }
+glib = "*"
+glium = { version = "*", default_features = false }
+gl_loader = "*"
+cgmath = "*"
+
+[patch.crates-io]
+glium = { path = "./glium-0.31.0" }

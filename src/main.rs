@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 mod waveobj;
+mod tessellate;
 
 fn main() {
     std::env::set_var("GTK_CSD", "0");
@@ -16,6 +17,7 @@ fn main() {
     theme.append_search_path("xxxx");
 
     let w = gtk::Window::new(gtk::WindowType::Toplevel);
+    w.set_default_size(800, 600);
     w.connect_destroy(move |_| {
         gtk::main_quit();
     });
@@ -138,23 +140,13 @@ void main(void) {
                 }
             })
             .collect::<Vec<_>>();
-        match face.len() {
-            0 | 1 | 2 => { /* ??? */ }
-            3 => {
-                vs.extend(face);
-            }
-            4 => {
-                vs.push(face[0]);
-                vs.push(face[1]);
-                vs.push(face[2]);
 
-                vs.push(face[0]);
-                vs.push(face[2]);
-                vs.push(face[3]);
-            }
-            _ => {
-
-            }
+        let points = face.iter().map(|v| cgmath::Vector3::new(v.pos[0], v.pos[1], v.pos[2])).collect::<Vec<_>>();
+        let tris = tessellate::tessellate(&points);
+        for (a, b, c) in tris {
+            vs.push(face[a]);
+            vs.push(face[b]);
+            vs.push(face[c]);
         }
     }
 
@@ -220,6 +212,8 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
             write: true,
             .. Default::default()
         },
+        //line_width: Some(2.0),
+        //smooth: Some(glium::Smooth::Nicest),
         .. Default::default()
     };
     frm.draw(&vs, &idxs, &ctx.prg, &u, &dp).unwrap();

@@ -11,6 +11,7 @@ glib = "*"
 glium = { version = "*", default_features = false }
 gl_loader = "*"
 cgmath = "*"
+anyhow = "*"
 
 [patch.crates-io]
 glium = { path = "./glium-0.31.0" }

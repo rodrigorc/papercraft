@@ -6,6 +6,8 @@ use gtk::gdk;
 use std::rc::Rc;
 use std::cell::RefCell;
 
+mod waveobj;
+
 fn main() {
     std::env::set_var("GTK_CSD", "0");
     gtk::init().expect("gtk::init");
@@ -78,118 +80,107 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     }*/
 
     let vsh = r"
+#version 150
+
 uniform mat4 m;
 uniform mat4 mnormal;
-uniform vec4 light;
-attribute vec3 pos;
-attribute vec3 normal;
 
-varying vec3 v_color;
+uniform vec4 lights[2];
+in vec3 pos;
+in vec3 normal;
+
+out float v_color;
 
 void main(void) {
     gl_Position = m * vec4(pos, 1.0);
-    vec4 obj_normal = mnormal * vec4(normal, 0.0);
-    float c = dot(obj_normal, light);
-    if (c < 0.0)
-        v_color = vec3(-c, 0.0, 0.0);
-    else
-        v_color = vec3(0.0, 0.0, c);
+    vec4 obj_normal = normalize(mnormal * vec4(normal, 0.0));
+
+    float color = 0.2;
+    for (int i = 0; i < 2; ++i) {
+        float diffuse = max(abs(dot(obj_normal, -lights[i])), 0.0);
+        color += diffuse;
+    }
+    v_color = color;
 }
 ";
     let fsh = r"
-varying vec3 v_color;
+#version 150
+
+in float v_color;
+out vec4 out_frag_color;
 
 void main(void) {
-    gl_FragColor = vec4(v_color.rgb, 1.0);
+    vec3 base;
+    if (gl_FrontFacing)
+        base = vec3(1.0, 1.0, 1.0);
+    else
+        base = vec3(0.8, 0.3, 0.3);
+    out_frag_color = vec4(v_color * base, 1.0);
 }
 ";
     let prg = glium::Program::from_source(&glctx, vsh, fsh, None).unwrap();
 
-    use std::io::BufRead;
-
     let f = std::fs::File::open("v2.obj").unwrap();
     let f = std::io::BufReader::new(f);
-    let mut pos = Vec::new();
-    let mut normals = Vec::new();
+    let m = waveobj::Model::from_reader(f).unwrap();
+    let model = m.get(0).unwrap();
+
     let mut vs = Vec::new();
-    for line in f.lines() {
-        let line = line.unwrap();
-        let line = line.trim();
+    for face in model.faces() {
 
-        if line.is_empty() || line.starts_with("#") {
-            continue;
-        }
-        let mut words = line.split(' ');
-        let first = words.next().unwrap();
-        match first {
-            "o" => {
-                let name = words.next().unwrap();
-                dbg!(name);
-            }
-            "v" => {
-                let x: f32 = words.next().unwrap().parse().unwrap();
-                let y: f32 = words.next().unwrap().parse().unwrap();
-                let z: f32 = words.next().unwrap().parse().unwrap();
-                pos.push([x, y, z]);
-            }
-            "vt" => {
-            }
-            "vn" => {
-                let x: f32 = words.next().unwrap().parse().unwrap();
-                let y: f32 = words.next().unwrap().parse().unwrap();
-                let z: f32 = words.next().unwrap().parse().unwrap();
-                normals.push([x, y, z]);
-            }
-            "f" => {
-                let words = words.collect::<Vec<_>>();
-                match words.len() {
-                    3 => {
-                        for word in &words {
-                            vs.push(parse_vertex(word, &pos, &normals));
-                        }
-                    }
-                    4 => {
-                        let vf = words.iter().map(|s| parse_vertex(s, &pos, &normals)).collect::<Vec<_>>();
-                        vs.push(vf[0]);
-                        vs.push(vf[1]);
-                        vs.push(vf[2]);
-
-                        vs.push(vf[0]);
-                        vs.push(vf[2]);
-                        vs.push(vf[3]);
-
-                    }
-                    _ => {} //TODO triangulate
+        let face = face.indices()
+            .iter()
+            .map(|&idx| {
+                let v = model.vertex_by_index(idx);
+                MVertex {
+                    pos: *v.pos(),
+                    normal: *v.normal(),
                 }
+            })
+            .collect::<Vec<_>>();
+        match face.len() {
+            0 | 1 | 2 => { /* ??? */ }
+            3 => {
+                vs.extend(face);
             }
-            p => {
-                println!("{}??", p);
+            4 => {
+                vs.push(face[0]);
+                vs.push(face[1]);
+                vs.push(face[2]);
+
+                vs.push(face[0]);
+                vs.push(face[2]);
+                vs.push(face[3]);
+            }
+            _ => {
+
             }
         }
     }
+
     *ctx = Some(MyContext { glctx, prg, vs, r: 0.0 });
-}
-
-fn parse_vertex(s: &str, pos: &[[f32; 3]], normals: &[[f32; 3]]) -> MVertex {
-    let mut vals = s.split('/');
-    let v = vals.next().unwrap().parse::<usize>().unwrap() - 1;
-    let _t = vals.next().unwrap().parse::<usize>().unwrap() - 1;
-    let n = vals.next().unwrap().parse::<usize>().unwrap() - 1;
-
-    let v = pos[v];
-    let n = normals[n];
-
-    //let c = (n[0] * 0.5 + n[1] * 0.4 + n[2] * 0.2).max(0.0) + 0.4;
-
-    MVertex {
-        pos: v,
-        normal: n,
-    }
 }
 
 fn gl_unrealize(_w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     let mut ctx = ctx.borrow_mut();
     *ctx = None;
+}
+
+struct MyUniforms {
+    m: cgmath::Matrix4<f32>,
+    mnormal: cgmath::Matrix4<f32>,
+    lights: [cgmath::Vector4<f32>; 2],
+}
+
+impl glium::uniforms::Uniforms for MyUniforms {
+    fn visit_values<'a, F: FnMut(&str, glium::uniforms::UniformValue<'a>)>(&'a self, mut visit: F) {
+        use glium::uniforms::UniformValue::*;
+
+        visit("m", Mat4(array4x4(self.m)));
+        visit("mnormal", Mat4(array4x4(self.mnormal)));
+        visit("lights[0]", Vec4(array4(self.lights[0])));
+        visit("lights[1]", Vec4(array4(self.lights[1])));
+    }
 }
 
 fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyContext>>>) -> gtk::Inhibit {
@@ -200,25 +191,27 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
 
     use glium::Surface;
 
-    frm.clear_color_and_depth((0.3, 0.3, 0.3, 1.0), 1.0);
+    frm.clear_color_and_depth((0.2, 0.2, 0.4, 1.0), 1.0);
 
     let vs = glium::VertexBuffer::new(&ctx.glctx, &ctx.vs).unwrap();
     let idxs = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
     //let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &ctx.faces).unwrap();
 
     let ratio = (rect.width as f32) / (rect.height as f32);
-    let persp = cgmath::perspective(cgmath::Deg(90.0), ratio, 10.0, 100.0);
+    let persp = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
     let r = cgmath::Matrix4::from_angle_y(cgmath::Deg(ctx.r));
     let t = cgmath::Matrix4::<f32>::from_translation(cgmath::Vector3::new(4.0, -10.0, -30.0));
     let s = cgmath::Matrix4::<f32>::from_scale(0.1);
 
-    let light = cgmath::Vector4::new(0.5, 0.4, 0.8, 0.0f32).normalize();
+    let light0 = cgmath::Vector4::new(-0.5, -0.4, -0.8, 0.0f32).normalize() * 0.55;
+    let light1 = cgmath::Vector4::new(0.8, 0.2, 0.4, 0.0f32).normalize() * 0.25;
 
-    let u = glium::uniform!{
-        m: array4x4(persp * t * r * s),
-        mnormal: array4x4(r), //should be transpose of inverse
-        light: array4(light),
+    let u = MyUniforms {
+        m: persp * t * r * s,
+        mnormal: r, //should be transpose of inverse
+        lights: [light0, light1],
     };
+
     let dp = glium::DrawParameters {
         viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width as u32, height: rect.height as u32}),
         blend: glium::Blend::alpha_blending(),

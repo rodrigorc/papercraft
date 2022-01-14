@@ -1,5 +1,5 @@
-use cgmath::{InnerSpace, Quaternion, One, Transform};
-use cgmath::conv::{array4x4, array4};
+use cgmath::{InnerSpace, Quaternion, One, Transform, SquareMatrix, EuclideanSpace};
+use cgmath::conv::{array4x4, array3x3, array3};
 use glium::draw_parameters::PolygonOffset;
 use glium::uniforms::AsUniformValue;
 use gtk::prelude::*;
@@ -36,8 +36,52 @@ fn main() {
             w.grab_focus();
             if let Some(ctx) = ctx.borrow_mut().as_mut() {
                 ctx.last_cursor_pos = ev.position();
+
+                if ev.button() == 1 {
+                    let rect = w.allocation();
+                    let (x, y) = ev.position();
+                    let x = (x as f32 / rect.width as f32) * 2.0 - 1.0;
+                    let y = -((y as f32 / rect.height as f32) * 2.0 - 1.0);
+                    let click = cgmath::Point3::new(x as f32, y as f32, 1.0);
+
+                    let ratio = (rect.width as f32) / (rect.height as f32);
+                    let persp: cgmath::Matrix4<f32> = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
+                    let r = cgmath::Matrix3::from(ctx.rotation);
+                    let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
+                    let s = cgmath::Matrix4::<f32>::from_scale(ctx.scale);
+                    let obj = t * cgmath::Matrix4::from(r) * s;
+                    let persp_inv = persp.invert().unwrap();
+                    let obj_inv = obj.invert().unwrap();
+
+                    let click_camera = persp_inv.transform_point(click);
+                    let click_obj = obj_inv.transform_point(click_camera);
+                    let camera_obj = obj_inv.transform_point(cgmath::Point3::new(0.0, 0.0, 0.0));
+
+                    let ray = (camera_obj.to_vec(), click_obj.to_vec());
+
+                    let mut hit = None;
+                    //should use faces, not tris
+                    for (iface, face) in ctx.idx_solid.chunks_exact(3).enumerate() {
+                        let v1 = ctx.vs[face[0] as usize].pos.into();
+                        let v2 = ctx.vs[face[1] as usize].pos.into();
+                        let v3 = ctx.vs[face[2] as usize].pos.into();
+
+                        let new_hit = util_3d::ray_crosses_face(ray, &[v1, v2, v3]);
+                        if new_hit.is_some() {
+                            dbg!(new_hit);
+                        }
+                        hit = match (hit, new_hit) {
+                            (Some((_, p)), Some(x)) if p > x && x > 0.0 => Some((iface, x)),
+                            (None, Some(x)) if x > 0.0 => Some((iface, x)),
+                            (old, _) => old
+                        };
+                    }
+                    dbg!(hit);
+                    ctx.selected = hit.map(|(iface, _)| iface);
+                    w.queue_render();
+                }
             }
-            Inhibit(true)
+            Inhibit(false)
         }
     });
     gl.connect_scroll_event({
@@ -134,9 +178,9 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
 #version 150
 
 uniform mat4 m;
-uniform mat4 mnormal;
+uniform mat3 mnormal;
 
-uniform vec4 lights[2];
+uniform vec3 lights[2];
 in vec3 pos;
 in vec3 normal;
 in vec2 uv;
@@ -146,7 +190,7 @@ out float v_light;
 
 void main(void) {
     gl_Position = m * vec4(pos, 1.0);
-    vec4 obj_normal = normalize(mnormal * vec4(normal, 0.0));
+    vec3 obj_normal = normalize(mnormal * normal);
 
     float light = 0.2;
     for (int i = 0; i < 2; ++i) {
@@ -188,7 +232,7 @@ void main(void) {
     let prg_solid = glium::Program::from_source(&glctx, vsh, fsh_solid, None).unwrap();
     let prg_line = glium::Program::from_source(&glctx, vsh, fsh_line, None).unwrap();
 
-    let f = std::fs::File::open("pikachu.obj").unwrap();
+    let f = std::fs::File::open("v2.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
     let model = models.get(0).unwrap();
@@ -233,7 +277,7 @@ void main(void) {
         .iter()
         .map(|v| {
             let pos = v.pos();
-            cgmath::Vector3::new(pos[0], pos[1], pos[2])
+            cgmath::Vector3::from(*pos)
         }));
     let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
     let mscale = cgmath::Matrix4::<f32>::from_scale(1.0 / size);
@@ -245,10 +289,10 @@ void main(void) {
         .iter()
         .map(|v| {
             let pos = v.pos();
-            let pos = m.transform_point(cgmath::Point3::new(pos[0], pos[1], pos[2]));
+            let pos = m.transform_point(cgmath::Point3::from(*pos));
             let uv = v.uv();
             MVertex {
-                pos: [pos.x, pos.y, pos.z],
+                pos: pos.into(),
                 normal: *v.normal(),
                 uv: [uv[0], 1.0 - uv[1]],
             }
@@ -263,7 +307,7 @@ void main(void) {
             .map(|&idx| {
                 let v = model.vertex_by_index(idx);
                 let pos = v.pos();
-                cgmath::Vector3::new(pos[0], pos[1], pos[2])
+                cgmath::Vector3::from(*pos)
             })
             .collect::<Vec<_>>();
 
@@ -288,6 +332,7 @@ void main(void) {
         idx_lines,
         textures,
         material: model.material().map(String::from),
+        selected: None,
 
         last_cursor_pos: (0.0, 0.0),
         rotation: Quaternion::one(),
@@ -303,8 +348,8 @@ fn gl_unrealize(_w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
 
 struct MyUniforms<'a> {
     m: cgmath::Matrix4<f32>,
-    mnormal: cgmath::Matrix4<f32>,
-    lights: [cgmath::Vector4<f32>; 2],
+    mnormal: cgmath::Matrix3<f32>,
+    lights: [cgmath::Vector3<f32>; 2],
     texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
 }
 
@@ -313,9 +358,9 @@ impl glium::uniforms::Uniforms for MyUniforms<'_> {
         use glium::uniforms::UniformValue::*;
 
         visit("m", Mat4(array4x4(self.m)));
-        visit("mnormal", Mat4(array4x4(self.mnormal)));
-        visit("lights[0]", Vec4(array4(self.lights[0])));
-        visit("lights[1]", Vec4(array4(self.lights[1])));
+        visit("mnormal", Mat3(array3x3(self.mnormal)));
+        visit("lights[0]", Vec3(array3(self.lights[0])));
+        visit("lights[1]", Vec3(array3(self.lights[1])));
         visit("tex", self.texture.as_uniform_value());
     }
 }
@@ -334,24 +379,25 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
 
     let ratio = (rect.width as f32) / (rect.height as f32);
     let persp = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
-    let r = cgmath::Matrix4::from(ctx.rotation);
+    let r = cgmath::Matrix3::from(ctx.rotation);
     let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
     let s = cgmath::Matrix4::<f32>::from_scale(ctx.scale);
 
-    let light0 = cgmath::Vector4::new(-0.5, -0.4, -0.8, 0.0f32).normalize() * 0.55;
-    let light1 = cgmath::Vector4::new(0.8, 0.2, 0.4, 0.0f32).normalize() * 0.25;
+    let light0 = cgmath::Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
+    let light1 = cgmath::Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
     let mat_name = ctx.material.as_deref().unwrap_or("");
     let texture = ctx.textures.get(mat_name)
         .unwrap_or(ctx.textures.get("").unwrap());
 
-    let u = MyUniforms {
-        m: persp * t * r * s,
+    let mut u = MyUniforms {
+        m: persp * t * cgmath::Matrix4::from(r) * s,
         mnormal: r, //should be transpose of inverse
         lights: [light0, light1],
         texture: texture.sampled(),
     };
 
+    // Draw de textured polys
     let mut dp = glium::DrawParameters {
         viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width as u32, height: rect.height as u32}),
         blend: glium::Blend::alpha_blending(),
@@ -374,6 +420,15 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
         .. PolygonOffset::default()
     };
     frm.draw(&vs, &idxs, &ctx.prg_solid, &u, &dp).unwrap();
+
+    if let &Some(sel) = &ctx.selected {
+        let idxs = [ctx.idx_solid[3 * sel], ctx.idx_solid[3*sel + 1], ctx.idx_solid[3*sel + 2]];
+        let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &idxs).unwrap();
+        u.texture = ctx.textures.get("").unwrap().sampled();
+        frm.draw(&vs, &idxs, &ctx.prg_solid, &u, &dp).unwrap();
+    }
+
+    // Draw the lines:
 
     //dp.color_mask = (true, true, true, true);
     dp.polygon_offset = PolygonOffset::default();
@@ -420,6 +475,7 @@ struct MyContext {
     idx_lines: Vec<u32>,
     textures: HashMap<String, glium::Texture2d>,
     material: Option<String>,
+    selected: Option<usize>,
 
     last_cursor_pos: (f64, f64),
 

@@ -102,3 +102,41 @@ pub fn bounding_box(vs: impl IntoIterator<Item=Vector3<f32>>) -> (Vector3<f32>, 
     }
     (a, b)
 }
+
+pub fn ray_crosses_face(ray: (Vector3<f32>, Vector3<f32>), vs: &[Vector3<f32>; 3]) -> Option<f32> {
+    // Möller-Trumbore algorithm
+
+    let v0v1 = vs[1] - vs[0];
+    let v0v2 = vs[2] - vs[0];
+    let dir = ray.1 - ray.0;
+    let pvec = dir.cross(v0v2);
+    let det = v0v1.dot(pvec);
+
+    //backface culling?
+    /*if (det < 0.0001) {
+        return None;
+    }*/
+
+    // ray and triangle are parallel if det is close to 0
+    if det.abs() < std::f32::EPSILON {
+        return None;
+    }
+
+    let inv_det = 1.0 / det;
+
+    let tvec = ray.0 - vs[0];
+    let u = tvec.dot(pvec) * inv_det;
+    if u < 0.0 || u > 1.0 {
+        return None;
+    }
+
+    let qvec = tvec.cross(v0v1);
+    let v = dir.dot(qvec) * inv_det;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+
+    let t = v0v2.dot(qvec) * inv_det;
+
+    Some(t)
+}

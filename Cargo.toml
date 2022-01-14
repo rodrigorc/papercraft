@@ -1,5 +1,5 @@
 [package]
-name = "prgtkrs"
+name = "papercraft"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,6 +12,7 @@ glium = { version = "*", default_features = false }
 gl_loader = "*"
 cgmath = "*"
 anyhow = "*"
+gdk-pixbuf = "*"
 
 [patch.crates-io]
 glium = { path = "./glium-0.31.0" }

@@ -1,13 +1,16 @@
-use cgmath::InnerSpace;
+use cgmath::{InnerSpace, Quaternion, One, Transform};
 use cgmath::conv::{array4x4, array4};
+use glium::draw_parameters::PolygonOffset;
+use glium::uniforms::AsUniformValue;
 use gtk::prelude::*;
 //use cgmath::prelude::*;
-use gtk::gdk;
+use gtk::gdk::{self, EventMask};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 
 mod waveobj;
-mod tessellate;
+mod util_3d;
 
 fn main() {
     std::env::set_var("GTK_CSD", "0");
@@ -24,7 +27,69 @@ fn main() {
     gl_loader::init_gl();
     let gl = gtk::GLArea::new();
     gl.set_has_depth_buffer(true);
-    let ctx = Rc::new(RefCell::new(None));
+    let ctx: Rc<RefCell<Option<MyContext>>> = Rc::new(RefCell::new(None));
+
+    gl.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
+    gl.connect_button_press_event({
+        let ctx = ctx.clone();
+        move |w, ev|  {
+            w.grab_focus();
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                ctx.last_cursor_pos = ev.position();
+            }
+            Inhibit(true)
+        }
+    });
+    gl.connect_scroll_event({
+        let ctx = ctx.clone();
+        let gl = gl.clone();
+        move |_w, ev|  {
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                let dz = match ev.direction() {
+                    gdk::ScrollDirection::Up => 1.1,
+                    gdk::ScrollDirection::Down => 1.0 / 1.1,
+                    _ => 0.0
+                };
+                ctx.scale *= dz;
+                gl.queue_render();
+            }
+            Inhibit(true)
+        }
+    });
+    gl.connect_motion_notify_event({
+        let ctx = ctx.clone();
+        let gl = gl.clone();
+        move |_w, ev|  {
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                let pos = ev.position();
+                let dx = (pos.0 - ctx.last_cursor_pos.0)  as f32;
+                let dy = (pos.1 - ctx.last_cursor_pos.1) as f32;
+                ctx.last_cursor_pos = pos;
+
+            if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
+                    // half angles
+                    let ang_x = dx / 200.0 / 2.0;
+                    let ang_y = dy / 200.0 / 2.0;
+                    let cosy = ang_x.cos();
+                    let siny = ang_x.sin();
+                    let cosx = ang_y.cos();
+                    let sinx = ang_y.sin();
+                    let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
+                    let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
+
+                    ctx.rotation = (roty * rotx * ctx.rotation).normalize();
+                    gl.queue_render();
+                } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
+                    let dx = dx / 50.0;
+                    let dy = -dy / 50.0;
+
+                    ctx.location = ctx.location + cgmath::Vector3::new(dx, dy, 0.0);
+                    gl.queue_render();
+                }
+            }
+            Inhibit(true)
+        }
+    });
 
     gl.connect_realize({
         let ctx = ctx.clone();
@@ -39,18 +104,19 @@ fn main() {
         move |w, gl| gl_render(w, gl, &ctx)
     });
     w.add(&gl);
+
+    /*
     glib::timeout_add_local(std::time::Duration::from_millis(50), {
         let ctx = ctx.clone();
         let gl = gl.clone();
         move || {
             if let Some(ctx) = ctx.borrow_mut().as_mut() {
-                ctx.r += 1.0;
                 gl.queue_render();
 
             }
             glib::Continue(true)
         }
-    });
+    });*/
 
     w.show_all();
     gtk::main();
@@ -64,23 +130,6 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     let backend = GdkGliumBackend { ctx: gl.clone() };
     let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
 
-    /*
-    unsafe {
-        let g = &glctx.gl;
-        use glium::gl;
-        dbg!(g.GetError());
-        let mut i = 0;
-        g.GetIntegerv(gl::DRAW_FRAMEBUFFER_BINDING, &mut i);
-        dbg!(g.GetError(), i);
-        g.GetFramebufferAttachmentParameteriv(
-            gl::FRAMEBUFFER,
-            gl::DEPTH_ATTACHMENT,
-            gl::FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
-            &mut i);
-        dbg!(g.GetError(), i);
-
-    }*/
-
     let vsh = r"
 #version 150
 
@@ -90,67 +139,161 @@ uniform mat4 mnormal;
 uniform vec4 lights[2];
 in vec3 pos;
 in vec3 normal;
+in vec2 uv;
 
-out float v_color;
+out vec2 v_uv;
+out float v_light;
 
 void main(void) {
     gl_Position = m * vec4(pos, 1.0);
     vec4 obj_normal = normalize(mnormal * vec4(normal, 0.0));
 
-    float color = 0.2;
+    float light = 0.2;
     for (int i = 0; i < 2; ++i) {
         float diffuse = max(abs(dot(obj_normal, -lights[i])), 0.0);
-        color += diffuse;
+        light += diffuse;
     }
-    v_color = color;
+    v_light = light;
+    v_uv = uv;
 }
 ";
-    let fsh = r"
+    let fsh_solid = r"
 #version 150
 
-in float v_color;
+uniform sampler2D tex;
+
+in vec2 v_uv;
+in float v_light;
 out vec4 out_frag_color;
 
 void main(void) {
-    vec3 base;
+    vec4 base;
     if (gl_FrontFacing)
-        base = vec3(1.0, 1.0, 1.0);
+        base = texture2D(tex, v_uv);
     else
-        base = vec3(0.8, 0.3, 0.3);
-    out_frag_color = vec4(v_color * base, 1.0);
+        base = vec4(0.8, 0.3, 0.3, 1.0);
+    out_frag_color = vec4(v_light * base.rgb, base.a);
 }
 ";
-    let prg = glium::Program::from_source(&glctx, vsh, fsh, None).unwrap();
+    let fsh_line = r"
+    #version 150
 
-    let f = std::fs::File::open("v2.obj").unwrap();
+    in float v_light;
+    out vec4 out_frag_color;
+
+    void main(void) {
+        out_frag_color = vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    ";
+    let prg_solid = glium::Program::from_source(&glctx, vsh, fsh_solid, None).unwrap();
+    let prg_line = glium::Program::from_source(&glctx, vsh, fsh_line, None).unwrap();
+
+    let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
-    let m = waveobj::Model::from_reader(f).unwrap();
-    let model = m.get(0).unwrap();
+    let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
+    let model = models.get(0).unwrap();
+    let mut textures = HashMap::new();
 
-    let mut vs = Vec::new();
-    for face in model.faces() {
+    //Empty texture is just a single white texel
+    let empty = glium::Texture2d::empty(&glctx, 1, 1).unwrap();
+    empty.write(glium::Rect{ left: 0, bottom: 0, width: 1, height: 1 }, vec![vec![(255u8, 255u8, 255u8, 255u8)]]);
+    textures.insert(String::new(), empty);
 
-        let face = face.indices()
-            .iter()
-            .map(|&idx| {
-                let v = model.vertex_by_index(idx);
-                MVertex {
-                    pos: *v.pos(),
-                    normal: *v.normal(),
-                }
-            })
-            .collect::<Vec<_>>();
+    for lib in matlibs {
+        let f = std::fs::File::open(lib).unwrap();
+        let f = std::io::BufReader::new(f);
 
-        let points = face.iter().map(|v| cgmath::Vector3::new(v.pos[0], v.pos[1], v.pos[2])).collect::<Vec<_>>();
-        let tris = tessellate::tessellate(&points);
-        for (a, b, c) in tris {
-            vs.push(face[a]);
-            vs.push(face[b]);
-            vs.push(face[c]);
+        for lib in waveobj::Material::from_reader(f).unwrap()  {
+            if let Some(map) = lib.map() {
+                let pbl = gdk_pixbuf::PixbufLoader::new();
+                let data = std::fs::read(map).unwrap();
+                pbl.write(&data).ok().unwrap();
+                pbl.close().ok().unwrap();
+                let img = pbl.pixbuf().unwrap();
+                let bytes = img.read_pixel_bytes().unwrap();
+                let raw =  glium::texture::RawImage2d {
+                    data: std::borrow::Cow::Borrowed(&bytes),
+                    width: img.width() as u32,
+                    height: img.height() as u32,
+                    format: match img.n_channels() {
+                        4 => glium::texture::ClientFormat::U8U8U8U8,
+                        3 => glium::texture::ClientFormat::U8U8U8,
+                        2 => glium::texture::ClientFormat::U8U8,
+                        _ => glium::texture::ClientFormat::U8,
+                    },
+                };
+                dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
+                let tex = glium::Texture2d::new(&glctx,  raw).unwrap();
+                textures.insert(String::from(lib.name()), tex);
+            }
         }
     }
 
-    *ctx = Some(MyContext { glctx, prg, vs, r: 0.0 });
+    let (v_min, v_max) = util_3d::bounding_box(model.vertices()
+        .iter()
+        .map(|v| {
+            let pos = v.pos();
+            cgmath::Vector3::new(pos[0], pos[1], pos[2])
+        }));
+    let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
+    let mscale = cgmath::Matrix4::<f32>::from_scale(1.0 / size);
+    let center = (v_min + v_max) / 2.0;
+    let mcenter = cgmath::Matrix4::<f32>::from_translation(-center);
+    let m = mscale * mcenter;
+
+    let vs = model.vertices()
+        .iter()
+        .map(|v| {
+            let pos = v.pos();
+            let pos = m.transform_point(cgmath::Point3::new(pos[0], pos[1], pos[2]));
+            let uv = v.uv();
+            MVertex {
+                pos: [pos.x, pos.y, pos.z],
+                normal: *v.normal(),
+                uv: [uv[0], 1.0 - uv[1]],
+            }
+        }).collect();
+
+    let mut idx_solid = Vec::new();
+    let mut idx_lines = Vec::new();
+    for face in model.faces() {
+        let face_indices = face.indices();
+        let face = face_indices
+            .iter()
+            .map(|&idx| {
+                let v = model.vertex_by_index(idx);
+                let pos = v.pos();
+                cgmath::Vector3::new(pos[0], pos[1], pos[2])
+            })
+            .collect::<Vec<_>>();
+
+        let tris = util_3d::tessellate(&face);
+        for (a, b, c) in tris {
+            idx_solid.push(face_indices[a]);
+            idx_solid.push(face_indices[b]);
+            idx_solid.push(face_indices[c]);
+        }
+        for i in 0 .. face_indices.len() {
+            idx_lines.push(face_indices[i]);
+            idx_lines.push(face_indices[(i + 1) % face_indices.len()]);
+        }
+    }
+
+    *ctx = Some(MyContext {
+        glctx,
+        prg_solid,
+        prg_line,
+        vs,
+        idx_solid,
+        idx_lines,
+        textures,
+        material: model.material().map(String::from),
+
+        last_cursor_pos: (0.0, 0.0),
+        rotation: Quaternion::one(),
+        location: cgmath::Vector3::new(0.0, 0.0, -30.0),
+        scale: 20.0,
+     });
 }
 
 fn gl_unrealize(_w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
@@ -158,13 +301,14 @@ fn gl_unrealize(_w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     *ctx = None;
 }
 
-struct MyUniforms {
+struct MyUniforms<'a> {
     m: cgmath::Matrix4<f32>,
     mnormal: cgmath::Matrix4<f32>,
     lights: [cgmath::Vector4<f32>; 2],
+    texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
 }
 
-impl glium::uniforms::Uniforms for MyUniforms {
+impl glium::uniforms::Uniforms for MyUniforms<'_> {
     fn visit_values<'a, F: FnMut(&str, glium::uniforms::UniformValue<'a>)>(&'a self, mut visit: F) {
         use glium::uniforms::UniformValue::*;
 
@@ -172,6 +316,7 @@ impl glium::uniforms::Uniforms for MyUniforms {
         visit("mnormal", Mat4(array4x4(self.mnormal)));
         visit("lights[0]", Vec4(array4(self.lights[0])));
         visit("lights[1]", Vec4(array4(self.lights[1])));
+        visit("tex", self.texture.as_uniform_value());
     }
 }
 
@@ -186,37 +331,57 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     frm.clear_color_and_depth((0.2, 0.2, 0.4, 1.0), 1.0);
 
     let vs = glium::VertexBuffer::new(&ctx.glctx, &ctx.vs).unwrap();
-    let idxs = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
-    //let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &ctx.faces).unwrap();
 
     let ratio = (rect.width as f32) / (rect.height as f32);
     let persp = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
-    let r = cgmath::Matrix4::from_angle_y(cgmath::Deg(ctx.r));
-    let t = cgmath::Matrix4::<f32>::from_translation(cgmath::Vector3::new(4.0, -10.0, -30.0));
-    let s = cgmath::Matrix4::<f32>::from_scale(0.1);
+    let r = cgmath::Matrix4::from(ctx.rotation);
+    let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
+    let s = cgmath::Matrix4::<f32>::from_scale(ctx.scale);
 
     let light0 = cgmath::Vector4::new(-0.5, -0.4, -0.8, 0.0f32).normalize() * 0.55;
     let light1 = cgmath::Vector4::new(0.8, 0.2, 0.4, 0.0f32).normalize() * 0.25;
+
+    let mat_name = ctx.material.as_deref().unwrap_or("");
+    let texture = ctx.textures.get(mat_name)
+        .unwrap_or(ctx.textures.get("").unwrap());
 
     let u = MyUniforms {
         m: persp * t * r * s,
         mnormal: r, //should be transpose of inverse
         lights: [light0, light1],
+        texture: texture.sampled(),
     };
 
-    let dp = glium::DrawParameters {
+    let mut dp = glium::DrawParameters {
         viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width as u32, height: rect.height as u32}),
         blend: glium::Blend::alpha_blending(),
         depth: glium::Depth {
-            test: glium::DepthTest::IfLess,
+            test: glium::DepthTest::IfLessOrEqual,
             write: true,
             .. Default::default()
         },
-        //line_width: Some(2.0),
-        //smooth: Some(glium::Smooth::Nicest),
         .. Default::default()
     };
-    frm.draw(&vs, &idxs, &ctx.prg, &u, &dp).unwrap();
+
+    //let idxs = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
+    let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &ctx.idx_solid).unwrap();
+    //dp.color_mask = (false, false, false, false);
+    dp.polygon_offset = PolygonOffset {
+        line: true,
+        fill: true,
+        factor: 1.0,
+        units: 1.0,
+        .. PolygonOffset::default()
+    };
+    frm.draw(&vs, &idxs, &ctx.prg_solid, &u, &dp).unwrap();
+
+    //dp.color_mask = (true, true, true, true);
+    dp.polygon_offset = PolygonOffset::default();
+    dp.line_width = Some(1.0);
+    dp.smooth = Some(glium::Smooth::Nicest);
+    let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::LinesList, &ctx.idx_lines).unwrap();
+    //let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &ctx.idx_solid).unwrap();
+    frm.draw(&vs, &idxs, &ctx.prg_line, &u, &dp).unwrap();
 
     frm.finish().unwrap();
 
@@ -248,16 +413,27 @@ unsafe impl glium::backend::Backend for GdkGliumBackend {
 
 struct MyContext {
     glctx: Rc<glium::backend::Context>,
-    prg: glium::Program,
+    prg_solid: glium::Program,
+    prg_line: glium::Program,
     vs: Vec<MVertex>,
-    r: f32,
+    idx_solid: Vec<u32>,
+    idx_lines: Vec<u32>,
+    textures: HashMap<String, glium::Texture2d>,
+    material: Option<String>,
+
+    last_cursor_pos: (f64, f64),
+
+    rotation: Quaternion<f32>,
+    location: cgmath::Vector3<f32>,
+    scale: f32,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct MVertex {
     pub pos: [f32; 3],
     pub normal: [f32; 3],
+    pub uv: [f32; 2],
 }
 
-glium::implement_vertex!(MVertex, pos, normal);
+glium::implement_vertex!(MVertex, pos, normal, uv);
 

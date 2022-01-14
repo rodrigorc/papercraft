@@ -85,3 +85,20 @@ fn point_in_triangle(p: Vector2<f32>, p0: Vector2<f32>, p1: Vector2<f32>, p2: Ve
         d == 0.0 || (d < 0.0) == (s + t <= 0.0)
     }
 }
+
+pub fn bounding_box(vs: impl IntoIterator<Item=Vector3<f32>>) -> (Vector3<f32>, Vector3<f32>) {
+    let mut vs = vs.into_iter();
+    let (mut a, mut b) = match vs.next() {
+        Some(v) => (v, v),
+        None => return (Vector3::zero(), Vector3::zero()),
+    };
+    for v in vs {
+        a.x = a.x.min(v.x);
+        a.y = a.y.min(v.y);
+        a.z = a.z.min(v.z);
+        b.x = b.x.max(v.x);
+        b.y = b.y.max(v.y);
+        b.z = b.z.max(v.z);
+    }
+    (a, b)
+}

@@ -24,11 +24,13 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn from_reader<R: BufRead>(r: R) -> Result<Vec<Model>> {
+    //Returns (matlibs, models)
+    pub fn from_reader<R: BufRead>(r: R) -> Result<(Vec<String>, Vec<Model>)> {
         let syn_error = || anyhow!("invalid obj syntax");
 
         let mut objs = Vec::new();
 
+        let mut material_libs = Vec::new();
         #[derive(Default)]
         struct ModelData {
             name: Option<String>,
@@ -127,6 +129,10 @@ impl Model {
                         idx: idx_face
                     })
                 }
+                "mtllib" => {
+                    let lib = words.next().ok_or_else(syn_error)?;
+                    material_libs.push(String::from(lib));
+                }
                 "usemtl" => {
                     let mtl = words.next().ok_or_else(syn_error)?;
                     data.material = Some(String::from(mtl));
@@ -140,7 +146,7 @@ impl Model {
 
         objs.extend(data.build());
 
-        Ok(objs)
+        Ok((material_libs, objs))
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -174,5 +180,76 @@ impl Vertex {
     }
     pub fn uv(&self) -> &[f32; 2] {
         &self.uv
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Material {
+    name: String,
+    map: Option<String>,
+}
+
+impl Material {
+    pub fn from_reader<R: BufRead>(r: R) -> Result<Vec<Material>> {
+        let syn_error = || anyhow!("invalid mtl syntax");
+
+        let mut mats = Vec::new();
+
+        #[derive(Default)]
+        struct MaterialData {
+            name: Option<String>,
+            map: Option<String>,
+        }
+
+        impl MaterialData {
+            fn build(&mut self) -> Option<Material> {
+                if self.name.is_none() {
+                    *self = MaterialData::default();
+                    return None;
+                }
+
+                let m = Material {
+                    name: self.name.take().unwrap(),
+                    map: self.map.take(),
+                };
+
+                Some(m)
+            }
+        }
+        let mut data = MaterialData::default();
+
+        for line in r.lines() {
+            let line = line?;
+            let line = line.trim();
+            //skip empty and comments
+            if line.is_empty() || line.starts_with("#") {
+                continue;
+            }
+            let mut words = line.split(' ');
+            let first = words.next().ok_or_else(syn_error)?;
+            match first {
+                "newmtl" => {
+                    mats.extend(data.build());
+
+                    let name = words.next().ok_or_else(syn_error)?;
+                    data.name = Some(String::from(name));
+                }
+                "map_Kd" => {
+                    let map = words.next().ok_or_else(syn_error)?;
+                    data.map = Some(String::from(map));
+                }
+                p => {
+                    println!("{}??", p);
+                }
+           }
+        }
+        mats.extend(data.build());
+        Ok(mats)
+    }
+    pub fn map(&self) -> Option<&str> {
+        self.map.as_deref()
+    }
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }

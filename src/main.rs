@@ -40,11 +40,11 @@ fn main() {
                 if ev.button() == 1 {
                     let rect = w.allocation();
                     let (x, y) = ev.position();
-                    let x = (x as f32 / rect.width as f32) * 2.0 - 1.0;
-                    let y = -((y as f32 / rect.height as f32) * 2.0 - 1.0);
+                    let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
+                    let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
                     let click = cgmath::Point3::new(x as f32, y as f32, 1.0);
 
-                    let ratio = (rect.width as f32) / (rect.height as f32);
+                    let ratio = (rect.width() as f32) / (rect.height() as f32);
                     let persp: cgmath::Matrix4<f32> = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
                     let r = cgmath::Matrix3::from(ctx.rotation);
                     let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
@@ -59,7 +59,7 @@ fn main() {
 
                     let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
-                    let mut hit = None;
+                    let mut hit_face = None;
                     //should use faces, not tris
                     for (iface, face) in ctx.idx_solid.chunks_exact(3).enumerate() {
                         let v1 = ctx.vs[face[0] as usize].pos.into();
@@ -70,14 +70,38 @@ fn main() {
                         if new_hit.is_some() {
                             dbg!(new_hit);
                         }
-                        hit = match (hit, new_hit) {
+                        hit_face = match (hit_face, new_hit) {
                             (Some((_, p)), Some(x)) if p > x && x > 0.0 => Some((iface, x)),
                             (None, Some(x)) if x > 0.0 => Some((iface, x)),
                             (old, _) => old
                         };
                     }
-                    dbg!(hit);
-                    ctx.selected = hit.map(|(iface, _)| iface);
+                    dbg!(hit_face);
+                    ctx.selected_face = hit_face.map(|(iface, _)| iface);
+
+                    let mut hit_line = None;
+                    for (iline, line) in ctx.idx_lines.chunks_exact(2).enumerate() {
+                        let v1 = ctx.vs[line[0] as usize].pos.into();
+                        let v2 = ctx.vs[line[1] as usize].pos.into();
+                        let (ray_hit, _line_hit, new_dist_2) = util_3d::line_segment_distance(ray, (v1, v2));
+
+                        if new_dist_2 > 0.01  || ray_hit < 0.0 {
+                            continue;
+                        }
+
+                        match hit_line {
+                            Some((_, _, p)) if p < new_dist_2 => { continue; }
+                            _ => {}
+                        }
+                        match hit_face {
+                            Some((_, p)) if p < 0.9 * ray_hit => { continue; }
+                            _ => {}
+                        }
+
+                        hit_line = Some((iline, ray_hit, new_dist_2));
+                    }
+                    dbg!(hit_line);
+                    ctx.selected_line = hit_line.map(|(iline, _, _)| iline);
                     w.queue_render();
                 }
             }
@@ -332,7 +356,8 @@ void main(void) {
         idx_lines,
         textures,
         material: model.material().map(String::from),
-        selected: None,
+        selected_face: None,
+        selected_line: None,
 
         last_cursor_pos: (0.0, 0.0),
         rotation: Quaternion::one(),
@@ -369,7 +394,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     let rect = w.allocation();
     let ctx = ctx.borrow();
     let ctx = ctx.as_ref().unwrap();
-    let mut frm = glium::Frame::new(ctx.glctx.clone(), (rect.width as u32, rect.height as u32));
+    let mut frm = glium::Frame::new(ctx.glctx.clone(), (rect.width() as u32, rect.height() as u32));
 
     use glium::Surface;
 
@@ -377,7 +402,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
 
     let vs = glium::VertexBuffer::new(&ctx.glctx, &ctx.vs).unwrap();
 
-    let ratio = (rect.width as f32) / (rect.height as f32);
+    let ratio = (rect.width() as f32) / (rect.height() as f32);
     let persp = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
     let r = cgmath::Matrix3::from(ctx.rotation);
     let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
@@ -399,7 +424,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
 
     // Draw de textured polys
     let mut dp = glium::DrawParameters {
-        viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width as u32, height: rect.height as u32}),
+        viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
         blend: glium::Blend::alpha_blending(),
         depth: glium::Depth {
             test: glium::DepthTest::IfLessOrEqual,
@@ -421,7 +446,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     };
     frm.draw(&vs, &idxs, &ctx.prg_solid, &u, &dp).unwrap();
 
-    if let &Some(sel) = &ctx.selected {
+    if let &Some(sel) = &ctx.selected_face {
         let idxs = [ctx.idx_solid[3 * sel], ctx.idx_solid[3*sel + 1], ctx.idx_solid[3*sel + 2]];
         let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &idxs).unwrap();
         u.texture = ctx.textures.get("").unwrap().sampled();
@@ -435,8 +460,15 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     dp.line_width = Some(1.0);
     dp.smooth = Some(glium::Smooth::Nicest);
     let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::LinesList, &ctx.idx_lines).unwrap();
-    //let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &ctx.idx_solid).unwrap();
     frm.draw(&vs, &idxs, &ctx.prg_line, &u, &dp).unwrap();
+
+    dp.depth.test = glium::DepthTest::Overwrite;
+    if let &Some(sel) = &ctx.selected_line {
+        let idxs = [ctx.idx_lines[2 * sel], ctx.idx_lines[2*sel + 1]];
+        let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::LinesList, &idxs).unwrap();
+        dp.line_width = Some(3.0);
+        frm.draw(&vs, &idxs, &ctx.prg_line, &u, &dp).unwrap();
+    }
 
     frm.finish().unwrap();
 
@@ -475,7 +507,8 @@ struct MyContext {
     idx_lines: Vec<u32>,
     textures: HashMap<String, glium::Texture2d>,
     material: Option<String>,
-    selected: Option<usize>,
+    selected_face: Option<usize>,
+    selected_line: Option<usize>,
 
     last_cursor_pos: (f64, f64),
 
@@ -492,4 +525,5 @@ pub struct MVertex {
 }
 
 glium::implement_vertex!(MVertex, pos, normal, uv);
+
 

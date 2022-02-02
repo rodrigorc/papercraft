@@ -140,3 +140,50 @@ pub fn ray_crosses_face(ray: (Vector3<f32>, Vector3<f32>), vs: &[Vector3<f32>; 3
 
     Some(t)
 }
+
+// Returns (offset0, offset1, distance2)
+pub fn line_line_distance(line0: (Vector3<f32>, Vector3<f32>), line1: (Vector3<f32>, Vector3<f32>)) -> (f32, f32, f32) {
+    let diff = line0.0 - line1.0;
+    let line0d = line0.1 - line0.0;
+    let line1d = line1.1 - line1.0;
+    let len0 = line0d.magnitude();
+    let len1 = line1d.magnitude();
+    let line0d = line0d / len0;
+    let line1d = line1d / len1;
+    let a01 = -line0d.dot(line1d);
+    let b0 = line0d.dot(diff);
+    let c = diff.magnitude2();
+    let det = 1.0 - a01 * a01;
+    let l0_closest;
+    let l1_closest;
+    let distance2;
+    if det.abs() > std::f32::EPSILON {
+        //not parallel
+        let b1 = -line1d.dot(diff);
+        let inv_det = 1.0 / det;
+        l0_closest = (a01 * b1 - b0) * inv_det;
+        l1_closest = (a01 * b0 - b1) * inv_det;
+        distance2 = l0_closest * (l0_closest + a01 * l1_closest + 2.0 * b0) +
+                            l1_closest * (a01 * l0_closest + l1_closest + 2.0 * b1) + c;
+    } else {
+        //almost parallel
+        l0_closest = -b0;
+        l1_closest = 0.0;
+        distance2 = b0 * l0_closest + c;
+    }
+    (l0_closest / len0, l1_closest / len1, distance2.abs())
+}
+
+pub fn line_segment_distance(line0: (Vector3<f32>, Vector3<f32>), line1: (Vector3<f32>, Vector3<f32>)) -> (f32, f32, f32) {
+    let (l0_closest, mut l1_closest, mut distance2) = line_line_distance(line0, line1);
+    if l1_closest < 0.0 {
+        l1_closest = 0.0;
+        let p = line0.0 + (line0.1 - line0.0) * l0_closest;
+        distance2 = (line1.0 - p).magnitude2();
+    } else if l1_closest > 1.0 {
+        l1_closest = 1.0;
+        let p = line0.0 + (line0.1 - line0.0) * l0_closest;
+        distance2 = (line1.1 - p).magnitude2();
+    }
+    (l0_closest, l1_closest, distance2)
+}

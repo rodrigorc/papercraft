@@ -10,6 +10,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 mod waveobj;
+mod paper;
 mod util_3d;
 
 fn main() {
@@ -45,7 +46,7 @@ fn main() {
                     let click = cgmath::Point3::new(x as f32, y as f32, 1.0);
 
                     let ratio = (rect.width() as f32) / (rect.height() as f32);
-                    let persp: cgmath::Matrix4<f32> = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
+                    let persp: cgmath::Matrix4<f32> = cgmath::perspective(cgmath::Deg(60.0), ratio, 1.0, 100.0);
                     let r = cgmath::Matrix3::from(ctx.rotation);
                     let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
                     let s = cgmath::Matrix4::<f32>::from_scale(ctx.scale);
@@ -60,29 +61,46 @@ fn main() {
                     let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
                     let mut hit_face = None;
-                    //should use faces, not tris
-                    for (iface, face) in ctx.idx_solid.chunks_exact(3).enumerate() {
-                        let v1 = ctx.vs[face[0] as usize].pos.into();
-                        let v2 = ctx.vs[face[1] as usize].pos.into();
-                        let v3 = ctx.vs[face[2] as usize].pos.into();
-
-                        let new_hit = util_3d::ray_crosses_face(ray, &[v1, v2, v3]);
-                        if new_hit.is_some() {
-                            dbg!(new_hit);
+                    for (iface, face) in ctx.gldata.model.faces().iter().enumerate() {
+                        for (a, b, c) in face.index_triangles() {
+                            let a = ctx.gldata.model.vertex_by_index(a).pos();
+                            let b = ctx.gldata.model.vertex_by_index(b).pos();
+                            let c = ctx.gldata.model.vertex_by_index(c).pos();
+                            let maybe_new_hit = util_3d::ray_crosses_face(ray, &[(*a).into(), (*b).into(), (*c).into()]);
+                            if let Some(new_hit) = maybe_new_hit {
+                                dbg!(new_hit);
+                                hit_face = match (hit_face, new_hit) {
+                                    (Some((_, p)), x) if p > x && x > 0.0 => Some((iface, x)),
+                                    (None, x) if x > 0.0 => Some((iface, x)),
+                                    (old, _) => old
+                                };
+                                break;
+                            }
                         }
-                        hit_face = match (hit_face, new_hit) {
-                            (Some((_, p)), Some(x)) if p > x && x > 0.0 => Some((iface, x)),
-                            (None, Some(x)) if x > 0.0 => Some((iface, x)),
-                            (old, _) => old
-                        };
                     }
-                    dbg!(hit_face);
-                    ctx.selected_face = hit_face.map(|(iface, _)| iface);
 
+                    dbg!(hit_face);
+                    ctx.selected_face = hit_face.map(|(selection, _distance)| {
+                        let face = &ctx.gldata.model.faces()[selection];
+                        let idxs: Vec<_> = face.index_triangles()
+                            .flat_map(|(a, b, c)| {
+                                [a, b, c]
+                            })
+                            .map(|x| x.0)
+                            .collect();
+                        udpate_persistent_index_buffer(&mut ctx.gldata.indices_face_sel, &idxs);
+
+                        SelectedIndex {
+                            selection,
+                            index_len: idxs.len(),
+                        }
+                    });
+
+                    /*
                     let mut hit_line = None;
-                    for (iline, line) in ctx.idx_lines.chunks_exact(2).enumerate() {
-                        let v1 = ctx.vs[line[0] as usize].pos.into();
-                        let v2 = ctx.vs[line[1] as usize].pos.into();
+                    for (iline, line) in ctx.indices_lines.chunks_exact(2).enumerate() {
+                        let v1 = ctx.vertices[line[0] as usize].pos.into();
+                        let v2 = ctx.vertices[line[1] as usize].pos.into();
                         let (ray_hit, _line_hit, new_dist_2) = util_3d::line_segment_distance(ray, (v1, v2));
 
                         if new_dist_2 > 0.01  || ray_hit < 0.0 {
@@ -101,7 +119,7 @@ fn main() {
                         hit_line = Some((iline, ray_hit, new_dist_2));
                     }
                     dbg!(hit_line);
-                    ctx.selected_line = hit_line.map(|(iline, _, _)| iline);
+                    ctx.selected_line = hit_line.map(|(iline, _, _)| iline);*/
                     w.queue_render();
                 }
             }
@@ -259,14 +277,17 @@ void main(void) {
     let f = std::fs::File::open("v2.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
-    let model = models.get(0).unwrap();
+    // For now read only the first model from the file
+    let obj = models.get(0).unwrap();
+    let material = obj.material().map(String::from);
     let mut textures = HashMap::new();
 
-    //Empty texture is just a single white texel
+    // Empty texture is just a single white texel
     let empty = glium::Texture2d::empty(&glctx, 1, 1).unwrap();
     empty.write(glium::Rect{ left: 0, bottom: 0, width: 1, height: 1 }, vec![vec![(255u8, 255u8, 255u8, 255u8)]]);
     textures.insert(String::new(), empty);
 
+    // Other textures are read from the .mtl file
     for lib in matlibs {
         let f = std::fs::File::open(lib).unwrap();
         let f = std::io::BufReader::new(f);
@@ -297,6 +318,7 @@ void main(void) {
         }
     }
 
+    let mut model = paper::Model::from_waveobj(&obj);
     let (v_min, v_max) = util_3d::bounding_box(model.vertices()
         .iter()
         .map(|v| {
@@ -309,53 +331,69 @@ void main(void) {
     let mcenter = cgmath::Matrix4::<f32>::from_translation(-center);
     let m = mscale * mcenter;
 
-    let vs = model.vertices()
+    for v in model.vertices_mut() {
+        *v.pos_mut() = m.transform_point(cgmath::Point3::from(*v.pos())).into();
+    }
+
+    let vertices: Vec<MVertex> = model.vertices()
         .iter()
         .map(|v| {
             let pos = v.pos();
-            let pos = m.transform_point(cgmath::Point3::from(*pos));
+            //let pos = m.transform_point(cgmath::Point3::from(*pos));
             let uv = v.uv();
             MVertex {
-                pos: pos.into(),
+                pos: *pos,
                 normal: *v.normal(),
                 uv: [uv[0], 1.0 - uv[1]],
             }
         }).collect();
 
-    let mut idx_solid = Vec::new();
-    let mut idx_lines = Vec::new();
+    let mut indices_solid = Vec::new();
+    let mut indices_lines = Vec::new();
     for face in model.faces() {
-        let face_indices = face.indices();
-        let face = face_indices
-            .iter()
-            .map(|&idx| {
-                let v = model.vertex_by_index(idx);
-                let pos = v.pos();
-                cgmath::Vector3::from(*pos)
-            })
-            .collect::<Vec<_>>();
-
-        let tris = util_3d::tessellate(&face);
+        let tris = face.index_triangles();
         for (a, b, c) in tris {
-            idx_solid.push(face_indices[a]);
-            idx_solid.push(face_indices[b]);
-            idx_solid.push(face_indices[c]);
+            indices_solid.push(a.0);
+            indices_solid.push(b.0);
+            indices_solid.push(c.0);
         }
+        let face_indices = face.index_vertices();
         for i in 0 .. face_indices.len() {
-            idx_lines.push(face_indices[i]);
-            idx_lines.push(face_indices[(i + 1) % face_indices.len()]);
+            indices_lines.push(face_indices[i].0);
+            indices_lines.push(face_indices[(i + 1) % face_indices.len()].0);
         }
     }
 
-    *ctx = Some(MyContext {
+    let gl = GlContext {
         glctx,
         prg_solid,
         prg_line,
-        vs,
-        idx_solid,
-        idx_lines,
+    };
+
+    let vertex_buf = glium::VertexBuffer::immutable(&gl.glctx, &vertices).unwrap();
+    let indices_solid_buf = glium::IndexBuffer::immutable(&gl.glctx, glium::index::PrimitiveType::TrianglesList, &indices_solid).unwrap();
+    let indices_lines_buf = glium::IndexBuffer::persistent(&gl.glctx, glium::index::PrimitiveType::LinesList, &indices_lines).unwrap();
+
+    let indices_face_sel = glium::IndexBuffer::empty_persistent(&gl.glctx, glium::index::PrimitiveType::TrianglesList, 12).unwrap();
+    let indices_edge_sel = glium::IndexBuffer::empty_persistent(&gl.glctx, glium::index::PrimitiveType::LinesList, 12).unwrap();
+
+    let gldata = GlData {
+        model,
+        vertex_buf,
+        indices_solid_buf,
+        indices_lines_buf,
+        indices_face_sel,
+        indices_edge_sel,
+    };
+
+    *ctx = Some(MyContext {
+        gl,
+        gldata,
+        vertices,
+        indices_solid,
+        indices_lines,
         textures,
-        material: model.material().map(String::from),
+        material,
         selected_face: None,
         selected_line: None,
 
@@ -392,18 +430,16 @@ impl glium::uniforms::Uniforms for MyUniforms<'_> {
 
 fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyContext>>>) -> gtk::Inhibit {
     let rect = w.allocation();
-    let ctx = ctx.borrow();
-    let ctx = ctx.as_ref().unwrap();
-    let mut frm = glium::Frame::new(ctx.glctx.clone(), (rect.width() as u32, rect.height() as u32));
+    let mut ctx = ctx.borrow_mut();
+    let ctx = ctx.as_mut().unwrap();
+    let mut frm = glium::Frame::new(ctx.gl.glctx.clone(), (rect.width() as u32, rect.height() as u32));
 
     use glium::Surface;
 
     frm.clear_color_and_depth((0.2, 0.2, 0.4, 1.0), 1.0);
 
-    let vs = glium::VertexBuffer::new(&ctx.glctx, &ctx.vs).unwrap();
-
     let ratio = (rect.width() as f32) / (rect.height() as f32);
-    let persp = cgmath::perspective(cgmath::Deg(60.0), ratio, 10.0, 100.0);
+    let persp = cgmath::perspective(cgmath::Deg(60.0), ratio, 1.0, 100.0);
     let r = cgmath::Matrix3::from(ctx.rotation);
     let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
     let s = cgmath::Matrix4::<f32>::from_scale(ctx.scale);
@@ -434,8 +470,6 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
         .. Default::default()
     };
 
-    //let idxs = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
-    let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &ctx.idx_solid).unwrap();
     //dp.color_mask = (false, false, false, false);
     dp.polygon_offset = PolygonOffset {
         line: true,
@@ -444,13 +478,11 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
         units: 1.0,
         .. PolygonOffset::default()
     };
-    frm.draw(&vs, &idxs, &ctx.prg_solid, &u, &dp).unwrap();
+    frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_solid_buf, &ctx.gl.prg_solid, &u, &dp).unwrap();
 
-    if let &Some(sel) = &ctx.selected_face {
-        let idxs = [ctx.idx_solid[3 * sel], ctx.idx_solid[3*sel + 1], ctx.idx_solid[3*sel + 2]];
-        let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::TrianglesList, &idxs).unwrap();
+    if let &Some(SelectedIndex { selection: _, index_len}) = &ctx.selected_face {
         u.texture = ctx.textures.get("").unwrap().sampled();
-        frm.draw(&vs, &idxs, &ctx.prg_solid, &u, &dp).unwrap();
+        frm.draw(&ctx.gldata.vertex_buf, ctx.gldata.indices_face_sel.slice(0 .. index_len).unwrap(), &ctx.gl.prg_solid, &u, &dp).unwrap();
     }
 
     // Draw the lines:
@@ -459,16 +491,16 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     dp.polygon_offset = PolygonOffset::default();
     dp.line_width = Some(1.0);
     dp.smooth = Some(glium::Smooth::Nicest);
-    let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::LinesList, &ctx.idx_lines).unwrap();
-    frm.draw(&vs, &idxs, &ctx.prg_line, &u, &dp).unwrap();
+    frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_lines_buf, &ctx.gl.prg_line, &u, &dp).unwrap();
 
+    /*
     dp.depth.test = glium::DepthTest::Overwrite;
     if let &Some(sel) = &ctx.selected_line {
-        let idxs = [ctx.idx_lines[2 * sel], ctx.idx_lines[2*sel + 1]];
-        let idxs = glium::index::IndexBuffer::new(&ctx.glctx, glium::index::PrimitiveType::LinesList, &idxs).unwrap();
+        let idxs = [ctx.indices_lines[2 * sel], ctx.indices_lines[2*sel + 1]];
+        udpate_persistent_index_buffer(&mut ctx.gldata.indices_edge_sel, &idxs);
         dp.line_width = Some(3.0);
-        frm.draw(&vs, &idxs, &ctx.prg_line, &u, &dp).unwrap();
-    }
+        frm.draw(&ctx.gldata.vertex_buf, ctx.gldata.indices_edge_sel.slice(0 .. idxs.len()).unwrap(), &ctx.gl.prg_line, &u, &dp).unwrap();
+    }*/
 
     frm.finish().unwrap();
 
@@ -498,17 +530,39 @@ unsafe impl glium::backend::Backend for GdkGliumBackend {
     }
 }
 
-struct MyContext {
+// This contains GL objects that are overall constant
+struct GlContext {
     glctx: Rc<glium::backend::Context>,
     prg_solid: glium::Program,
     prg_line: glium::Program,
-    vs: Vec<MVertex>,
-    idx_solid: Vec<u32>,
-    idx_lines: Vec<u32>,
+}
+
+// This contains GL objects that are object specific
+struct GlData {
+    model: paper::Model,
+    vertex_buf: glium::VertexBuffer<MVertex>,
+    indices_solid_buf: glium::IndexBuffer<u32>,
+    indices_lines_buf: glium::IndexBuffer<u32>,
+
+    indices_face_sel: glium::IndexBuffer<u32>,
+    indices_edge_sel: glium::IndexBuffer<u32>,
+}
+
+struct SelectedIndex {
+    selection: usize,
+    index_len: usize,
+}
+
+struct MyContext {
+    gl: GlContext,
+    gldata: GlData,
+    vertices: Vec<MVertex>,
+    indices_solid: Vec<u32>,
+    indices_lines: Vec<u32>,
     textures: HashMap<String, glium::Texture2d>,
     material: Option<String>,
-    selected_face: Option<usize>,
-    selected_line: Option<usize>,
+    selected_face: Option<SelectedIndex>,
+    selected_line: Option<SelectedIndex>,
 
     last_cursor_pos: (f64, f64),
 
@@ -526,4 +580,13 @@ pub struct MVertex {
 
 glium::implement_vertex!(MVertex, pos, normal, uv);
 
+fn udpate_persistent_index_buffer(buf: &mut glium::IndexBuffer<u32>, data: &[u32]) {
+    if let Some(slice) = buf.slice(0 .. data.len()) {
+        slice.write(data);
+    } else {
+        // If the buffer is not big enough, remake it
+        let ctx = buf.get_context();
+        *buf = glium::IndexBuffer::persistent(ctx, buf.get_primitives_type(), data).unwrap();
+    }
+}
 

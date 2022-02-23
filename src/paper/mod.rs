@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+
 use crate::waveobj;
 
 #[derive(Debug)]
@@ -9,16 +10,29 @@ pub struct Model {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct VertexIndex(pub u32);
+#[repr(transparent)]
+pub struct VertexIndex(u32);
+
+//unsafe: VertexIndex is a transparent u32
+unsafe impl glium::index::Index for VertexIndex {
+    fn get_type() -> glium::index::IndexType {
+        glium::index::IndexType::U32
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
-pub struct EdgeIndex(pub u32);
+#[repr(transparent)]
+pub struct EdgeIndex(u32);
+
+#[derive(Debug, Copy, Clone)]
+#[repr(transparent)]
+pub struct FaceIndex(u32);
 
 #[derive(Debug)]
 pub struct Face {
     vertices: Vec<VertexIndex>,
     edges: Vec<EdgeIndex>,
-    tris: Vec<(usize, usize, usize)>, //indices in self.vertices
+    tris: Vec<[usize; 3]>, //indices in self.vertices
 }
 
 #[derive(Debug)]
@@ -79,20 +93,34 @@ impl Model {
             faces,
         }
     }
-
-    pub fn vertices(&self) -> &[Vertex] {
-        &self.vertices
+    pub fn transform_vertices<F>(&mut self, f: F)
+        where F: FnMut(&mut Vertex)
+    {
+        self.vertices.iter_mut().for_each(f);
     }
-    pub fn vertices_mut(&mut self) -> &mut [Vertex] {
-        &mut self.vertices
+    pub fn vertices(&self) -> impl Iterator<Item = &Vertex> {
+        self.vertices.iter()
     }
-
-    pub fn faces(&self) -> &[Face] {
-        &self.faces
+    pub fn faces(&self) -> impl Iterator<Item = (FaceIndex, &Face)> + '_ {
+        self.faces
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (FaceIndex(i as u32), f))
     }
-
+    pub fn edges(&self) -> impl Iterator<Item = (EdgeIndex, &Edge)> + '_ {
+        self.edges
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (EdgeIndex(i as u32), e))
+    }
+    pub fn face_by_index(&self, idx: FaceIndex) -> &Face {
+        &self.faces[idx.0 as usize]
+    }
     pub fn vertex_by_index(&self, idx: VertexIndex) -> &Vertex {
         &self.vertices[idx.0 as usize]
+    }
+    pub fn edge_by_index(&self, idx: EdgeIndex) -> &Edge {
+        &self.edges[idx.0 as usize]
     }
 }
 
@@ -100,12 +128,10 @@ impl Face {
     pub fn index_vertices(&self) -> &[VertexIndex] {
         &self.vertices
     }
-    pub fn index_triangles(&self) -> impl Iterator<Item = (VertexIndex, VertexIndex, VertexIndex)> + '_ {
+    pub fn index_triangles(&self) -> impl Iterator<Item = [VertexIndex; 3]> + '_ {
         self.tris
             .iter()
-            .map(|&(a, b, c)| {
-                (self.vertices[a], self.vertices[b], self.vertices[c])
-            })
+            .map(|tri| tri.map(|v| self.vertices[v]))
     }
 }
 
@@ -121,5 +147,14 @@ impl Vertex {
     }
     pub fn uv(&self) -> &[f32; 2] {
         &self.uv
+    }
+}
+
+impl Edge {
+    pub fn v0(&self) -> VertexIndex {
+        self.v0
+    }
+    pub fn v1(&self) -> VertexIndex {
+        self.v1
     }
 }

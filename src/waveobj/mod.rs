@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![allow(dead_code)]
 
 use std::{io::BufRead, collections::BTreeMap};
 use anyhow::{anyhow, Result};

@@ -2,13 +2,13 @@ use cgmath::{Vector3, Zero, InnerSpace, Vector2, Rad};
 use std::f32::consts::PI;
 
 // Each returned tuple is a triangle of indices into the original vector
-pub fn tessellate(ps: &[Vector3<f32>]) -> Vec<(usize, usize, usize)> {
+pub fn tessellate(ps: &[Vector3<f32>]) -> Vec<[usize; 3]> {
     if ps.len() < 3 {
         return Vec::new();
     }
 
     if ps.len() == 3 {
-        return vec![(0, 1, 2)];
+        return vec![[0, 1, 2]];
     }
 
     let mut res = Vec::with_capacity(ps.len() - 2);
@@ -67,7 +67,7 @@ pub fn tessellate(ps: &[Vector3<f32>]) -> Vec<(usize, usize, usize)> {
         let i = min_angle.map(|(i, _)| i).unwrap_or(0);
 
         let tri = (i, (i + 1) % ps.len(), (i + 2) % ps.len());
-        res.push((ps[tri.0].0, ps[tri.1].0, ps[tri.2].0));
+        res.push([ps[tri.0].0, ps[tri.1].0, ps[tri.2].0]);
         ps.remove(tri.1);
     }
 

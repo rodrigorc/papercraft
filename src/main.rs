@@ -88,12 +88,8 @@ fn main() {
                             })
                             .map(|x| x.0)
                             .collect();
-                        udpate_persistent_index_buffer(&mut ctx.gldata.indices_face_sel, &idxs);
-
-                        SelectedIndex {
-                            selection,
-                            index_len: idxs.len(),
-                        }
+                        ctx.gldata.indices_face_sel.update(&idxs);
+                        selection
                     });
 
                     /*
@@ -374,8 +370,8 @@ void main(void) {
     let indices_solid_buf = glium::IndexBuffer::immutable(&gl.glctx, glium::index::PrimitiveType::TrianglesList, &indices_solid).unwrap();
     let indices_lines_buf = glium::IndexBuffer::persistent(&gl.glctx, glium::index::PrimitiveType::LinesList, &indices_lines).unwrap();
 
-    let indices_face_sel = glium::IndexBuffer::empty_persistent(&gl.glctx, glium::index::PrimitiveType::TrianglesList, 12).unwrap();
-    let indices_edge_sel = glium::IndexBuffer::empty_persistent(&gl.glctx, glium::index::PrimitiveType::LinesList, 12).unwrap();
+    let indices_face_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::TrianglesList);
+    let indices_edge_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::LinesList);
 
     let gldata = GlData {
         model,
@@ -480,9 +476,9 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     };
     frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_solid_buf, &ctx.gl.prg_solid, &u, &dp).unwrap();
 
-    if let &Some(SelectedIndex { selection: _, index_len}) = &ctx.selected_face {
+    if ctx.selected_face.is_some() {
         u.texture = ctx.textures.get("").unwrap().sampled();
-        frm.draw(&ctx.gldata.vertex_buf, ctx.gldata.indices_face_sel.slice(0 .. index_len).unwrap(), &ctx.gl.prg_solid, &u, &dp).unwrap();
+        frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_face_sel, &ctx.gl.prg_solid, &u, &dp).unwrap();
     }
 
     // Draw the lines:
@@ -544,13 +540,8 @@ struct GlData {
     indices_solid_buf: glium::IndexBuffer<u32>,
     indices_lines_buf: glium::IndexBuffer<u32>,
 
-    indices_face_sel: glium::IndexBuffer<u32>,
-    indices_edge_sel: glium::IndexBuffer<u32>,
-}
-
-struct SelectedIndex {
-    selection: usize,
-    index_len: usize,
+    indices_face_sel: PersistentIndexBuffer,
+    indices_edge_sel: PersistentIndexBuffer,
 }
 
 struct MyContext {
@@ -561,8 +552,8 @@ struct MyContext {
     indices_lines: Vec<u32>,
     textures: HashMap<String, glium::Texture2d>,
     material: Option<String>,
-    selected_face: Option<SelectedIndex>,
-    selected_line: Option<SelectedIndex>,
+    selected_face: Option<usize>,
+    selected_line: Option<usize>,
 
     last_cursor_pos: (f64, f64),
 
@@ -580,13 +571,35 @@ pub struct MVertex {
 
 glium::implement_vertex!(MVertex, pos, normal, uv);
 
-fn udpate_persistent_index_buffer(buf: &mut glium::IndexBuffer<u32>, data: &[u32]) {
-    if let Some(slice) = buf.slice(0 .. data.len()) {
-        slice.write(data);
-    } else {
-        // If the buffer is not big enough, remake it
-        let ctx = buf.get_context();
-        *buf = glium::IndexBuffer::persistent(ctx, buf.get_primitives_type(), data).unwrap();
+struct PersistentIndexBuffer {
+    buffer: glium::IndexBuffer<u32>,
+    length: usize,
+}
+
+impl PersistentIndexBuffer {
+    fn new(ctx: &impl glium::backend::Facade, prim: glium::index::PrimitiveType) -> PersistentIndexBuffer {
+        let buffer = glium::IndexBuffer::empty_persistent(ctx, prim, 16).unwrap();
+        PersistentIndexBuffer {
+            buffer,
+            length: 0,
+        }
+    }
+    fn update(&mut self, data: &[u32]) {
+        if let Some(slice) = self.buffer.slice(0 .. data.len()) {
+            self.length = data.len();
+            slice.write(data);
+        } else {
+            // If the buffer is not big enough, remake it
+            let ctx = self.buffer.get_context();
+            self.buffer = glium::IndexBuffer::persistent(ctx, self.buffer.get_primitives_type(), data).unwrap();
+            self.length = data.len();
+        }
+    }
+}
+
+impl<'a> Into<glium::index::IndicesSource<'a>> for &'a PersistentIndexBuffer {
+    fn into(self) -> glium::index::IndicesSource<'a> {
+        self.buffer.slice(0 .. self.length).unwrap().into()
     }
 }
 

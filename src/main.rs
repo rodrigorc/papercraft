@@ -1,9 +1,10 @@
-use cgmath::{InnerSpace, Quaternion, One, Transform, SquareMatrix, EuclideanSpace};
+#![allow(dead_code)]
+
+use cgmath::prelude::*;
 use cgmath::conv::{array4x4, array3x3, array3};
 use glium::draw_parameters::PolygonOffset;
 use glium::uniforms::AsUniformValue;
 use gtk::prelude::*;
-//use cgmath::prelude::*;
 use gtk::gdk::{self, EventMask};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -16,9 +17,6 @@ mod util_3d;
 fn main() {
     std::env::set_var("GTK_CSD", "0");
     gtk::init().expect("gtk::init");
-
-    let theme = gtk::IconTheme::default().expect("icon_theme_default");
-    theme.append_search_path("xxxx");
 
     let w = gtk::Window::new(gtk::WindowType::Toplevel);
     w.set_default_size(800, 600);
@@ -45,25 +43,16 @@ fn main() {
                     let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
                     let click = cgmath::Point3::new(x as f32, y as f32, 1.0);
 
-                    let ratio = (rect.width() as f32) / (rect.height() as f32);
-                    let persp: cgmath::Matrix4<f32> = cgmath::perspective(cgmath::Deg(60.0), ratio, 1.0, 100.0);
-                    let r = cgmath::Matrix3::from(ctx.rotation);
-                    let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
-                    let s = cgmath::Matrix4::<f32>::from_scale(ctx.scale);
-                    let obj = t * cgmath::Matrix4::from(r) * s;
-                    let persp_inv = persp.invert().unwrap();
-                    let obj_inv = obj.invert().unwrap();
-
-                    let click_camera = persp_inv.transform_point(click);
-                    let click_obj = obj_inv.transform_point(click_camera);
-                    let camera_obj = obj_inv.transform_point(cgmath::Point3::new(0.0, 0.0, 0.0));
+                    let click_camera = ctx.trans.persp_inv.transform_point(click);
+                    let click_obj = ctx.trans.obj_inv.transform_point(click_camera);
+                    let camera_obj = ctx.trans.obj_inv.transform_point(cgmath::Point3::new(0.0, 0.0, 0.0));
 
                     let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
                     let mut hit_face = None;
-                    for (iface, face) in ctx.gldata.model.faces() {
+                    for (iface, face) in ctx.model.faces() {
                         for tri in face.index_triangles() {
-                            let tri = tri.map(|v| (*ctx.gldata.model.vertex_by_index(v).pos()).into());
+                            let tri = tri.map(|v| (*ctx.model.vertex_by_index(v).pos()).into());
                             let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
                             if let Some(new_hit) = maybe_new_hit {
                                 dbg!(new_hit);
@@ -79,18 +68,18 @@ fn main() {
 
                     dbg!(hit_face);
                     ctx.selected_face = hit_face.map(|(iface, _distance)| {
-                        let face = ctx.gldata.model.face_by_index(iface);
+                        let face = ctx.model.face_by_index(iface);
                         let idxs: Vec<_> = face.index_triangles()
                             .flatten()
                             .collect();
-                        ctx.gldata.indices_face_sel.update(&idxs);
+                            ctx.indices_face_sel.update(&idxs);
                         iface
                     });
 
                     let mut hit_edge = None;
-                    for (iedge, edge) in ctx.gldata.model.edges() {
-                        let v1 = *ctx.gldata.model.vertex_by_index(edge.v0()).pos();
-                        let v2 = *ctx.gldata.model.vertex_by_index(edge.v1()).pos();
+                    for (iedge, edge) in ctx.model.edges() {
+                        let v1 = *ctx.model.vertex_by_index(edge.v0()).pos();
+                        let v2 = *ctx.model.vertex_by_index(edge.v1()).pos();
                         let (ray_hit, _line_hit, new_dist_2) = util_3d::line_segment_distance(ray, (v1.into(), v2.into()));
 
                         if new_dist_2 > 0.01  || ray_hit < 0.0 {
@@ -110,9 +99,9 @@ fn main() {
                     }
                     dbg!(hit_edge);
                     ctx.selected_edge = hit_edge.map(|(iedge, _, _)| {
-                        let edge = ctx.gldata.model.edge_by_index(iedge);
+                        let edge = ctx.model.edge_by_index(iedge);
                         let idxs = [edge.v0(), edge.v1()];
-                        ctx.gldata.indices_edge_sel.update(&idxs);
+                        ctx.indices_edge_sel.update(&idxs);
                         iedge
                     });
                     w.queue_render();
@@ -129,9 +118,10 @@ fn main() {
                 let dz = match ev.direction() {
                     gdk::ScrollDirection::Up => 1.1,
                     gdk::ScrollDirection::Down => 1.0 / 1.1,
-                    _ => 0.0
+                    _ => 1.0,
                 };
-                ctx.scale *= dz;
+                ctx.trans.scale *= dz;
+                ctx.trans.recompute_obj();
                 gl.queue_render();
             }
             Inhibit(true)
@@ -155,16 +145,18 @@ fn main() {
                     let siny = ang_x.sin();
                     let cosx = ang_y.cos();
                     let sinx = ang_y.sin();
-                    let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
-                    let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
+                    let roty = cgmath::Quaternion::new(cosy, 0.0, siny, 0.0);
+                    let rotx = cgmath::Quaternion::new(cosx, sinx, 0.0, 0.0);
 
-                    ctx.rotation = (roty * rotx * ctx.rotation).normalize();
+                    ctx.trans.rotation = (roty * rotx * ctx.trans.rotation).normalize();
+                    ctx.trans.recompute_obj();
                     gl.queue_render();
                 } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
                     let dx = dx / 50.0;
                     let dy = -dy / 50.0;
 
-                    ctx.location = ctx.location + cgmath::Vector3::new(dx, dy, 0.0);
+                    ctx.trans.location = ctx.trans.location + cgmath::Vector3::new(dx, dy, 0.0);
+                    ctx.trans.recompute_obj();
                     gl.queue_render();
                 }
             }
@@ -183,6 +175,15 @@ fn main() {
     gl.connect_render({
         let ctx = ctx.clone();
         move |w, gl| gl_render(w, gl, &ctx)
+    });
+    gl.connect_resize({
+        let ctx = ctx.clone();
+        move |_w, width, height| {
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                let ratio = width as f32 / height as f32;
+                ctx.trans.set_ratio(ratio);
+            }
+        }
     });
     w.add(&gl);
 
@@ -269,9 +270,10 @@ void main(void) {
     let prg_solid = glium::Program::from_source(&glctx, vsh, fsh_solid, None).unwrap();
     let prg_line = glium::Program::from_source(&glctx, vsh, fsh_line, None).unwrap();
 
-    let f = std::fs::File::open("v2.obj").unwrap();
+    let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
+
     // For now read only the first model from the file
     let obj = models.get(0).unwrap();
     let material = obj.material().map(String::from);
@@ -352,7 +354,7 @@ void main(void) {
         }
     }
 
-    let gl = GlContext {
+    let gl = GlData {
         glctx,
         prg_solid,
         prg_line,
@@ -365,31 +367,36 @@ void main(void) {
     let indices_face_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::TrianglesList);
     let indices_edge_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::LinesList);
 
-    let gldata = GlData {
+    let persp = cgmath::perspective(cgmath::Deg(60.0), 1.0, 1.0, 100.0);
+    let trans = Transformation::new(
+        cgmath::Vector3::new(0.0, 0.0, -30.0),
+        cgmath::Quaternion::one(),
+         20.0,
+         persp
+    );
+    *ctx = Some(MyContext {
+        gl,
         model,
+
+        textures,
         vertex_buf,
         indices_solid_buf,
         indices_edges_buf,
         indices_face_sel,
         indices_edge_sel,
-    };
 
-    *ctx = Some(MyContext {
-        gl,
-        gldata,
-        textures,
         material,
         selected_face: None,
         selected_edge: None,
 
         last_cursor_pos: (0.0, 0.0),
-        rotation: Quaternion::one(),
-        location: cgmath::Vector3::new(0.0, 0.0, -30.0),
-        scale: 20.0,
+
+        trans,
      });
 }
 
 fn gl_unrealize(_w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
+    dbg!("GL unrealize!");
     let mut ctx = ctx.borrow_mut();
     *ctx = None;
 }
@@ -415,6 +422,7 @@ impl glium::uniforms::Uniforms for MyUniforms<'_> {
 
 fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyContext>>>) -> gtk::Inhibit {
     let rect = w.allocation();
+
     let mut ctx = ctx.borrow_mut();
     let ctx = ctx.as_mut().unwrap();
     let mut frm = glium::Frame::new(ctx.gl.glctx.clone(), (rect.width() as u32, rect.height() as u32));
@@ -422,12 +430,6 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     use glium::Surface;
 
     frm.clear_color_and_depth((0.2, 0.2, 0.4, 1.0), 1.0);
-
-    let ratio = (rect.width() as f32) / (rect.height() as f32);
-    let persp = cgmath::perspective(cgmath::Deg(60.0), ratio, 1.0, 100.0);
-    let r = cgmath::Matrix3::from(ctx.rotation);
-    let t = cgmath::Matrix4::<f32>::from_translation(ctx.location);
-    let s = cgmath::Matrix4::<f32>::from_scale(ctx.scale);
 
     let light0 = cgmath::Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
     let light1 = cgmath::Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
@@ -437,13 +439,13 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
         .unwrap_or(ctx.textures.get("").unwrap());
 
     let mut u = MyUniforms {
-        m: persp * t * cgmath::Matrix4::from(r) * s,
-        mnormal: r, //should be transpose of inverse
+        m: ctx.trans.persp * ctx.trans.obj,
+        mnormal: ctx.trans.mnormal, // should be transpose of inverse
         lights: [light0, light1],
         texture: texture.sampled(),
     };
 
-    // Draw de textured polys
+    // Draw the textured polys
     let mut dp = glium::DrawParameters {
         viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
         blend: glium::Blend::alpha_blending(),
@@ -463,25 +465,25 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
         units: 1.0,
         .. PolygonOffset::default()
     };
-    frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_solid_buf, &ctx.gl.prg_solid, &u, &dp).unwrap();
+    frm.draw(&ctx.vertex_buf, &ctx.indices_solid_buf, &ctx.gl.prg_solid, &u, &dp).unwrap();
 
     if ctx.selected_face.is_some() {
         u.texture = ctx.textures.get("").unwrap().sampled();
-        frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_face_sel, &ctx.gl.prg_solid, &u, &dp).unwrap();
+        frm.draw(&ctx.vertex_buf, &ctx.indices_face_sel, &ctx.gl.prg_solid, &u, &dp).unwrap();
     }
 
     // Draw the lines:
 
     //dp.color_mask = (true, true, true, true);
-    dp.polygon_offset = PolygonOffset::default();
+    //dp.polygon_offset = PolygonOffset::default();
     dp.line_width = Some(1.0);
     dp.smooth = Some(glium::Smooth::Nicest);
-    frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_edges_buf, &ctx.gl.prg_line, &u, &dp).unwrap();
+    frm.draw(&ctx.vertex_buf, &ctx.indices_edges_buf, &ctx.gl.prg_line, &u, &dp).unwrap();
 
     dp.depth.test = glium::DepthTest::Overwrite;
     if ctx.selected_edge.is_some() {
         dp.line_width = Some(3.0);
-        frm.draw(&ctx.gldata.vertex_buf, &ctx.gldata.indices_edge_sel, &ctx.gl.prg_line, &u, &dp).unwrap();
+        frm.draw(&ctx.vertex_buf, &ctx.indices_edge_sel, &ctx.gl.prg_line, &u, &dp).unwrap();
     }
 
     frm.finish().unwrap();
@@ -513,36 +515,81 @@ unsafe impl glium::backend::Backend for GdkGliumBackend {
 }
 
 // This contains GL objects that are overall constant
-struct GlContext {
+struct GlData {
     glctx: Rc<glium::backend::Context>,
     prg_solid: glium::Program,
     prg_line: glium::Program,
 }
 
 // This contains GL objects that are object specific
-struct GlData {
+struct MyContext {
+    gl: GlData,
+
+    // The model
     model: paper::Model,
+
+    // GL objects
+    textures: HashMap<String, glium::Texture2d>,
+
     vertex_buf: glium::VertexBuffer<MVertex>,
     indices_solid_buf: glium::IndexBuffer<paper::VertexIndex>,
     indices_edges_buf: glium::IndexBuffer<paper::VertexIndex>,
 
     indices_face_sel: PersistentIndexBuffer,
     indices_edge_sel: PersistentIndexBuffer,
-}
 
-struct MyContext {
-    gl: GlContext,
-    gldata: GlData,
-    textures: HashMap<String, glium::Texture2d>,
+    // State
     material: Option<String>,
     selected_face: Option<paper::FaceIndex>,
     selected_edge: Option<paper::EdgeIndex>,
 
     last_cursor_pos: (f64, f64),
 
-    rotation: Quaternion<f32>,
+    trans: Transformation,
+}
+
+struct Transformation {
     location: cgmath::Vector3<f32>,
+    rotation: cgmath::Quaternion<f32>,
     scale: f32,
+
+    persp: cgmath::Matrix4<f32>,
+    persp_inv: cgmath::Matrix4<f32>,
+    obj: cgmath::Matrix4<f32>,
+    obj_inv: cgmath::Matrix4<f32>,
+    mnormal: cgmath::Matrix3<f32>,
+}
+
+impl Transformation {
+    fn new(location: cgmath::Vector3<f32>, rotation: cgmath::Quaternion<f32>, scale: f32, persp: cgmath::Matrix4<f32>) -> Transformation {
+        let mut tr = Transformation {
+            location,
+            rotation,
+            scale,
+            persp,
+            persp_inv: persp.invert().unwrap(),
+            obj: cgmath::Matrix4::one(),
+            obj_inv: cgmath::Matrix4::one(),
+            mnormal: cgmath::Matrix3::one(),
+        };
+        tr.recompute_obj();
+        tr
+    }
+    fn recompute_obj(&mut self) {
+        let r = cgmath::Matrix3::from(self.rotation);
+        let t = cgmath::Matrix4::<f32>::from_translation(self.location);
+        let s = cgmath::Matrix4::<f32>::from_scale(self.scale);
+
+        self.obj = t * cgmath::Matrix4::from(r) * s;
+        self.obj_inv = self.obj.invert().unwrap();
+        self.mnormal = r; //should be inverse of transpose
+    }
+
+    fn set_ratio(&mut self, ratio: f32) {
+        let f = self.persp[1][1];
+        self.persp[0][0] = f / ratio;
+        self.persp_inv = self.persp.invert().unwrap();
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default)]

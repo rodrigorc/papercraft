@@ -2,6 +2,9 @@
 
 use crate::waveobj;
 
+// We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
+// 32-bit indices should be enough for everybody ;-)
+
 #[derive(Debug)]
 pub struct Model {
     vertices: Vec<Vertex>,
@@ -32,7 +35,7 @@ pub struct FaceIndex(u32);
 pub struct Face {
     vertices: Vec<VertexIndex>,
     edges: Vec<EdgeIndex>,
-    tris: Vec<[usize; 3]>, //indices in self.vertices
+    tris: Vec<[u32; 3]>, //result of tesselation, indices in self.vertices
 }
 
 #[derive(Debug)]
@@ -79,11 +82,15 @@ impl Model {
                     cgmath::Vector3::from(vertices[v.0 as usize].pos)
                 })
                 .collect();
-            let tris = crate::util_3d::tessellate(&to_tess);
+            let tris = crate::util_3d::tessellate(&to_tess)
+                .into_iter()
+                .map(|tri| tri.map(|x| x as u32))
+                .collect();
+
             faces.push(Face {
                 vertices: face_verts,
                 edges: face_edges,
-                tris,
+                tris: tris,
             });
         }
 
@@ -132,7 +139,7 @@ impl Face {
     pub fn index_triangles(&self) -> impl Iterator<Item = [VertexIndex; 3]> + '_ {
         self.tris
             .iter()
-            .map(|tri| tri.map(|v| self.vertices[v]))
+            .map(|tri| tri.map(|v| self.vertices[v as usize]))
     }
 }
 

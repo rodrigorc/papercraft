@@ -43,80 +43,29 @@ fn main() {
                     let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
                     let click = cgmath::Point3::new(x as f32, y as f32, 1.0);
 
-                    let click_camera = ctx.trans.persp_inv.transform_point(click);
-                    let click_obj = ctx.trans.obj_inv.transform_point(click_camera);
-                    let camera_obj = ctx.trans.obj_inv.transform_point(cgmath::Point3::new(0.0, 0.0, 0.0));
-
-                    let ray = (camera_obj.to_vec(), click_obj.to_vec());
-
-                    let mut hit_face = None;
-                    for (iface, face) in ctx.model.faces() {
-                        for tri in face.index_triangles() {
-                            let tri = tri.map(|v| ctx.model.vertex_by_index(v).pos().into());
-                            let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
-                            if let Some(new_hit) = maybe_new_hit {
-                                dbg!(new_hit);
-                                hit_face = match (hit_face, new_hit) {
-                                    (Some((_, p)), x) if p > x && x > 0.0 => Some((iface, x)),
-                                    (None, x) if x > 0.0 => Some((iface, x)),
-                                    (old, _) => old
-                                };
-                                break;
-                            }
+                    let selection = ctx.analyze_click(click, rect.height() as f32);
+                    match selection {
+                        ClickResult::None => {
+                            ctx.selected_edge = None;
+                            ctx.selected_face = None;
                         }
-                    }
-
-                    dbg!(hit_face);
-                    ctx.selected_face = hit_face.map(|(iface, _distance)| {
-                        let face = ctx.model.face_by_index(iface);
-                        let idxs: Vec<_> = face.index_triangles()
-                            .flatten()
-                            .collect();
+                        ClickResult::Face(iface) => {
+                            let face = ctx.model.face_by_index(iface);
+                            let idxs: Vec<_> = face.index_triangles()
+                                .flatten()
+                                .collect();
                             ctx.indices_face_sel.update(&idxs);
-                        iface
-                    });
-
-                    let mut hit_edge = None;
-                    for (iedge, edge) in ctx.model.edges() {
-                        let v1 = ctx.model.vertex_by_index(edge.v0()).pos().into();
-                        let v2 = ctx.model.vertex_by_index(edge.v1()).pos().into();
-                        let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
-
-                        // Behind the screen, it is not a hit
-                        if ray_hit <= 0.0001 {
-                            continue;
+                            ctx.selected_face = Some(iface);
+                            ctx.selected_edge = None;
                         }
-
-                        // new_dist is originally the distance in real-world space, but the user is using the screen, so scale accordingly
-                        let new_dist = new_dist / ray_hit * (rect.height() as f32);
-
-                        // If this egde is from the ray further that the best one, it is worse and ignored
-                        match hit_edge {
-                            Some((_, _, p)) if p < new_dist => { continue; }
-                            _ => {}
+                        ClickResult::Edge(iedge) => {
+                            let edge = ctx.model.edge_by_index(iedge);
+                            let idxs = [edge.v0(), edge.v1()];
+                            ctx.indices_edge_sel.update(&idxs);
+                            ctx.selected_edge = Some(iedge);
+                            ctx.selected_face = None;
                         }
-
-                        // Too far from the edge
-                        if new_dist > 0.1 {
-                            continue;
-                        }
-
-                        // If there is a face 99% nearer this edge, it is hidden, probably, so it does not count
-                        match hit_face {
-                            Some((_, p)) if p < 0.99 * ray_hit => { continue; }
-                            _ => {}
-                        }
-
-                        hit_edge = Some((iedge, ray_hit, new_dist));
-                        ctx.selected_face = None;
                     }
-                    dbg!(hit_edge);
-                    ctx.selected_edge = hit_edge.map(|(iedge, _, _)| {
-                        let edge = ctx.model.edge_by_index(iedge);
-                        let idxs = [edge.v0(), edge.v1()];
-                        ctx.indices_edge_sel.update(&idxs);
-                        iedge
-                    });
                     w.queue_render();
                 }
             }
@@ -329,6 +278,8 @@ void main(void) {
     }
 
     let mut model = paper::Model::from_waveobj(&obj);
+
+    // Compute the bounding box, then move to the center and scale to a standard size
     let (v_min, v_max) = util_3d::bounding_box(
         model
             .vertices()
@@ -640,6 +591,96 @@ impl PersistentIndexBuffer {
 impl<'a> Into<glium::index::IndicesSource<'a>> for &'a PersistentIndexBuffer {
     fn into(self) -> glium::index::IndicesSource<'a> {
         self.buffer.slice(0 .. self.length).unwrap().into()
+    }
+}
+
+enum ClickResult {
+    None,
+    Face(paper::FaceIndex),
+    Edge(paper::EdgeIndex),
+}
+
+impl MyContext {
+    fn analyze_click(&self, click: cgmath::Point3<f32>, height: f32) -> ClickResult {
+        let click_camera = self.trans.persp_inv.transform_point(click);
+        let click_obj = self.trans.obj_inv.transform_point(click_camera);
+        let camera_obj = self.trans.obj_inv.transform_point(cgmath::Point3::new(0.0, 0.0, 0.0));
+
+        let ray = (camera_obj.to_vec(), click_obj.to_vec());
+
+        let mut hit_face = None;
+        for (iface, face) in self.model.faces() {
+            for tri in face.index_triangles() {
+                let tri = tri.map(|v| self.model.vertex_by_index(v).pos().into());
+                let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
+                if let Some(new_hit) = maybe_new_hit {
+                    dbg!(new_hit);
+                    hit_face = match (hit_face, new_hit) {
+                        (Some((_, p)), x) if p > x && x > 0.0 => Some((iface, x)),
+                        (None, x) if x > 0.0 => Some((iface, x)),
+                        (old, _) => old
+                    };
+                    break;
+                }
+            }
+        }
+
+        dbg!(hit_face);
+        /*self.selected_face = hit_face.map(|(iface, _distance)| {
+            let face = self.model.face_by_index(iface);
+            let idxs: Vec<_> = face.index_triangles()
+                .flatten()
+                .collect();
+                self.indices_face_sel.update(&idxs);
+            iface
+        });*/
+
+        let mut hit_edge = None;
+        for (iedge, edge) in self.model.edges() {
+            let v1 = self.model.vertex_by_index(edge.v0()).pos().into();
+            let v2 = self.model.vertex_by_index(edge.v1()).pos().into();
+            let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
+
+            // Behind the screen, it is not a hit
+            if ray_hit <= 0.0001 {
+                continue;
+            }
+
+            // new_dist is originally the distance in real-world space, but the user is using the screen, so scale accordingly
+            let new_dist = new_dist / ray_hit * height;
+
+            // If this egde is from the ray further that the best one, it is worse and ignored
+            match hit_edge {
+                Some((_, _, p)) if p < new_dist => { continue; }
+                _ => {}
+            }
+
+            // Too far from the edge
+            if new_dist > 0.1 {
+                continue;
+            }
+
+            // If there is a face 99% nearer this edge, it is hidden, probably, so it does not count
+            match hit_face {
+                Some((_, p)) if p < 0.99 * ray_hit => { continue; }
+                _ => {}
+            }
+
+            hit_edge = Some((iedge, ray_hit, new_dist));
+        }
+        dbg!(hit_edge);
+
+        match (hit_face, hit_edge) {
+            (_, Some((e, _, _))) => ClickResult::Edge(e),
+            (Some((f, _)), None) => ClickResult::Face(f),
+            (None, None) => ClickResult::None,
+        }
+        /*self.selected_edge = hit_edge.map(|(iedge, _, _)| {
+            let edge = self.model.edge_by_index(iedge);
+            let idxs = [edge.v0(), edge.v1()];
+            self.indices_edge_sel.update(&idxs);
+            iedge
+        });*/
     }
 }
 

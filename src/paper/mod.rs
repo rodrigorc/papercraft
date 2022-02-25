@@ -9,7 +9,7 @@ pub struct Model {
     faces: Vec<Face>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct VertexIndex(u32);
 
@@ -20,11 +20,11 @@ unsafe impl glium::index::Index for VertexIndex {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct EdgeIndex(u32);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct FaceIndex(u32);
 
@@ -93,10 +93,11 @@ impl Model {
             faces,
         }
     }
-    pub fn transform_vertices<F>(&mut self, f: F)
-        where F: FnMut(&mut Vertex)
+    // F gets (pos, normal)
+    pub fn transform_vertices<F>(&mut self, mut f: F)
+        where F: FnMut(&mut [f32; 3], &mut [f32; 3])
     {
-        self.vertices.iter_mut().for_each(f);
+        self.vertices.iter_mut().for_each(|v| f(&mut v.pos, &mut v.normal));
     }
     pub fn vertices(&self) -> impl Iterator<Item = &Vertex> {
         self.vertices.iter()
@@ -125,8 +126,8 @@ impl Model {
 }
 
 impl Face {
-    pub fn index_vertices(&self) -> &[VertexIndex] {
-        &self.vertices
+    pub fn index_vertices(&self) -> impl Iterator<Item = VertexIndex> + '_ {
+        self.vertices.iter().copied()
     }
     pub fn index_triangles(&self) -> impl Iterator<Item = [VertexIndex; 3]> + '_ {
         self.tris
@@ -136,17 +137,17 @@ impl Face {
 }
 
 impl Vertex {
-    pub fn pos(&self) -> &[f32; 3] {
-        &self.pos
+    pub fn pos(&self) -> [f32; 3] {
+        self.pos
     }
     pub fn pos_mut(&mut self) -> &mut [f32; 3] {
         &mut self.pos
     }
-    pub fn normal(&self) -> &[f32; 3] {
-        &self.normal
+    pub fn normal(&self) -> [f32; 3] {
+        self.normal
     }
-    pub fn uv(&self) -> &[f32; 2] {
-        &self.uv
+    pub fn uv(&self) -> [f32; 2] {
+        self.uv
     }
 }
 

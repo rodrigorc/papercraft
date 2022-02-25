@@ -52,7 +52,7 @@ fn main() {
                     let mut hit_face = None;
                     for (iface, face) in ctx.model.faces() {
                         for tri in face.index_triangles() {
-                            let tri = tri.map(|v| (*ctx.model.vertex_by_index(v).pos()).into());
+                            let tri = tri.map(|v| ctx.model.vertex_by_index(v).pos().into());
                             let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
                             if let Some(new_hit) = maybe_new_hit {
                                 dbg!(new_hit);
@@ -78,24 +78,37 @@ fn main() {
 
                     let mut hit_edge = None;
                     for (iedge, edge) in ctx.model.edges() {
-                        let v1 = *ctx.model.vertex_by_index(edge.v0()).pos();
-                        let v2 = *ctx.model.vertex_by_index(edge.v1()).pos();
-                        let (ray_hit, _line_hit, new_dist_2) = util_3d::line_segment_distance(ray, (v1.into(), v2.into()));
+                        let v1 = ctx.model.vertex_by_index(edge.v0()).pos().into();
+                        let v2 = ctx.model.vertex_by_index(edge.v1()).pos().into();
+                        let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
 
-                        if new_dist_2 > 0.01  || ray_hit < 0.0 {
+                        // Behind the screen, it is not a hit
+                        if ray_hit <= 0.0001 {
                             continue;
                         }
 
+                        // new_dist is originally the distance in real-world space, but the user is using the screen, so scale accordingly
+                        let new_dist = new_dist / ray_hit * (rect.height() as f32);
+
+                        // If this egde is from the ray further that the best one, it is worse and ignored
                         match hit_edge {
-                            Some((_, _, p)) if p < new_dist_2 => { continue; }
-                            _ => {}
-                        }
-                        match hit_face {
-                            Some((_, p)) if p < 0.9 * ray_hit => { continue; }
+                            Some((_, _, p)) if p < new_dist => { continue; }
                             _ => {}
                         }
 
-                        hit_edge = Some((iedge, ray_hit, new_dist_2));
+                        // Too far from the edge
+                        if new_dist > 0.1 {
+                            continue;
+                        }
+
+                        // If there is a face 99% nearer this edge, it is hidden, probably, so it does not count
+                        match hit_face {
+                            Some((_, p)) if p < 0.99 * ray_hit => { continue; }
+                            _ => {}
+                        }
+
+                        hit_edge = Some((iedge, ray_hit, new_dist));
+                        ctx.selected_face = None;
                     }
                     dbg!(hit_edge);
                     ctx.selected_edge = hit_edge.map(|(iedge, _, _)| {
@@ -319,7 +332,7 @@ void main(void) {
     let (v_min, v_max) = util_3d::bounding_box(
         model
             .vertices()
-            .map(|v| cgmath::Vector3::from(*v.pos()))
+            .map(|v| cgmath::Vector3::from(v.pos()))
     );
     let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
     let mscale = cgmath::Matrix4::<f32>::from_scale(1.0 / size);
@@ -327,17 +340,17 @@ void main(void) {
     let mcenter = cgmath::Matrix4::<f32>::from_translation(-center);
     let m = mscale * mcenter;
 
-    model.transform_vertices(|v| {
+    model.transform_vertices(|pos, _normal| {
         //only scale and translate, no need to touch normals
-        *v.pos_mut() = m.transform_point(cgmath::Point3::from(*v.pos())).into();
+        *pos = m.transform_point(cgmath::Point3::from(*pos)).into();
     });
 
     let vertices: Vec<MVertex> = model.vertices()
         .map(|v| {
             let uv = v.uv();
             MVertex {
-                pos: *v.pos(),
-                normal: *v.normal(),
+                pos: v.pos(),
+                normal: v.normal(),
                 uv: [uv[0], 1.0 - uv[1]],
             }
         }).collect();
@@ -346,14 +359,11 @@ void main(void) {
     let mut indices_edges = Vec::new();
     for (_, face) in model.faces() {
         indices_solid.extend(face.index_triangles().flatten());
-
-        let face_indices = face.index_vertices();
-        for i in 0 .. face_indices.len() {
-            indices_edges.push(face_indices[i]);
-            indices_edges.push(face_indices[(i + 1) % face_indices.len()]);
-        }
     }
-
+    for (_, edge) in model.edges() {
+        indices_edges.push(edge.v0());
+        indices_edges.push(edge.v1());
+    }
     let gl = GlData {
         glctx,
         prg_solid,

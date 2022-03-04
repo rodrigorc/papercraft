@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::waveobj;
+use crate::util_3d;
 
 // We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
 // 32-bit indices should be enough for everybody ;-)
@@ -36,6 +37,7 @@ pub struct Face {
     vertices: Vec<VertexIndex>,
     edges: Vec<EdgeIndex>,
     tris: Vec<[u32; 3]>, //result of tesselation, indices in self.vertices
+    normal: util_3d::Plane,
 }
 
 #[derive(Debug)]
@@ -82,15 +84,18 @@ impl Model {
                     cgmath::Vector3::from(vertices[v.0 as usize].pos)
                 })
                 .collect();
-            let tris = crate::util_3d::tessellate(&to_tess)
-                .into_iter()
-                .map(|tri| tri.map(|x| x as u32))
-                .collect();
+            let (tris, normal) = util_3d::tessellate(&to_tess);
+            let tris =
+                tris
+                    .into_iter()
+                    .map(|tri| tri.map(|x| x as u32))
+                    .collect();
 
             faces.push(Face {
                 vertices: face_verts,
                 edges: face_edges,
-                tris: tris,
+                tris,
+                normal,
             });
         }
 
@@ -141,6 +146,9 @@ impl Face {
             .iter()
             .map(|tri| tri.map(|v| self.vertices[v as usize]))
     }
+    pub fn normal(&self) -> &util_3d::Plane {
+        &self.normal
+    }
 }
 
 impl Vertex {
@@ -155,6 +163,9 @@ impl Vertex {
     }
     pub fn uv(&self) -> [f32; 2] {
         self.uv
+    }
+    pub fn uv_inv(&self) -> [f32; 2] {
+        [self.uv[0], 1.0 - self.uv[1]]
     }
 }
 

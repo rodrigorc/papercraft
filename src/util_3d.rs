@@ -1,17 +1,37 @@
-use cgmath::{Vector3, Zero, InnerSpace, Vector2, Rad};
+use cgmath::{Vector3, Zero, InnerSpace, Vector2, Rad, Matrix3, Matrix2, Transform, One};
 use std::f32::consts::PI;
 
+#[derive(Debug)]
+pub struct Plane {
+    origin: Vector3<f32>,
+    base_x: Vector3<f32>,
+    base_y: Vector3<f32>,
+}
+
+impl Default for Plane {
+    fn default() -> Plane{
+        Plane {
+            origin: Vector3::zero(),
+            base_x: Vector3::new(1.0, 0.0, 0.0),
+            base_y: Vector3::new(0.0, 1.0, 0.0),
+        }
+    }
+}
+
+impl Plane {
+    pub fn project(&self, p: &Vector3<f32>) -> Vector2<f32> {
+        let p = p - self.origin;
+        let x = p.dot(self.base_x);
+        let y = p.dot(self.base_y);
+        Vector2::new(x, y)
+    }
+}
+
 // Each returned tuple is a triangle of indices into the original vector
-pub fn tessellate(ps: &[Vector3<f32>]) -> Vec<[usize; 3]> {
+pub fn tessellate(ps: &[Vector3<f32>]) -> (Vec<[usize; 3]>, Plane) {
     if ps.len() < 3 {
-        return Vec::new();
+        return (Vec::new(), Plane::default());
     }
-
-    if ps.len() == 3 {
-        return vec![[0, 1, 2]];
-    }
-
-    let mut res = Vec::with_capacity(ps.len() - 2);
 
     // Compute the face plane
     let mut normal = Vector3::zero();
@@ -26,15 +46,25 @@ pub fn tessellate(ps: &[Vector3<f32>]) -> Vec<[usize; 3]> {
     let plane_y = plane_x.cross(normal);
     let plane_o = ps[0];
 
+    let plane = Plane {
+        origin: plane_o,
+        base_x: plane_x,
+        base_y: plane_y,
+    };
+
+    if ps.len() == 3 {
+        return (vec![[0, 1, 2]], plane);
+    }
+
+    let mut res = Vec::with_capacity(ps.len() - 2);
+
     // Project every vertex into this plane
     let mut ps = ps
         .iter()
         .enumerate()
         .map(|(idx, p)| {
-            let p = p - plane_o;
-            let x = p.dot(plane_x);
-            let y = p.dot(plane_y);
-            (idx, Vector2::new(x, y))
+            let p2 = plane.project(p);
+            (idx, p2)
         })
         .collect::<Vec<_>>();
 
@@ -71,7 +101,7 @@ pub fn tessellate(ps: &[Vector3<f32>]) -> Vec<[usize; 3]> {
         ps.remove(tri.1);
     }
 
-    res
+    (res, plane)
 }
 
 fn point_in_triangle(p: Vector2<f32>, p0: Vector2<f32>, p1: Vector2<f32>, p2: Vector2<f32>) -> bool {
@@ -186,4 +216,53 @@ pub fn line_segment_distance(line0: (Vector3<f32>, Vector3<f32>), line1: (Vector
         distance2 = (line1.1 - p).magnitude2();
     }
     (l0_closest, l1_closest, distance2)
+}
+
+//Computes a 2D matrix that converts from `a` to [(1,0), (0,0), (0,1)]
+pub fn basis_2d_matrix(a: [Vector2<f32>; 3]) -> Matrix3::<f32> {
+
+    let mt = Matrix3::<f32>::from_translation(-a[1]);
+    let angle = (a[0] - a[1]).angle(Vector2::<f32>::new(1.0, 0.0));
+    let mr = Matrix2::<f32>::from_angle(angle);
+    let len = (a[0] - a[1]).magnitude();
+    let ms = Matrix3::<f32>::from_scale(1.0 / len);
+
+    let m = ms * Matrix3::from(mr) * mt;
+
+    let a2 = m.transform_point(cgmath::Point2::new(a[2].x, a[2].y));
+    let ms2 = Matrix3::<f32>::from_nonuniform_scale(1.0, 1.0 / a2.y);
+
+    let mut shear = Matrix3::<f32>::one();
+    shear[1][0] = -a2.x;
+
+    let m = shear * ms2 * m;
+
+
+    for v in &a {
+        dbg!(m.transform_point(cgmath::Point2::new(v.x, v.y)));
+    }
+
+    m
+}
+
+#[cfg(test)]
+mod tests {
+    use cgmath::SquareMatrix;
+
+    use super::*;
+    #[test]
+    fn test1() {
+        let a = [Vector2::new(3.2, 4.1), Vector2::new(8.0, 2.4), Vector2::new(5.1, 4.0)];
+        let b = [Vector2::new(4.2, 1.1), Vector2::new(2.0, 3.4), Vector2::new(4.1, -2.0)];
+        let ma = basis_2d_matrix(a);
+        let mb = basis_2d_matrix(b);
+
+        let mm = mb.invert().unwrap() * ma;
+
+        for (va, vb) in a.iter().zip(b.iter()) {
+            let pa = mm.transform_point(cgmath::Point2::new(va.x, va.y));
+            dbg!(pa - vb);
+        }
+
+    }
 }

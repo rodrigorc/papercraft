@@ -67,6 +67,7 @@ fn main() {
                         }
                     }
                     w.queue_render();
+                    w.parent().iter().for_each(|w| w.queue_draw());
                 }
             }
             Inhibit(false)
@@ -141,13 +142,104 @@ fn main() {
     gl.connect_resize({
         let ctx = ctx.clone();
         move |_w, width, height| {
+            if height <= 0 || width <= 0 {
+                return;
+            }
             if let Some(ctx) = ctx.borrow_mut().as_mut() {
                 let ratio = width as f32 / height as f32;
                 ctx.trans.set_ratio(ratio);
             }
         }
     });
-    w.add(&gl);
+
+    let paper = gtk::DrawingArea::new();
+    paper.connect_draw({
+        let ctx = ctx.clone();
+        move |w, cr| {
+            let rect = w.allocation();
+            dbg!("draw! {}", rect);
+            cr.set_source_rgb(0.75, 0.75, 0.75);
+            let _ = cr.paint();
+            let ctx = ctx.borrow();
+            if let Some(ctx)  = &*ctx {
+                if let Some(face) = ctx.selected_face {
+                    let face = ctx.model.face_by_index(face);
+
+                    //let mr = cgmath::Matrix2::from(self.rotation);
+                    let mr = cgmath::Matrix3::<f32>::one();
+                    let mt = cgmath::Matrix3::<f32>::from_translation(cgmath::Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
+                    let ms = cgmath::Matrix3::<f32>::from_scale(1000.0);
+                    let m = mt * ms * mr;
+
+                    let vs: Vec<_> = face.index_vertices()
+                        .map(|f| {
+                            let v = ctx.model.vertex_by_index(f);
+                            face.normal().project(&v.pos().into())
+                        })
+                        .collect();
+                    let center: cgmath::Vector2<f32> = vs.iter().sum();
+                    let center = center / vs.len() as f32;
+                    let vs: Vec<_> = vs.into_iter()
+                        .map(|v| {
+                            let v = v - center;
+                            let v = m.transform_point(cgmath::Point2::new(v[0], v[1]));
+                            cgmath::Vector2::new(v[0], v[1])
+                        })
+                        .collect();
+                    cr.set_line_width(1.0);
+
+                    let vlast = vs[vs.len()-1];
+                    cr.move_to(vlast[0] as f64, vlast[1] as f64);
+                    for iv in 0..vs.len() {
+                        let v = vs[iv];
+                        cr.line_to(v[0] as f64, v[1] as f64);
+                    }
+
+                    let mat_name = ctx.material.as_deref().unwrap_or("");
+                    let pixbuf = ctx.textures.get(mat_name)
+                        .and_then(|(_, pb)| pb.as_ref());
+
+                    match pixbuf {
+                        Some(pixbuf) => {
+                            let _ = cr.set_source_pixbuf(pixbuf, 0.0, 0.0);
+                            let pat = cr.source();
+                            let face_idx: Vec<_> = face.index_vertices()
+                                .take(3)
+                                .map(|idx| {
+                                    let uv = ctx.model.vertex_by_index(idx).uv_inv();
+                                    cgmath::Vector2::<f32>::from(uv)
+                                })
+                                .collect();
+                            let uv = face_idx.try_into().unwrap();
+                            let m0 = util_3d::basis_2d_matrix(uv);
+                            let m1 = util_3d::basis_2d_matrix([vs[0], vs[1], vs[2]]);
+                            let ss = cgmath::Matrix3::<f32>::from_nonuniform_scale(pixbuf.width() as f32, pixbuf.height() as f32);
+                            let m = ss * m0.invert().unwrap() * m1;
+                            let m = gtk::cairo::Matrix::new(
+                                m[0][0] as f64, m[0][1] as f64,
+                                m[1][0] as f64, m[1][1] as f64,
+                                m[2][0] as f64, m[2][1] as f64,
+                            );
+                            pat.set_matrix(m);
+                        }
+                        None => { cr.set_source_rgb(0.1, 0.1, 0.1); }
+                    }
+                    let _ = cr.fill_preserve();
+                    //let _ = cr.paint();
+                    cr.set_source_rgb(0.0, 0.0, 0.0);
+                    let _ = cr.stroke();
+                }
+            }
+            gtk::Inhibit(true)
+        }
+    });
+
+    let hbin = gtk::Paned::new(gtk::Orientation::Horizontal);
+    hbin.pack1(&gl, true, true);
+
+    hbin.pack2(&paper, true, true);
+
+    w.add(&hbin);
 
     /*
     glib::timeout_add_local(std::time::Duration::from_millis(50), {
@@ -244,7 +336,7 @@ void main(void) {
     // Empty texture is just a single white texel
     let empty = glium::Texture2d::empty(&glctx, 1, 1).unwrap();
     empty.write(glium::Rect{ left: 0, bottom: 0, width: 1, height: 1 }, vec![vec![(255u8, 255u8, 255u8, 255u8)]]);
-    textures.insert(String::new(), empty);
+    textures.insert(String::new(), (empty, None));
 
     // Other textures are read from the .mtl file
     for lib in matlibs {
@@ -272,7 +364,7 @@ void main(void) {
                 };
                 dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
                 let tex = glium::Texture2d::new(&glctx,  raw).unwrap();
-                textures.insert(String::from(lib.name()), tex);
+                textures.insert(String::from(lib.name()), (tex, Some(img)));
             }
         }
     }
@@ -396,7 +488,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     let light1 = cgmath::Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
     let mat_name = ctx.material.as_deref().unwrap_or("");
-    let texture = ctx.textures.get(mat_name)
+    let (texture, _) = ctx.textures.get(mat_name)
         .unwrap_or(ctx.textures.get("").unwrap());
 
     let mut u = MyUniforms {
@@ -429,7 +521,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     frm.draw(&ctx.vertex_buf, &ctx.indices_solid_buf, &ctx.gl.prg_solid, &u, &dp).unwrap();
 
     if ctx.selected_face.is_some() {
-        u.texture = ctx.textures.get("").unwrap().sampled();
+        u.texture = ctx.textures.get("").unwrap().0.sampled();
         frm.draw(&ctx.vertex_buf, &ctx.indices_face_sel, &ctx.gl.prg_solid, &u, &dp).unwrap();
     }
 
@@ -490,7 +582,7 @@ struct MyContext {
     model: paper::Model,
 
     // GL objects
-    textures: HashMap<String, glium::Texture2d>,
+    textures: HashMap<String, (glium::Texture2d, Option<gdk_pixbuf::Pixbuf>)>,
 
     vertex_buf: glium::VertexBuffer<MVertex>,
     indices_solid_buf: glium::IndexBuffer<paper::VertexIndex>,

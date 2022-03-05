@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::waveobj;
-use crate::util_3d;
+use crate::util_3d::{self, Vector2, Vector3};
 
 // We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
 // 32-bit indices should be enough for everybody ;-)
@@ -48,9 +48,9 @@ pub struct Edge {
 
 #[derive(Debug)]
 pub struct Vertex {
-    pos: [f32; 3],
-    normal: [f32; 3],
-    uv: [f32; 2],
+    pos: Vector3,
+    normal: Vector3,
+    uv: Vector2,
 }
 
 impl Model {
@@ -58,9 +58,9 @@ impl Model {
         let vertices: Vec<_> = obj.vertices()
             .iter()
             .map(|v| Vertex {
-                pos: *v.pos(),
-                normal: *v.normal(),
-                uv: *v.uv(),
+                pos: Vector3::from(*v.pos()),
+                normal: Vector3::from(*v.normal()),
+                uv: Vector2::from(*v.uv()),
             })
             .collect();
 
@@ -77,21 +77,6 @@ impl Model {
                     v1,
                 });
             }
-
-            /*
-            let to_tess: Vec<_> = face_verts
-                .iter()
-                .map(|v| {
-                    cgmath::Vector3::from(vertices[v.0 as usize].pos)
-                })
-                .collect();
-            let (tris, plane) = util_3d::tessellate(&to_tess);
-            let tris =
-                tris
-                    .into_iter()
-                    .map(|tri| tri.map(|x| x as u32))
-                    .collect();
-            */
             faces.push(Face {
                 vertices: face_verts,
                 edges: face_edges,
@@ -108,7 +93,7 @@ impl Model {
     }
     // F gets (pos, normal)
     pub fn transform_vertices<F>(&mut self, mut f: F)
-        where F: FnMut(&mut [f32; 3], &mut [f32; 3])
+        where F: FnMut(&mut Vector3, &mut Vector3)
     {
         self.vertices.iter_mut().for_each(|v| f(&mut v.pos, &mut v.normal));
     }
@@ -116,10 +101,7 @@ impl Model {
         for face in &mut self.faces {
             let to_tess: Vec<_> = face.vertices
                 .iter()
-                .map(|v| {
-                    let v = self.vertices[v.0 as usize].pos;
-                    cgmath::Vector3::from(v)
-                })
+                .map(|v| self.vertices[v.0 as usize].pos)
                 .collect();
             let (tris, plane) = util_3d::tessellate(&to_tess);
             face.tris =
@@ -171,20 +153,20 @@ impl Face {
 }
 
 impl Vertex {
-    pub fn pos(&self) -> [f32; 3] {
+    pub fn pos(&self) -> Vector3 {
         self.pos
     }
-    pub fn pos_mut(&mut self) -> &mut [f32; 3] {
+    pub fn pos_mut(&mut self) -> &mut Vector3 {
         &mut self.pos
     }
-    pub fn normal(&self) -> [f32; 3] {
+    pub fn normal(&self) -> Vector3 {
         self.normal
     }
-    pub fn uv(&self) -> [f32; 2] {
+    pub fn uv(&self) -> Vector2 {
         self.uv
     }
-    pub fn uv_inv(&self) -> [f32; 2] {
-        [self.uv[0], 1.0 - self.uv[1]]
+    pub fn uv_inv(&self) -> Vector2 {
+        Vector2::new(self.uv.x, 1.0 - self.uv.y)
     }
 }
 

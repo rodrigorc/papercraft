@@ -1,11 +1,19 @@
 #![allow(dead_code)]
 
-use cgmath::prelude::*;
-use cgmath::conv::{array4x4, array3x3, array3};
-use glium::draw_parameters::PolygonOffset;
-use glium::uniforms::AsUniformValue;
-use gtk::prelude::*;
-use gtk::gdk::{self, EventMask};
+use cgmath::{
+    prelude::*,
+    conv::{array4x4, array3x3, array3},
+    Deg,
+};
+use glium::{
+    draw_parameters::PolygonOffset,
+    uniforms::AsUniformValue,
+};
+use gtk::{
+    prelude::*,
+    gdk::{self, EventMask},
+};
+
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -13,6 +21,8 @@ use std::cell::RefCell;
 mod waveobj;
 mod paper;
 mod util_3d;
+
+use util_3d::{Matrix2, Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3};
 
 fn main() {
     std::env::set_var("GTK_CSD", "0");
@@ -41,7 +51,7 @@ fn main() {
                     let (x, y) = ev.position();
                     let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
                     let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
-                    let click = cgmath::Point3::new(x as f32, y as f32, 1.0);
+                    let click = Point3::new(x as f32, y as f32, 1.0);
 
                     let selection = ctx.analyze_click(click, rect.height() as f32);
                     match selection {
@@ -108,8 +118,8 @@ fn main() {
                     let siny = ang_x.sin();
                     let cosx = ang_y.cos();
                     let sinx = ang_y.sin();
-                    let roty = cgmath::Quaternion::new(cosy, 0.0, siny, 0.0);
-                    let rotx = cgmath::Quaternion::new(cosx, sinx, 0.0, 0.0);
+                    let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
+                    let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
 
                     ctx.trans.rotation = (roty * rotx * ctx.trans.rotation).normalize();
                     ctx.trans.recompute_obj();
@@ -118,7 +128,7 @@ fn main() {
                     let dx = dx / 50.0;
                     let dy = -dy / 50.0;
 
-                    ctx.trans.location += cgmath::Vector3::new(dx, dy, 0.0);
+                    ctx.trans.location += Vector3::new(dx, dy, 0.0);
                     ctx.trans.recompute_obj();
                     gl.queue_render();
                 }
@@ -166,18 +176,17 @@ fn main() {
                 if let Some(face) = ctx.selected_face {
                     let face = ctx.model.face_by_index(face);
 
-                    let mr = cgmath::Matrix3::<f32>::from(cgmath::Matrix2::from_angle(cgmath::Deg(30.0)));
-                    let mt = cgmath::Matrix3::<f32>::from_translation(cgmath::Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
-                    let ms = cgmath::Matrix3::<f32>::from_scale(1000.0);
+                    let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
+                    let mt = Matrix3::from_translation(Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
+                    let ms = Matrix3::from_scale(1000.0);
                     let m = mt * ms * mr;
 
                     for tri in face.index_triangles() {
                         let vs: Vec<_> = tri.into_iter()
                             .map(|f| {
                                 let v = ctx.model.vertex_by_index(f);
-                                let v = face.normal().project(&cgmath::Vector3::from(v.pos()));
-                                let v = m.transform_point(cgmath::Point2::new(v[0], v[1]));
-                                cgmath::Vector2::new(v[0], v[1])
+                                let v = face.normal().project(&v.pos());
+                                m.transform_point(Point2::from_vec(v)).to_vec()
                             })
                             .collect();
 
@@ -195,13 +204,10 @@ fn main() {
                             Some(pixbuf) => {
                                 let _ = cr.set_source_pixbuf(pixbuf, 0.0, 0.0);
                                 let pat = cr.source();
-                                let uv = tri.map(|idx| {
-                                        let uv = ctx.model.vertex_by_index(idx).uv_inv();
-                                        cgmath::Vector2::<f32>::from(uv)
-                                    });
+                                let uv = tri.map(|idx| ctx.model.vertex_by_index(idx).uv_inv());
                                 let m0 = util_3d::basis_2d_matrix(uv);
                                 let m1 = util_3d::basis_2d_matrix([vs[0], vs[1], vs[2]]);
-                                let ss = cgmath::Matrix3::<f32>::from_nonuniform_scale(pixbuf.width() as f32, pixbuf.height() as f32);
+                                let ss = Matrix3::from_nonuniform_scale(pixbuf.width() as f32, pixbuf.height() as f32);
                                 let m = ss * m0.invert().unwrap() * m1;
                                 let m = gtk::cairo::Matrix::new(
                                     m[0][0] as f64, m[0][1] as f64,
@@ -365,27 +371,26 @@ void main(void) {
     let (v_min, v_max) = util_3d::bounding_box(
         model
             .vertices()
-            .map(|v| cgmath::Vector3::from(v.pos()))
+            .map(|v| v.pos())
     );
     let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
-    let mscale = cgmath::Matrix4::<f32>::from_scale(1.0 / size);
+    let mscale = Matrix4::from_scale(1.0 / size);
     let center = (v_min + v_max) / 2.0;
-    let mcenter = cgmath::Matrix4::<f32>::from_translation(-center);
+    let mcenter = Matrix4::from_translation(-center);
     let m = mscale * mcenter;
 
     model.transform_vertices(|pos, _normal| {
         //only scale and translate, no need to touch normals
-        *pos = m.transform_point(cgmath::Point3::from(*pos)).into();
+        *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
     });
     model.tessellate_faces();
 
     let vertices: Vec<MVertex> = model.vertices()
         .map(|v| {
-            let uv = v.uv();
             MVertex {
                 pos: v.pos(),
                 normal: v.normal(),
-                uv: [uv[0], 1.0 - uv[1]],
+                uv: v.uv_inv(),
             }
         }).collect();
 
@@ -411,10 +416,10 @@ void main(void) {
     let indices_face_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::TrianglesList);
     let indices_edge_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::LinesList);
 
-    let persp = cgmath::perspective(cgmath::Deg(60.0), 1.0, 1.0, 100.0);
+    let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
     let trans = Transformation::new(
-        cgmath::Vector3::new(0.0, 0.0, -30.0),
-        cgmath::Quaternion::one(),
+        Vector3::new(0.0, 0.0, -30.0),
+        Quaternion::one(),
          20.0,
          persp
     );
@@ -446,9 +451,9 @@ fn gl_unrealize(_w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
 }
 
 struct MyUniforms<'a> {
-    m: cgmath::Matrix4<f32>,
-    mnormal: cgmath::Matrix3<f32>,
-    lights: [cgmath::Vector3<f32>; 2],
+    m: Matrix4,
+    mnormal: Matrix3,
+    lights: [Vector3; 2],
     texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
 }
 
@@ -475,8 +480,8 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
 
     frm.clear_color_and_depth((0.2, 0.2, 0.4, 1.0), 1.0);
 
-    let light0 = cgmath::Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
-    let light1 = cgmath::Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
+    let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
+    let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
     let mat_name = ctx.material.as_deref().unwrap_or("");
     let (texture, _) = ctx.textures.get(mat_name)
@@ -593,38 +598,38 @@ struct MyContext {
 }
 
 struct Transformation {
-    location: cgmath::Vector3<f32>,
-    rotation: cgmath::Quaternion<f32>,
+    location: Vector3,
+    rotation: Quaternion,
     scale: f32,
 
-    persp: cgmath::Matrix4<f32>,
-    persp_inv: cgmath::Matrix4<f32>,
-    obj: cgmath::Matrix4<f32>,
-    obj_inv: cgmath::Matrix4<f32>,
-    mnormal: cgmath::Matrix3<f32>,
+    persp: Matrix4,
+    persp_inv: Matrix4,
+    obj: Matrix4,
+    obj_inv: Matrix4,
+    mnormal: Matrix3,
 }
 
 impl Transformation {
-    fn new(location: cgmath::Vector3<f32>, rotation: cgmath::Quaternion<f32>, scale: f32, persp: cgmath::Matrix4<f32>) -> Transformation {
+    fn new(location: Vector3, rotation: Quaternion, scale: f32, persp: Matrix4) -> Transformation {
         let mut tr = Transformation {
             location,
             rotation,
             scale,
             persp,
             persp_inv: persp.invert().unwrap(),
-            obj: cgmath::Matrix4::one(),
-            obj_inv: cgmath::Matrix4::one(),
-            mnormal: cgmath::Matrix3::one(),
+            obj: Matrix4::one(),
+            obj_inv: Matrix4::one(),
+            mnormal: Matrix3::one(),
         };
         tr.recompute_obj();
         tr
     }
     fn recompute_obj(&mut self) {
-        let r = cgmath::Matrix3::from(self.rotation);
-        let t = cgmath::Matrix4::<f32>::from_translation(self.location);
-        let s = cgmath::Matrix4::<f32>::from_scale(self.scale);
+        let r = Matrix3::from(self.rotation);
+        let t = Matrix4::from_translation(self.location);
+        let s = Matrix4::from_scale(self.scale);
 
-        self.obj = t * cgmath::Matrix4::from(r) * s;
+        self.obj = t * Matrix4::from(r) * s;
         self.obj_inv = self.obj.invert().unwrap();
         self.mnormal = r; //should be inverse of transpose
     }
@@ -639,9 +644,9 @@ impl Transformation {
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct MVertex {
-    pub pos: [f32; 3],
-    pub normal: [f32; 3],
-    pub uv: [f32; 2],
+    pub pos: Vector3,
+    pub normal: Vector3,
+    pub uv: Vector2,
 }
 
 impl glium::Vertex for MVertex {
@@ -696,17 +701,17 @@ enum ClickResult {
 }
 
 impl MyContext {
-    fn analyze_click(&self, click: cgmath::Point3<f32>, height: f32) -> ClickResult {
+    fn analyze_click(&self, click: Point3, height: f32) -> ClickResult {
         let click_camera = self.trans.persp_inv.transform_point(click);
         let click_obj = self.trans.obj_inv.transform_point(click_camera);
-        let camera_obj = self.trans.obj_inv.transform_point(cgmath::Point3::new(0.0, 0.0, 0.0));
+        let camera_obj = self.trans.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
 
         let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
         let mut hit_face = None;
         for (iface, face) in self.model.faces() {
             for tri in face.index_triangles() {
-                let tri = tri.map(|v| self.model.vertex_by_index(v).pos().into());
+                let tri = tri.map(|v| self.model.vertex_by_index(v).pos());
                 let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
                 if let Some(new_hit) = maybe_new_hit {
                     dbg!(new_hit);
@@ -732,8 +737,8 @@ impl MyContext {
 
         let mut hit_edge = None;
         for (iedge, edge) in self.model.edges() {
-            let v1 = self.model.vertex_by_index(edge.v0()).pos().into();
-            let v2 = self.model.vertex_by_index(edge.v1()).pos().into();
+            let v1 = self.model.vertex_by_index(edge.v0()).pos();
+            let v2 = self.model.vertex_by_index(edge.v1()).pos();
             let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
 
             // Behind the screen, it is not a hit

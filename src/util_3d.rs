@@ -1,11 +1,20 @@
-use cgmath::{Vector3, Zero, InnerSpace, Vector2, Rad, Matrix3, Matrix2, Transform, One};
 use std::f32::consts::PI;
+use cgmath::{Zero, InnerSpace, Transform, One, Rad};
+
+pub type Vector2 = cgmath::Vector2<f32>;
+pub type Vector3 = cgmath::Vector3<f32>;
+pub type Point2 = cgmath::Point2<f32>;
+pub type Point3 = cgmath::Point3<f32>;
+pub type Quaternion = cgmath::Quaternion<f32>;
+pub type Matrix2 = cgmath::Matrix2<f32>;
+pub type Matrix3 = cgmath::Matrix3<f32>;
+pub type Matrix4 = cgmath::Matrix4<f32>;
 
 #[derive(Debug)]
 pub struct Plane {
-    origin: Vector3<f32>,
-    base_x: Vector3<f32>,
-    base_y: Vector3<f32>,
+    origin: Vector3,
+    base_x: Vector3,
+    base_y: Vector3,
 }
 
 impl Default for Plane {
@@ -19,7 +28,7 @@ impl Default for Plane {
 }
 
 impl Plane {
-    pub fn project(&self, p: &Vector3<f32>) -> Vector2<f32> {
+    pub fn project(&self, p: &Vector3) -> Vector2 {
         let p = p - self.origin;
         let x = p.dot(self.base_x);
         let y = p.dot(self.base_y);
@@ -28,7 +37,7 @@ impl Plane {
 }
 
 // Each returned tuple is a triangle of indices into the original vector
-pub fn tessellate(ps: &[Vector3<f32>]) -> (Vec<[usize; 3]>, Plane) {
+pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
     if ps.len() < 3 {
         return (Vec::new(), Plane::default());
     }
@@ -104,7 +113,7 @@ pub fn tessellate(ps: &[Vector3<f32>]) -> (Vec<[usize; 3]>, Plane) {
     (res, plane)
 }
 
-fn point_in_triangle(p: Vector2<f32>, p0: Vector2<f32>, p1: Vector2<f32>, p2: Vector2<f32>) -> bool {
+fn point_in_triangle(p: Vector2, p0: Vector2, p1: Vector2, p2: Vector2) -> bool {
     let s = (p0.x - p2.x) * (p.y - p2.y) - (p0.y - p2.y) * (p.x - p2.x);
     let t = (p1.x - p0.x) * (p.y - p0.y) - (p1.y - p0.y) * (p.x - p0.x);
 
@@ -116,7 +125,7 @@ fn point_in_triangle(p: Vector2<f32>, p0: Vector2<f32>, p1: Vector2<f32>, p2: Ve
     }
 }
 
-pub fn bounding_box(vs: impl IntoIterator<Item=Vector3<f32>>) -> (Vector3<f32>, Vector3<f32>) {
+pub fn bounding_box(vs: impl IntoIterator<Item=Vector3>) -> (Vector3, Vector3) {
     let mut vs = vs.into_iter();
     let (mut a, mut b) = match vs.next() {
         Some(v) => (v, v),
@@ -133,7 +142,7 @@ pub fn bounding_box(vs: impl IntoIterator<Item=Vector3<f32>>) -> (Vector3<f32>, 
     (a, b)
 }
 
-pub fn ray_crosses_face(ray: (Vector3<f32>, Vector3<f32>), vs: &[Vector3<f32>; 3]) -> Option<f32> {
+pub fn ray_crosses_face(ray: (Vector3, Vector3), vs: &[Vector3; 3]) -> Option<f32> {
     // Möller-Trumbore algorithm
 
     let v0v1 = vs[1] - vs[0];
@@ -172,7 +181,7 @@ pub fn ray_crosses_face(ray: (Vector3<f32>, Vector3<f32>), vs: &[Vector3<f32>; 3
 }
 
 // Returns (offset0, offset1, distance2)
-pub fn line_line_distance(line0: (Vector3<f32>, Vector3<f32>), line1: (Vector3<f32>, Vector3<f32>)) -> (f32, f32, f32) {
+pub fn line_line_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3)) -> (f32, f32, f32) {
     let diff = line0.0 - line1.0;
     let line0d = line0.1 - line0.0;
     let line1d = line1.1 - line1.0;
@@ -204,7 +213,7 @@ pub fn line_line_distance(line0: (Vector3<f32>, Vector3<f32>), line1: (Vector3<f
     (l0_closest / len0, l1_closest / len1, distance2.abs())
 }
 
-pub fn line_segment_distance(line0: (Vector3<f32>, Vector3<f32>), line1: (Vector3<f32>, Vector3<f32>)) -> (f32, f32, f32) {
+pub fn line_segment_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3)) -> (f32, f32, f32) {
     let (l0_closest, mut l1_closest, mut distance2) = line_line_distance(line0, line1);
     if l1_closest < 0.0 {
         l1_closest = 0.0;
@@ -219,20 +228,20 @@ pub fn line_segment_distance(line0: (Vector3<f32>, Vector3<f32>), line1: (Vector
 }
 
 //Computes a 2D matrix that converts from `a` to [(1,0), (0,0), (0,1)]
-pub fn basis_2d_matrix(a: [Vector2<f32>; 3]) -> Matrix3::<f32> {
+pub fn basis_2d_matrix(a: [Vector2; 3]) -> Matrix3 {
 
-    let mt = Matrix3::<f32>::from_translation(-a[1]);
-    let angle = (a[0] - a[1]).angle(Vector2::<f32>::new(1.0, 0.0));
-    let mr = Matrix2::<f32>::from_angle(angle);
+    let mt = Matrix3::from_translation(-a[1]);
+    let angle = (a[0] - a[1]).angle(Vector2::new(1.0, 0.0));
+    let mr = Matrix2::from_angle(angle);
     let len = (a[0] - a[1]).magnitude();
-    let ms = Matrix3::<f32>::from_scale(1.0 / len);
+    let ms = Matrix3::from_scale(1.0 / len);
 
     let m = ms * Matrix3::from(mr) * mt;
 
     let a2 = m.transform_point(cgmath::Point2::new(a[2].x, a[2].y));
-    let ms2 = Matrix3::<f32>::from_nonuniform_scale(1.0, 1.0 / a2.y);
+    let ms2 = Matrix3::from_nonuniform_scale(1.0, 1.0 / a2.y);
 
-    let mut shear = Matrix3::<f32>::one();
+    let mut shear = Matrix3::one();
     shear[1][0] = -a2.x;
 
     shear * ms2 * m

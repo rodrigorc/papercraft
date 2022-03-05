@@ -118,7 +118,7 @@ fn main() {
                     let dx = dx / 50.0;
                     let dy = -dy / 50.0;
 
-                    ctx.trans.location = ctx.trans.location + cgmath::Vector3::new(dx, dy, 0.0);
+                    ctx.trans.location += cgmath::Vector3::new(dx, dy, 0.0);
                     ctx.trans.recompute_obj();
                     gl.queue_render();
                 }
@@ -175,11 +175,7 @@ fn main() {
                         let vs: Vec<_> = tri.into_iter()
                             .map(|f| {
                                 let v = ctx.model.vertex_by_index(f);
-                                face.normal().project(&cgmath::Vector3::from(v.pos()))
-                            })
-                            .collect();
-                        let vs: Vec<_> = vs.into_iter()
-                            .map(|v| {
+                                let v = face.normal().project(&cgmath::Vector3::from(v.pos()));
                                 let v = m.transform_point(cgmath::Point2::new(v[0], v[1]));
                                 cgmath::Vector2::new(v[0], v[1])
                             })
@@ -187,8 +183,7 @@ fn main() {
 
                         let vlast = vs[vs.len()-1];
                         cr.move_to(vlast[0] as f64, vlast[1] as f64);
-                        for iv in 0..vs.len() {
-                            let v = vs[iv];
+                        for v in &vs {
                             cr.line_to(v[0] as f64, v[1] as f64);
                         }
 
@@ -258,8 +253,7 @@ fn main() {
 fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     w.attach_buffers();
     let mut ctx = ctx.borrow_mut();
-    let gl = w.context().unwrap();
-    let backend = GdkGliumBackend { ctx: gl.clone() };
+    let backend = GdkGliumBackend { ctx: w.context().unwrap() };
     let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
 
     let vsh = r"
@@ -365,7 +359,7 @@ void main(void) {
         }
     }
 
-    let mut model = paper::Model::from_waveobj(&obj);
+    let mut model = paper::Model::from_waveobj(obj);
 
     // Compute the bounding box, then move to the center and scale to a standard size
     let (v_min, v_max) = util_3d::bounding_box(
@@ -486,7 +480,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
 
     let mat_name = ctx.material.as_deref().unwrap_or("");
     let (texture, _) = ctx.textures.get(mat_name)
-        .unwrap_or(ctx.textures.get("").unwrap());
+        .unwrap_or_else(|| ctx.textures.get("").unwrap());
 
     let mut u = MyUniforms {
         m: ctx.trans.persp * ctx.trans.obj,
@@ -642,14 +636,26 @@ impl Transformation {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
 pub struct MVertex {
     pub pos: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
 }
 
-glium::implement_vertex!(MVertex, pos, normal, uv);
+impl glium::Vertex for MVertex {
+    fn build_bindings() -> glium::VertexFormat {
+        use std::borrow::Cow::Borrowed;
+        Borrowed(
+            &[
+                (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32F32, false),
+                (Borrowed("normal"), 4*3, glium::vertex::AttributeType::F32F32F32, false),
+                (Borrowed("uv"), 4*3 + 4*3, glium::vertex::AttributeType::F32F32, false),
+            ]
+        )
+    }
+}
 
 struct PersistentIndexBuffer {
     buffer: glium::IndexBuffer<paper::VertexIndex>,
@@ -677,9 +683,9 @@ impl PersistentIndexBuffer {
     }
 }
 
-impl<'a> Into<glium::index::IndicesSource<'a>> for &'a PersistentIndexBuffer {
-    fn into(self) -> glium::index::IndicesSource<'a> {
-        self.buffer.slice(0 .. self.length).unwrap().into()
+impl<'a> From<&'a PersistentIndexBuffer> for glium::index::IndicesSource<'a> {
+    fn from(buf: &'a PersistentIndexBuffer) -> Self {
+        buf.buffer.slice(0 .. buf.length).unwrap().into()
     }
 }
 

@@ -156,7 +156,7 @@ pub fn ray_crosses_face(ray: (Vector3<f32>, Vector3<f32>), vs: &[Vector3<f32>; 3
 
     let tvec = ray.0 - vs[0];
     let u = tvec.dot(pvec) * inv_det;
-    if u < 0.0 || u > 1.0 {
+    if !(0.0..=1.0).contains(&u) {
         return None;
     }
 
@@ -235,8 +235,7 @@ pub fn basis_2d_matrix(a: [Vector2<f32>; 3]) -> Matrix3::<f32> {
     let mut shear = Matrix3::<f32>::one();
     shear[1][0] = -a2.x;
 
-    let m = shear * ms2 * m;
-    m
+    shear * ms2 * m
 }
 
 #[cfg(test)]

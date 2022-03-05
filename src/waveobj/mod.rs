@@ -51,7 +51,7 @@ impl Model {
 
                 //Build the model even if empty, to always reset all self fields
                 let m = Model {
-                    name: self.name.take().unwrap_or_else(String::new),
+                    name: self.name.take().unwrap_or_default(),
                     material: self.material.take(),
                     vs: std::mem::take(&mut self.vertices),
                     faces: std::mem::take(&mut self.faces),
@@ -70,7 +70,7 @@ impl Model {
             let line = line?;
             let line = line.trim();
             //skip empty and comments
-            if line.is_empty() || line.starts_with("#") {
+            if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let mut words = line.split(' ');
@@ -222,7 +222,7 @@ impl Material {
             let line = line?;
             let line = line.trim();
             //skip empty and comments
-            if line.is_empty() || line.starts_with("#") {
+            if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let mut words = line.split(' ');

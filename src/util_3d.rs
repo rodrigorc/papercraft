@@ -236,12 +236,6 @@ pub fn basis_2d_matrix(a: [Vector2<f32>; 3]) -> Matrix3::<f32> {
     shear[1][0] = -a2.x;
 
     let m = shear * ms2 * m;
-
-
-    for v in &a {
-        dbg!(m.transform_point(cgmath::Point2::new(v.x, v.y)));
-    }
-
     m
 }
 

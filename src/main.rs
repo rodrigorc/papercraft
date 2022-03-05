@@ -166,15 +166,10 @@ fn main() {
                 if let Some(face) = ctx.selected_face {
                     let face = ctx.model.face_by_index(face);
 
-                    //let mr = cgmath::Matrix2::from(self.rotation);
                     let mr = cgmath::Matrix3::<f32>::from(cgmath::Matrix2::from_angle(cgmath::Deg(30.0)));
                     let mt = cgmath::Matrix3::<f32>::from_translation(cgmath::Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
                     let ms = cgmath::Matrix3::<f32>::from_scale(1000.0);
                     let m = mt * ms * mr;
-
-
-                    let center = cgmath::Vector3::from(ctx.model.vertex_by_index(face.index_vertices().next().unwrap()).pos());
-                    let center = face.normal().project(&center);
 
                     for tri in face.index_triangles() {
                         let vs: Vec<_> = tri.into_iter()
@@ -185,7 +180,6 @@ fn main() {
                             .collect();
                         let vs: Vec<_> = vs.into_iter()
                             .map(|v| {
-                                let v = v - center;
                                 let v = m.transform_point(cgmath::Point2::new(v[0], v[1]));
                                 cgmath::Vector2::new(v[0], v[1])
                             })
@@ -389,6 +383,7 @@ void main(void) {
         //only scale and translate, no need to touch normals
         *pos = m.transform_point(cgmath::Point3::from(*pos)).into();
     });
+    model.tessellate_faces();
 
     let vertices: Vec<MVertex> = model.vertices()
         .map(|v| {

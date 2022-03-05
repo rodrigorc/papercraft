@@ -37,7 +37,7 @@ pub struct Face {
     vertices: Vec<VertexIndex>,
     edges: Vec<EdgeIndex>,
     tris: Vec<[u32; 3]>, //result of tesselation, indices in self.vertices
-    normal: util_3d::Plane,
+    plane: util_3d::Plane,
 }
 
 #[derive(Debug)]
@@ -78,24 +78,25 @@ impl Model {
                 });
             }
 
+            /*
             let to_tess: Vec<_> = face_verts
                 .iter()
                 .map(|v| {
                     cgmath::Vector3::from(vertices[v.0 as usize].pos)
                 })
                 .collect();
-            let (tris, normal) = util_3d::tessellate(&to_tess);
+            let (tris, plane) = util_3d::tessellate(&to_tess);
             let tris =
                 tris
                     .into_iter()
                     .map(|tri| tri.map(|x| x as u32))
                     .collect();
-
+            */
             faces.push(Face {
                 vertices: face_verts,
                 edges: face_edges,
-                tris,
-                normal,
+                tris: Vec::new(),
+                plane: util_3d::Plane::default(),
             });
         }
 
@@ -110,6 +111,24 @@ impl Model {
         where F: FnMut(&mut [f32; 3], &mut [f32; 3])
     {
         self.vertices.iter_mut().for_each(|v| f(&mut v.pos, &mut v.normal));
+    }
+    pub fn tessellate_faces(&mut self) {
+        for face in &mut self.faces {
+            let to_tess: Vec<_> = face.vertices
+                .iter()
+                .map(|v| {
+                    let v = self.vertices[v.0 as usize].pos;
+                    cgmath::Vector3::from(v)
+                })
+                .collect();
+            let (tris, plane) = util_3d::tessellate(&to_tess);
+            face.tris =
+                tris
+                    .into_iter()
+                    .map(|tri| tri.map(|x| x as u32))
+                    .collect();
+            face.plane = plane;
+        }
     }
     pub fn vertices(&self) -> impl Iterator<Item = &Vertex> {
         self.vertices.iter()
@@ -147,7 +166,7 @@ impl Face {
             .map(|tri| tri.map(|v| self.vertices[v as usize]))
     }
     pub fn normal(&self) -> &util_3d::Plane {
-        &self.normal
+        &self.plane
     }
 }
 

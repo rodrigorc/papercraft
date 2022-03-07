@@ -11,7 +11,7 @@ use glium::{
 };
 use gtk::{
     prelude::*,
-    gdk::{self, EventMask},
+    gdk::{self, EventMask}, cairo,
 };
 
 use std::collections::HashMap;
@@ -136,7 +136,6 @@ fn main() {
             Inhibit(true)
         }
     });
-
     gl.connect_realize({
         let ctx = ctx.clone();
         move |w| gl_realize(w, &ctx)
@@ -167,64 +166,28 @@ fn main() {
         let ctx = ctx.clone();
         move |w, cr| {
             let rect = w.allocation();
-            dbg!("draw! {}", rect);
             cr.set_source_rgb(0.75, 0.75, 0.75);
-            cr.set_line_join(gtk::cairo::LineJoin::Bevel);
+            cr.set_line_join(cairo::LineJoin::Bevel);
             let _ = cr.paint();
             let ctx = ctx.borrow();
             if let Some(ctx)  = &*ctx {
+                let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
+                let mt = Matrix3::from_translation(Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
+                let ms = Matrix3::from_scale(500.0);
+                let m = mt * ms * mr;
+
                 if let Some(face) = ctx.selected_face {
                     let face = ctx.model.face_by_index(face);
+                    paper_draw_face(ctx, face, &m, cr);
+                }
 
-                    let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
-                    let mt = Matrix3::from_translation(Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
-                    let ms = Matrix3::from_scale(1000.0);
-                    let m = mt * ms * mr;
+                if let Some(i_edge) = ctx.selected_edge {
+                    let edge = ctx.model.edge_by_index(i_edge);
+                    let [(_, face_a), (_, face_b)] = ctx.model.faces_by_edge(i_edge);
+                    let medge = paper_edge_matrix(ctx, edge, face_a, face_b);
 
-                    for tri in face.index_triangles() {
-                        let vs: Vec<_> = tri.into_iter()
-                            .map(|f| {
-                                let v = ctx.model.vertex_by_index(f);
-                                let v = face.normal().project(&v.pos());
-                                m.transform_point(Point2::from_vec(v)).to_vec()
-                            })
-                            .collect();
-
-                        let vlast = vs[vs.len()-1];
-                        cr.move_to(vlast[0] as f64, vlast[1] as f64);
-                        for v in &vs {
-                            cr.line_to(v[0] as f64, v[1] as f64);
-                        }
-
-                        let mat_name = ctx.material.as_deref().unwrap_or("");
-                        let pixbuf = ctx.textures.get(mat_name)
-                            .and_then(|(_, pb)| pb.as_ref());
-
-                        match pixbuf {
-                            Some(pixbuf) => {
-                                let _ = cr.set_source_pixbuf(pixbuf, 0.0, 0.0);
-                                let pat = cr.source();
-                                let uv = tri.map(|idx| ctx.model.vertex_by_index(idx).uv_inv());
-                                let m0 = util_3d::basis_2d_matrix(uv);
-                                let m1 = util_3d::basis_2d_matrix([vs[0], vs[1], vs[2]]);
-                                let ss = Matrix3::from_nonuniform_scale(pixbuf.width() as f32, pixbuf.height() as f32);
-                                let m = ss * m0.invert().unwrap() * m1;
-                                let m = gtk::cairo::Matrix::new(
-                                    m[0][0] as f64, m[0][1] as f64,
-                                    m[1][0] as f64, m[1][1] as f64,
-                                    m[2][0] as f64, m[2][1] as f64,
-                                );
-                                pat.set_matrix(m);
-                            }
-                            None => { cr.set_source_rgb(0.1, 0.1, 0.1); }
-                        }
-                        cr.set_line_width(1.0);
-                        let _ = cr.stroke_preserve();
-                        let _ = cr.fill_preserve();
-                        //cr.set_source_rgb(0.0, 0.0, 0.0);
-                        cr.set_line_width(2.0);
-                        let _ = cr.stroke();
-                    }
+                    paper_draw_face(ctx, face_a, &m, cr);
+                    paper_draw_face(ctx, face_b, &(m * medge), cr);
                 }
             }
             gtk::Inhibit(true)
@@ -253,6 +216,67 @@ fn main() {
 
     w.show_all();
     gtk::main();
+}
+
+fn paper_edge_matrix(ctx: &MyContext, edge: &paper::Edge, face_a: &paper::Face, face_b: &paper::Face) -> cgmath::Matrix3<f32> {
+    let v0 = ctx.model.vertex_by_index(edge.v0()).pos();
+    let v1 = ctx.model.vertex_by_index(edge.v1()).pos();
+    let a0 = face_a.normal().project(&v0);
+    let b0 = face_b.normal().project(&v0);
+    let a1 = face_a.normal().project(&v1);
+    let b1 = face_b.normal().project(&v1);
+    let mabt0 = Matrix3::from_translation(-b0);
+    let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
+    let mabt1 = Matrix3::from_translation(a0);
+    let medge = mabt1 * mabr * mabt0;
+    medge
+}
+
+fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo::Context) {
+    for tri in face.index_triangles() {
+        let vs: Vec<_> = tri.into_iter()
+            .map(|f| {
+                let v = ctx.model.vertex_by_index(f);
+                let v = face.normal().project(&v.pos());
+                m.transform_point(Point2::from_vec(v)).to_vec()
+            })
+            .collect();
+
+        let vlast = vs[vs.len()-1];
+        cr.move_to(vlast[0] as f64, vlast[1] as f64);
+        for v in &vs {
+            cr.line_to(v[0] as f64, v[1] as f64);
+        }
+
+        let mat_name = ctx.material.as_deref().unwrap_or("");
+        let pixbuf = ctx.textures.get(mat_name)
+            .and_then(|(_, pb)| pb.as_ref());
+
+        match pixbuf {
+            Some(pixbuf) => {
+                let _ = cr.set_source_pixbuf(pixbuf, 0.0, 0.0);
+                let pat = cr.source();
+                let uv = tri.map(|idx| ctx.model.vertex_by_index(idx).uv_inv());
+                let m0 = util_3d::basis_2d_matrix(uv);
+                let m1 = util_3d::basis_2d_matrix([vs[0], vs[1], vs[2]]);
+                let ss = Matrix3::from_nonuniform_scale(pixbuf.width() as f32, pixbuf.height() as f32);
+                let m = ss * m0.invert().unwrap() * m1;
+                let m = cairo::Matrix::new(
+                    m[0][0] as f64, m[0][1] as f64,
+                    m[1][0] as f64, m[1][1] as f64,
+                    m[2][0] as f64, m[2][1] as f64,
+                );
+                pat.set_matrix(m);
+            }
+            None => { cr.set_source_rgb(0.1, 0.1, 0.1); }
+        }
+        cr.set_line_width(1.0);
+        let _ = cr.stroke_preserve();
+        let _ = cr.fill_preserve();
+        cr.set_source_rgb(0.0, 0.0, 0.0);
+        cr.set_line_width(2.0);
+        let _ = cr.stroke();
+    }
 }
 
 

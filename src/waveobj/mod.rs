@@ -1,25 +1,27 @@
 #![allow(dead_code)]
 
-use std::{io::BufRead, collections::BTreeMap};
+use std::io::BufRead;
 use anyhow::{anyhow, Result};
 
-#[derive(Clone, Debug)]
-pub struct Vertex {
-    pos: [f32; 3],
-    normal: [f32; 3],
-    uv: [f32; 2],
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct FaceVertex {
+    v: u32,
+    t: u32,
+    n: u32,
 }
 
 #[derive(Clone, Debug)]
 pub struct Face {
-    idx: Vec<u32>,
+    verts: Vec<FaceVertex>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Model {
     name: String,
     material: Option<String>,
-    vs: Vec<Vertex>,
+    vs0: Vec<[f32; 3]>,
+    ns: Vec<[f32; 3]>,
+    ts: Vec<[f32; 2]>,
     faces: Vec<Face>,
 }
 
@@ -35,25 +37,26 @@ impl Model {
         struct ModelData {
             name: Option<String>,
             material: Option<String>,
-            vertices: Vec<Vertex>,
             faces: Vec<Face>,
             pos: Vec<[f32; 3]>,
             normals: Vec<[f32; 3]>,
             uvs: Vec<[f32; 2]>,
-            idx_map: BTreeMap<(usize, usize, usize), usize>,
+            //idx_map: BTreeMap<(usize, usize, usize), usize>,
         }
         impl ModelData {
             fn build(&mut self) -> Option<Model> {
-                self.pos.clear();
-                self.normals.clear();
-                self.uvs.clear();
-                self.idx_map.clear();
+                //self.pos.clear();
+                //self.normals.clear();
+                //self.uvs.clear();
+                //self.idx_map.clear();
 
                 //Build the model even if empty, to always reset all self fields
                 let m = Model {
                     name: self.name.take().unwrap_or_default(),
                     material: self.material.take(),
-                    vs: std::mem::take(&mut self.vertices),
+                    vs0: std::mem::take(&mut self.pos),
+                    ns: std::mem::take(&mut self.normals),
+                    ts: std::mem::take(&mut self.uvs),
                     faces: std::mem::take(&mut self.faces),
                 };
                 if m.faces.is_empty() {
@@ -100,33 +103,23 @@ impl Model {
                     data.normals.push([x, y, z]);
                 }
                 "f" => {
-                    let mut idx_face = Vec::new();
+                    let mut verts = Vec::new();
                     for fv in words {
                         let mut vals = fv.split('/');
                         let v = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
                         let t = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
                         let n = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
 
-                        use std::collections::btree_map::Entry::*;
-
-                        let idx_entry = data.idx_map.entry((v, t, n));
-                        let idx = match idx_entry {
-                            Occupied(e) => {
-                                *e.get()
-                            }
-                            Vacant(_) => {
-                                data.vertices.push(Vertex {
-                                    pos: *data.pos.get(v).ok_or_else(syn_error)?,
-                                    normal: *data.normals.get(n).ok_or_else(syn_error)?,
-                                    uv: *data.uvs.get(t).ok_or_else(syn_error)?,
-                                });
-                                data.vertices.len() - 1
-                            }
+                        let v = FaceVertex {
+                            v: v as u32,
+                            t: t as u32,
+                            n: n as u32
                         };
-                        idx_face.push(u32::try_from(idx)?);
+                        verts.push(v);
+
                     }
                     data.faces.push(Face {
-                        idx: idx_face
+                        verts
                     })
                 }
                 "mtllib" => {
@@ -157,29 +150,32 @@ impl Model {
     pub fn faces(&self) -> &[Face] {
         &self.faces
     }
-    pub fn vertices(&self) -> &[Vertex] {
-        &self.vs
+    pub fn vertex_by_index(&self, idx: u32) -> &[f32; 3] {
+        &self.vs0[idx as usize]
     }
-    pub fn vertex_by_index(&self, idx: u32) -> &Vertex {
-        &self.vs[idx as usize]
+    pub fn normal_by_index(&self, idx: u32) -> &[f32; 3] {
+        &self.ns[idx as usize]
+    }
+    pub fn texcoord_by_index(&self, idx: u32) -> &[f32; 2] {
+        &self.ts[idx as usize]
     }
 }
 
 impl Face {
-    pub fn indices(&self) -> &[u32] {
-        &self.idx
+    pub fn vertices(&self) -> &[FaceVertex] {
+        &self.verts
     }
 }
 
-impl Vertex {
-    pub fn pos(&self) -> &[f32; 3] {
-        &self.pos
+impl FaceVertex {
+    pub fn v(&self) -> u32 {
+        self.v
     }
-    pub fn normal(&self) -> &[f32; 3] {
-        &self.normal
+    pub fn n(&self) -> u32 {
+        self.n
     }
-    pub fn uv(&self) -> &[f32; 2] {
-        &self.uv
+    pub fn t(&self) -> u32 {
+        self.t
     }
 }
 

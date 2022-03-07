@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::collections::{HashSet, HashMap};
+
 use crate::waveobj;
 use crate::util_3d::{self, Vector2, Vector3};
 
@@ -55,27 +57,65 @@ pub struct Vertex {
 
 impl Model {
     pub fn from_waveobj(obj: &waveobj::Model) -> Model {
-        let vertices: Vec<_> = obj.vertices()
-            .iter()
-            .map(|v| Vertex {
-                pos: Vector3::from(*v.pos()),
-                normal: Vector3::from(*v.normal()),
-                uv: Vector2::from(*v.uv()),
-            })
-            .collect();
+        // Remove duplicated vertices by adding them into a set
+        let all_vertices: HashSet<_> =
+            obj.faces()
+                .iter()
+                .flat_map(|f| f.vertices())
+                .copied()
+                .collect();
+
+        //Fix the order into a vector
+        let all_vertices = Vec::from_iter(all_vertices);
+
+        // TODO: iterate all_vertices only once
+        let idx_vertices: HashMap<_, _> =
+            all_vertices
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (*v, i as u32))
+                .collect();
+        let vertices: Vec<_> =
+            all_vertices
+                .iter()
+                .map(|fv| Vertex {
+                    pos: Vector3::from(*obj.vertex_by_index(fv.v())),
+                    normal: Vector3::from(*obj.normal_by_index(fv.n())),
+                    uv: Vector2::from(*obj.texcoord_by_index(fv.t())),
+                })
+                .collect();
 
         let mut faces = Vec::new();
         let mut edges = Vec::new();
+        //TODO: index idx_edges?
+        let mut idx_edges = Vec::new();
+
         for face in obj.faces() {
-            let face_verts: Vec<_> = face.indices().iter().map(|idx| VertexIndex(*idx)).collect();
-            let mut face_edges = Vec::with_capacity(face_verts.len());
-            for (i0, &v0) in face_verts.iter().enumerate() {
-                let v1 = face_verts[(i0 + 1) % face_verts.len()];
-                face_edges.push(EdgeIndex(edges.len() as u32));
-                edges.push(Edge {
-                    v0,
-                    v1,
-                });
+            let face_verts: Vec<_> = face
+                .vertices()
+                .iter()
+                .map(|idx| VertexIndex(idx_vertices[idx]))
+                .collect();
+            let face_verts_orig: Vec<_> = face
+                .vertices()
+                .iter()
+                .map(|idx| idx.v())
+                .collect();
+
+            let mut face_edges = Vec::with_capacity(face_verts_orig.len());
+            for (i0, &v0) in face_verts_orig.iter().enumerate() {
+                let v1 = face_verts_orig[(i0 + 1) % face_verts_orig.len()];
+
+                if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0 == v0 && p1 == v1) || (p0 == v1 && p1 == v0)) {
+                    face_edges.push(EdgeIndex(i_edge as u32));
+                } else {
+                    face_edges.push(EdgeIndex(idx_edges.len() as u32));
+                    idx_edges.push((v0, v1));
+                    edges.push(Edge {
+                        v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
+                        v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
+                    })
+                }
             }
             faces.push(Face {
                 vertices: face_verts,
@@ -135,6 +175,20 @@ impl Model {
     }
     pub fn edge_by_index(&self, idx: EdgeIndex) -> &Edge {
         &self.edges[idx.0 as usize]
+    }
+
+    pub fn faces_by_edge(&self, edge: EdgeIndex) -> [(FaceIndex, &Face); 2] {
+        let mut res = Vec::with_capacity(2);
+        for (iface, face) in self.faces() {
+            if face.edges.contains(&edge) {
+                res.push((iface, face));
+                if res.len() == 2 {
+                    return res.try_into().unwrap();
+                }
+            }
+        }
+        //TODO: do not panic
+        panic!("unconnected edge")
     }
 }
 

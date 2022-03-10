@@ -14,7 +14,7 @@ use gtk::{
     gdk::{self, EventMask}, cairo,
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -93,8 +93,8 @@ fn main() {
                     gdk::ScrollDirection::Down => 1.0 / 1.1,
                     _ => 1.0,
                 };
-                ctx.trans.scale *= dz;
-                ctx.trans.recompute_obj();
+                ctx.trans_3d.scale *= dz;
+                ctx.trans_3d.recompute_obj();
                 gl.queue_render();
             }
             Inhibit(true)
@@ -110,7 +110,7 @@ fn main() {
                 let dy = (pos.1 - ctx.last_cursor_pos.1) as f32;
                 ctx.last_cursor_pos = pos;
 
-            if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
+                if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
                     // half angles
                     let ang_x = dx / 200.0 / 2.0;
                     let ang_y = dy / 200.0 / 2.0;
@@ -121,15 +121,15 @@ fn main() {
                     let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
                     let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
 
-                    ctx.trans.rotation = (roty * rotx * ctx.trans.rotation).normalize();
-                    ctx.trans.recompute_obj();
+                    ctx.trans_3d.rotation = (roty * rotx * ctx.trans_3d.rotation).normalize();
+                    ctx.trans_3d.recompute_obj();
                     gl.queue_render();
                 } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
                     let dx = dx / 50.0;
                     let dy = -dy / 50.0;
 
-                    ctx.trans.location += Vector3::new(dx, dy, 0.0);
-                    ctx.trans.recompute_obj();
+                    ctx.trans_3d.location += Vector3::new(dx, dy, 0.0);
+                    ctx.trans_3d.recompute_obj();
                     gl.queue_render();
                 }
             }
@@ -156,41 +156,122 @@ fn main() {
             }
             if let Some(ctx) = ctx.borrow_mut().as_mut() {
                 let ratio = width as f32 / height as f32;
-                ctx.trans.set_ratio(ratio);
+                ctx.trans_3d.set_ratio(ratio);
             }
         }
     });
 
     let paper = gtk::DrawingArea::new();
+    paper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
     paper.connect_draw({
         let ctx = ctx.clone();
-        move |w, cr| {
-            let rect = w.allocation();
+        move |_w, cr| {
             cr.set_source_rgb(0.75, 0.75, 0.75);
             cr.set_line_join(cairo::LineJoin::Bevel);
             let _ = cr.paint();
             let ctx = ctx.borrow();
             if let Some(ctx)  = &*ctx {
-                let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
+                /*let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
                 let mt = Matrix3::from_translation(Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
                 let ms = Matrix3::from_scale(500.0);
-                let m = mt * ms * mr;
+                let m = mt * ms * mr;*/
+                let m = &ctx.trans_paper.mx;
 
+                /*
                 if let Some(face) = ctx.selected_face {
                     let face = ctx.model.face_by_index(face);
-                    paper_draw_face(ctx, face, &m, cr);
+                    paper_draw_face(ctx, face, m, cr);
                 }
 
                 if let Some(i_edge) = ctx.selected_edge {
                     let edge = ctx.model.edge_by_index(i_edge);
-                    let [(_, face_a), (_, face_b)] = ctx.model.faces_by_edge(i_edge);
-                    let medge = paper_edge_matrix(ctx, edge, face_a, face_b);
+                    let mut faces = edge.faces();
+                    if let Some(i_face_a) = faces.next() {
+                        let face_a = ctx.model.face_by_index(i_face_a);
+                        paper_draw_face(ctx, face_a, m, cr);
+                        for i_face_b in faces {
+                            let face_b = ctx.model.face_by_index(i_face_b);
+                            let medge = paper_edge_matrix(ctx, edge, face_a, face_b);
+                            paper_draw_face(ctx, face_b, &(m * medge), cr);
+                        }
+                    }
+                }*/
+                if let Some(i_face) = ctx.selected_face {
+                    let mut visited_faces = HashSet::new();
 
-                    paper_draw_face(ctx, face_a, &m, cr);
-                    paper_draw_face(ctx, face_b, &(m * medge), cr);
+                    let mut stack = Vec::new();
+                    stack.push((i_face, *m));
+                    visited_faces.insert(i_face);
+
+                    loop {
+                        let (i_face, m) = match stack.pop() {
+                            Some(x) => x,
+                            None => break,
+                        };
+
+                        let face = ctx.model.face_by_index(i_face);
+                        paper_draw_face(ctx, face, &m, cr);
+
+                        for i_edge in face.index_edges() {
+                            let edge = ctx.model.edge_by_index(i_edge);
+                            for i_next_face in edge.faces() {
+                                if visited_faces.contains(&i_next_face) {
+                                    continue;
+                                }
+
+                                let next_face = ctx.model.face_by_index(i_next_face);
+                                let medge = paper_edge_matrix(ctx, edge, face, next_face);
+
+                                stack.push((i_next_face, m * medge));
+                                visited_faces.insert(i_next_face);
+                            }
+                        }
+                    }
                 }
             }
             gtk::Inhibit(true)
+        }
+    });
+    paper.connect_button_press_event({
+        let ctx = ctx.clone();
+        move |w, ev|  {
+            w.grab_focus();
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                ctx.last_cursor_pos = ev.position();
+            }
+            Inhibit(true)
+        }
+    });
+    paper.connect_motion_notify_event({
+        let ctx = ctx.clone();
+        move |w, ev| {
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                let pos = ev.position();
+                let dx = (pos.0 - ctx.last_cursor_pos.0)  as f32;
+                let dy = (pos.1 - ctx.last_cursor_pos.1) as f32;
+                ctx.last_cursor_pos = pos;
+
+                if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
+                    ctx.trans_paper.mx = Matrix3::from_translation(Vector2::new(dx, dy)) * ctx.trans_paper.mx;
+                    w.queue_draw();
+                }
+            }
+            Inhibit(true)
+        }
+    });
+    paper.connect_scroll_event({
+        let ctx = ctx.clone();
+        move |w, ev|  {
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                let dz = match ev.direction() {
+                    gdk::ScrollDirection::Up => 1.1,
+                    gdk::ScrollDirection::Down => 1.0 / 1.1,
+                    _ => 1.0,
+                };
+                ctx.trans_paper.mx = Matrix3::from_scale(dz) * ctx.trans_paper.mx;
+                w.queue_draw();
+            }
+            Inhibit(true)
         }
     });
 
@@ -233,6 +314,15 @@ fn paper_edge_matrix(ctx: &MyContext, edge: &paper::Edge, face_a: &paper::Face, 
 }
 
 fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo::Context) {
+    //#[cfg(xxx)]
+    let mat_name = ctx.material.as_deref().unwrap_or("");
+    let pixbuf = ctx.textures.get(mat_name)
+        .and_then(|(_, pb)| pb.as_ref())
+        .map(|pb| {
+            cr.set_source_pixbuf(pb, 0.0, 0.0);
+            (pb.width(), pb.height(), cr.source())
+        });
+
     for tri in face.index_triangles() {
         let vs: Vec<_> = tri.into_iter()
             .map(|f| {
@@ -248,18 +338,13 @@ fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo:
             cr.line_to(v[0] as f64, v[1] as f64);
         }
 
-        let mat_name = ctx.material.as_deref().unwrap_or("");
-        let pixbuf = ctx.textures.get(mat_name)
-            .and_then(|(_, pb)| pb.as_ref());
 
         match pixbuf {
-            Some(pixbuf) => {
-                let _ = cr.set_source_pixbuf(pixbuf, 0.0, 0.0);
-                let pat = cr.source();
+            Some((width, height, ref pat)) => {
                 let uv = tri.map(|idx| ctx.model.vertex_by_index(idx).uv_inv());
                 let m0 = util_3d::basis_2d_matrix(uv);
                 let m1 = util_3d::basis_2d_matrix([vs[0], vs[1], vs[2]]);
-                let ss = Matrix3::from_nonuniform_scale(pixbuf.width() as f32, pixbuf.height() as f32);
+                let ss = Matrix3::from_nonuniform_scale(width as f32, height as f32);
                 let m = ss * m0.invert().unwrap() * m1;
                 let m = cairo::Matrix::new(
                     m[0][0] as f64, m[0][1] as f64,
@@ -272,11 +357,28 @@ fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo:
         }
         cr.set_line_width(1.0);
         let _ = cr.stroke_preserve();
-        let _ = cr.fill_preserve();
-        cr.set_source_rgb(0.0, 0.0, 0.0);
-        cr.set_line_width(2.0);
-        let _ = cr.stroke();
+        let _ = cr.fill();
+
+        //cr.set_source_rgb(0.0, 0.0, 0.0);
+        //cr.set_line_width(2.0);
+        //let _ = cr.stroke();
     }
+
+    let vs: Vec<_> = face.index_vertices()
+        .map(|f| {
+            let v = ctx.model.vertex_by_index(f);
+            let v = face.normal().project(&v.pos());
+            m.transform_point(Point2::from_vec(v)).to_vec()
+        })
+        .collect();
+    let vlast = vs[vs.len()-1];
+    cr.move_to(vlast[0] as f64, vlast[1] as f64);
+    for v in &vs {
+        cr.line_to(v[0] as f64, v[1] as f64);
+    }
+    cr.set_source_rgb(0.0, 0.0, 0.0);
+    cr.set_line_width(2.0);
+    let _ = cr.stroke();
 }
 
 
@@ -441,12 +543,21 @@ void main(void) {
     let indices_edge_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::LinesList);
 
     let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
-    let trans = Transformation::new(
+    let trans_3d = Transformation3D::new(
         Vector3::new(0.0, 0.0, -30.0),
         Quaternion::one(),
          20.0,
          persp
     );
+    let trans_paper = {
+        let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
+        let mt = Matrix3::from_translation(Vector2::new(100.0, 100.0));
+        let ms = Matrix3::from_scale(500.0);
+        TransformationPaper {
+            mx: mt * ms * mr,
+        }
+    };
+
     *ctx = Some(MyContext {
         gl,
         model,
@@ -464,7 +575,8 @@ void main(void) {
 
         last_cursor_pos: (0.0, 0.0),
 
-        trans,
+        trans_3d,
+        trans_paper,
      });
 }
 
@@ -512,8 +624,8 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
         .unwrap_or_else(|| ctx.textures.get("").unwrap());
 
     let mut u = MyUniforms {
-        m: ctx.trans.persp * ctx.trans.obj,
-        mnormal: ctx.trans.mnormal, // should be transpose of inverse
+        m: ctx.trans_3d.persp * ctx.trans_3d.obj,
+        mnormal: ctx.trans_3d.mnormal, // should be transpose of inverse
         lights: [light0, light1],
         texture: texture.sampled(),
     };
@@ -618,10 +730,13 @@ struct MyContext {
 
     last_cursor_pos: (f64, f64),
 
-    trans: Transformation,
+
+    trans_3d: Transformation3D,
+
+    trans_paper: TransformationPaper,
 }
 
-struct Transformation {
+struct Transformation3D {
     location: Vector3,
     rotation: Quaternion,
     scale: f32,
@@ -633,9 +748,9 @@ struct Transformation {
     mnormal: Matrix3,
 }
 
-impl Transformation {
-    fn new(location: Vector3, rotation: Quaternion, scale: f32, persp: Matrix4) -> Transformation {
-        let mut tr = Transformation {
+impl Transformation3D {
+    fn new(location: Vector3, rotation: Quaternion, scale: f32, persp: Matrix4) -> Transformation3D {
+        let mut tr = Transformation3D {
             location,
             rotation,
             scale,
@@ -663,6 +778,10 @@ impl Transformation {
         self.persp[0][0] = f / ratio;
         self.persp_inv = self.persp.invert().unwrap();
     }
+}
+
+struct TransformationPaper {
+    mx: Matrix3,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -726,9 +845,9 @@ enum ClickResult {
 
 impl MyContext {
     fn analyze_click(&self, click: Point3, height: f32) -> ClickResult {
-        let click_camera = self.trans.persp_inv.transform_point(click);
-        let click_obj = self.trans.obj_inv.transform_point(click_camera);
-        let camera_obj = self.trans.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
+        let click_camera = self.trans_3d.persp_inv.transform_point(click);
+        let click_obj = self.trans_3d.obj_inv.transform_point(click_camera);
+        let camera_obj = self.trans_3d.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
 
         let ray = (camera_obj.to_vec(), click_obj.to_vec());
 

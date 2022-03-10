@@ -15,7 +15,7 @@ pub struct Model {
     faces: Vec<Face>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct VertexIndex(u32);
 
@@ -26,11 +26,11 @@ unsafe impl glium::index::Index for VertexIndex {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct EdgeIndex(u32);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct FaceIndex(u32);
 
@@ -46,6 +46,7 @@ pub struct Face {
 pub struct Edge {
     v0: VertexIndex,
     v1: VertexIndex,
+    faces: Vec<FaceIndex>,
 }
 
 #[derive(Debug)]
@@ -85,12 +86,13 @@ impl Model {
                 })
                 .collect();
 
-        let mut faces = Vec::new();
-        let mut edges = Vec::new();
+        let mut faces: Vec<Face> = Vec::new();
+        let mut edges: Vec<Edge> = Vec::new();
         //TODO: index idx_edges?
         let mut idx_edges = Vec::new();
 
-        for face in obj.faces() {
+        for (i_face, face) in obj.faces().iter().enumerate() {
+            let i_face = FaceIndex(i_face as u32);
             let face_verts: Vec<_> = face
                 .vertices()
                 .iter()
@@ -108,12 +110,14 @@ impl Model {
 
                 if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0 == v0 && p1 == v1) || (p0 == v1 && p1 == v0)) {
                     face_edges.push(EdgeIndex(i_edge as u32));
+                    edges[i_edge].faces.push(i_face);
                 } else {
                     face_edges.push(EdgeIndex(idx_edges.len() as u32));
                     idx_edges.push((v0, v1));
                     edges.push(Edge {
                         v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
                         v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
+                        faces: vec![i_face],
                     })
                 }
             }
@@ -196,6 +200,9 @@ impl Face {
     pub fn index_vertices(&self) -> impl Iterator<Item = VertexIndex> + '_ {
         self.vertices.iter().copied()
     }
+    pub fn index_edges(&self) -> impl Iterator<Item = EdgeIndex> + '_ {
+        self.edges.iter().copied()
+    }
     pub fn index_triangles(&self) -> impl Iterator<Item = [VertexIndex; 3]> + '_ {
         self.tris
             .iter()
@@ -230,5 +237,8 @@ impl Edge {
     }
     pub fn v1(&self) -> VertexIndex {
         self.v1
+    }
+    pub fn faces(&self) -> impl Iterator<Item = FaceIndex> + '_ {
+        self.faces.iter().copied()
     }
 }

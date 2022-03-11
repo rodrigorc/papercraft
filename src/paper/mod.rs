@@ -208,6 +208,12 @@ impl Face {
             .iter()
             .map(|tri| tri.map(|v| self.vertices[v as usize]))
     }
+    pub fn num_vertices(&self) -> usize {
+        self.vertices.len()
+    }
+    pub fn num_triangles(&self) -> usize {
+        self.tris.len()
+    }
     pub fn normal(&self) -> &util_3d::Plane {
         &self.plane
     }

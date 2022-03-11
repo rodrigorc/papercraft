@@ -227,6 +227,18 @@ pub fn line_segment_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3
     (l0_closest, l1_closest, distance2)
 }
 
+pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
+    let right = width as f32 / 2.0;
+    let left = -right;
+    let top = -height as f32 / 2.0;
+    let bottom = -top;
+    Matrix3::new(
+        2.0 / (right - left), 0.0, 0.0,
+        0.0, 2.0 / (top - bottom), 0.0,
+        0.0, 0.0, 1.0
+    )
+}
+
 //Computes a 2D matrix that converts from `a` to [(1,0), (0,0), (0,1)]
 pub fn basis_2d_matrix(a: [Vector2; 3]) -> Matrix3 {
 

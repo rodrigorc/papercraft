@@ -34,14 +34,17 @@ fn main() {
         gtk::main_quit();
     });
     gl_loader::init_gl();
+
     let gl = gtk::GLArea::new();
+    let paper = gtk::GLArea::new();
+
+    gl.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
     gl.set_has_depth_buffer(true);
     let ctx: Rc<RefCell<Option<MyContext>>> = Rc::new(RefCell::new(None));
 
-    gl.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
     gl.connect_button_press_event({
         let ctx = ctx.clone();
-        move |w, ev|  {
+        move |w, ev| {
             w.grab_focus();
             if let Some(ctx) = ctx.borrow_mut().as_mut() {
                 ctx.last_cursor_pos = ev.position();
@@ -77,6 +80,7 @@ fn main() {
                         }
                     }
                     w.queue_render();
+                    paper_build(ctx);
                     w.parent().iter().for_each(|w| w.queue_draw());
                 }
             }
@@ -161,8 +165,11 @@ fn main() {
         }
     });
 
-    let paper = gtk::DrawingArea::new();
+
+    //let paper = gtk::DrawingArea::new();
     paper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
+    paper.set_has_depth_buffer(true);
+    #[cfg(xxx)]
     paper.connect_draw({
         let ctx = ctx.clone();
         move |_w, cr| {
@@ -232,6 +239,26 @@ fn main() {
             gtk::Inhibit(true)
         }
     });
+    paper.connect_realize({
+        let ctx = ctx.clone();
+        move |w| paper_realize(w, &ctx)
+    });
+    paper.connect_render({
+        let ctx = ctx.clone();
+        move |w, gl| paper_render(w, gl, &ctx)
+    });
+    paper.connect_resize({
+        let ctx = ctx.clone();
+        move |_w, width, height| {
+            if height <= 0 || width <= 0 {
+                return;
+            }
+            if let Some(ctx) = ctx.borrow_mut().as_mut() {
+                ctx.trans_paper.ortho = util_3d::ortho2d(width as f32, height as f32);
+            }
+        }
+    });
+
     paper.connect_button_press_event({
         let ctx = ctx.clone();
         move |w, ev|  {
@@ -253,7 +280,7 @@ fn main() {
 
                 if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
                     ctx.trans_paper.mx = Matrix3::from_translation(Vector2::new(dx, dy)) * ctx.trans_paper.mx;
-                    w.queue_draw();
+                    w.queue_render();
                 }
             }
             Inhibit(true)
@@ -269,7 +296,7 @@ fn main() {
                     _ => 1.0,
                 };
                 ctx.trans_paper.mx = Matrix3::from_scale(dz) * ctx.trans_paper.mx;
-                w.queue_draw();
+                w.queue_render();
             }
             Inhibit(true)
         }
@@ -313,7 +340,7 @@ fn paper_edge_matrix(ctx: &MyContext, edge: &paper::Edge, face_a: &paper::Face, 
     medge
 }
 
-fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo::Context) {
+fn _paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo::Context) {
     //#[cfg(xxx)]
     let mat_name = ctx.material.as_deref().unwrap_or("");
     let pixbuf = ctx.textures.get(mat_name)
@@ -381,6 +408,20 @@ fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo:
     let _ = cr.stroke();
 }
 
+fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, vertices: &mut Vec<MVertex2D>) {
+    for tri in face.index_triangles() {
+        for i_v in tri {
+            let v = ctx.model.vertex_by_index(i_v);
+            let p2 = face.normal().project(&v.pos());
+            let pos = m.transform_point(Point2::from_vec(p2)).to_vec();
+            vertices.push(MVertex2D {
+                pos,
+                uv: v.uv_inv(),
+            })
+        }
+    }
+}
+
 
 fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     w.attach_buffers();
@@ -434,17 +475,38 @@ void main(void) {
 }
 ";
     let fsh_line = r"
-    #version 150
+#version 150
 
-    in float v_light;
-    out vec4 out_frag_color;
+in float v_light;
+out vec4 out_frag_color;
 
-    void main(void) {
-        out_frag_color = vec4(0.0, 0.0, 0.0, 1.0);
-    }
+void main(void) {
+    out_frag_color = vec4(0.0, 0.0, 0.0, 1.0);
+}
     ";
+    let vsh_paper = r"
+#version 150
+
+uniform mat3 m;
+
+in vec2 pos;
+in vec2 uv;
+
+out vec2 v_uv;
+out float v_light;
+
+void main(void) {
+    gl_Position = vec4((m * vec3(pos, 1.0)).xy, 0.0, 1.0);
+    v_light = 1.0;
+    v_uv = uv;
+}
+";
+
     let prg_solid = glium::Program::from_source(&glctx, vsh, fsh_solid, None).unwrap();
     let prg_line = glium::Program::from_source(&glctx, vsh, fsh_line, None).unwrap();
+
+    let prg_solid_paper = glium::Program::from_source(&glctx, vsh_paper, fsh_solid, None).unwrap();
+    let prg_line_paper = glium::Program::from_source(&glctx, vsh_paper, fsh_line, None).unwrap();
 
     let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
@@ -529,18 +591,15 @@ void main(void) {
         indices_edges.push(edge.v0());
         indices_edges.push(edge.v1());
     }
-    let gl = GlData {
-        glctx,
-        prg_solid,
-        prg_line,
-    };
 
-    let vertex_buf = glium::VertexBuffer::immutable(&gl.glctx, &vertices).unwrap();
-    let indices_solid_buf = glium::IndexBuffer::immutable(&gl.glctx, glium::index::PrimitiveType::TrianglesList, &indices_solid).unwrap();
-    let indices_edges_buf = glium::IndexBuffer::persistent(&gl.glctx, glium::index::PrimitiveType::LinesList, &indices_edges).unwrap();
+    let vertex_buf = glium::VertexBuffer::immutable(&glctx, &vertices).unwrap();
+    let indices_solid_buf = glium::IndexBuffer::immutable(&glctx, glium::index::PrimitiveType::TrianglesList, &indices_solid).unwrap();
+    let indices_edges_buf = glium::IndexBuffer::immutable(&glctx, glium::index::PrimitiveType::LinesList, &indices_edges).unwrap();
 
-    let indices_face_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::TrianglesList);
-    let indices_edge_sel = PersistentIndexBuffer::new(&gl.glctx, glium::index::PrimitiveType::LinesList);
+    let indices_face_sel = PersistentIndexBuffer::new(&glctx, glium::index::PrimitiveType::TrianglesList, 16);
+    let indices_edge_sel = PersistentIndexBuffer::new(&glctx, glium::index::PrimitiveType::LinesList, 16);
+
+    let paper_vertex_buf = PersistentVertexBuffer::new(&glctx, 0);
 
     let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
     let trans_3d = Transformation3D::new(
@@ -550,24 +609,32 @@ void main(void) {
          persp
     );
     let trans_paper = {
-        let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
-        let mt = Matrix3::from_translation(Vector2::new(100.0, 100.0));
-        let ms = Matrix3::from_scale(500.0);
+        //let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
+        //let mt = Matrix3::from_translation(Vector2::new(0.0, 0.0));
+        let ms = Matrix3::from_scale(200.0);
         TransformationPaper {
-            mx: mt * ms * mr,
+            ortho: util_3d::ortho2d(1.0, 1.0),
+            //mx: mt * ms * mr,
+            mx: ms,
         }
     };
 
     *ctx = Some(MyContext {
-        gl,
+        gl_3d: Some(glctx),
+        gl_paper: None,
         model,
 
+        prg_solid,
+        prg_line,
+        prg_solid_paper,
+        prg_line_paper,
         textures,
         vertex_buf,
         indices_solid_buf,
         indices_edges_buf,
         indices_face_sel,
         indices_edge_sel,
+        paper_vertex_buf,
 
         material,
         selected_face: None,
@@ -584,6 +651,92 @@ fn gl_unrealize(_w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     dbg!("GL unrealize!");
     let mut ctx = ctx.borrow_mut();
     *ctx = None;
+}
+
+fn paper_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
+    dbg!("paper_realize");
+    w.attach_buffers();
+    let mut ctx = ctx.borrow_mut();
+    let ctx = ctx.as_mut().unwrap();
+
+    let backend = GdkGliumBackend { ctx: w.context().unwrap() };
+    let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
+    ctx.gl_paper = Some(glctx);
+}
+
+fn paper_build(ctx: &mut MyContext) {
+    if let Some(i_face) = ctx.selected_face {
+        let mut visited_faces = HashSet::new();
+
+        let mut stack = Vec::new();
+        stack.push((i_face, Matrix3::identity()));
+        visited_faces.insert(i_face);
+
+        let mut vertices = Vec::new();
+        loop {
+            let (i_face, m) = match stack.pop() {
+                Some(x) => x,
+                None => break,
+            };
+
+            let face = ctx.model.face_by_index(i_face);
+            paper_draw_face(ctx, face, &m, &mut vertices);
+            for i_edge in face.index_edges() {
+                let edge = ctx.model.edge_by_index(i_edge);
+                for i_next_face in edge.faces() {
+                    if visited_faces.contains(&i_next_face) {
+                        continue;
+                    }
+
+                    let next_face = ctx.model.face_by_index(i_next_face);
+                    let medge = paper_edge_matrix(ctx, edge, face, next_face);
+
+                    stack.push((i_next_face, m * medge));
+                    visited_faces.insert(i_next_face);
+                }
+            }
+        }
+        ctx.paper_vertex_buf.update(&vertices);
+    }
+}
+
+fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyContext>>>) -> gtk::Inhibit {
+    let rect = w.allocation();
+
+    let mut ctx = ctx.borrow_mut();
+    let ctx = ctx.as_mut().unwrap();
+    let gl = ctx.gl_paper.clone().unwrap();
+    let mut frm = glium::Frame::new(gl.clone(), (rect.width() as u32, rect.height() as u32));
+
+    use glium::Surface;
+
+    frm.clear_color_and_depth((0.7, 0.7, 0.7, 1.0), 1.0);
+
+    let mat_name = ctx.material.as_deref().unwrap_or("");
+    let (texture, _) = ctx.textures.get(mat_name)
+        .unwrap_or_else(|| ctx.textures.get("").unwrap());
+
+    let u = MyUniforms2D {
+        m: ctx.trans_paper.ortho * ctx.trans_paper.mx,
+        texture: texture.sampled(),
+    };
+
+    // Draw the textured polys
+    let dp = glium::DrawParameters {
+        viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
+        blend: glium::Blend::alpha_blending(),
+        depth: glium::Depth {
+            test: glium::DepthTest::IfLessOrEqual,
+            write: true,
+            .. Default::default()
+        },
+        .. Default::default()
+    };
+
+    frm.draw(&ctx.paper_vertex_buf, glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &ctx.prg_solid_paper, &u, &dp).unwrap();
+
+    frm.finish().unwrap();
+    Inhibit(true)
 }
 
 struct MyUniforms<'a> {
@@ -605,12 +758,26 @@ impl glium::uniforms::Uniforms for MyUniforms<'_> {
     }
 }
 
+struct MyUniforms2D<'a> {
+    m: Matrix3,
+    texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
+}
+
+impl glium::uniforms::Uniforms for MyUniforms2D<'_> {
+    fn visit_values<'a, F: FnMut(&str, glium::uniforms::UniformValue<'a>)>(&'a self, mut visit: F) {
+        use glium::uniforms::UniformValue::*;
+
+        visit("m", Mat3(array3x3(self.m)));
+        visit("tex", self.texture.as_uniform_value());
+    }
+}
+
 fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyContext>>>) -> gtk::Inhibit {
     let rect = w.allocation();
 
     let mut ctx = ctx.borrow_mut();
     let ctx = ctx.as_mut().unwrap();
-    let mut frm = glium::Frame::new(ctx.gl.glctx.clone(), (rect.width() as u32, rect.height() as u32));
+    let mut frm = glium::Frame::new(ctx.gl_3d.clone().unwrap(), (rect.width() as u32, rect.height() as u32));
 
     use glium::Surface;
 
@@ -650,11 +817,11 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
         units: 1.0,
         .. PolygonOffset::default()
     };
-    frm.draw(&ctx.vertex_buf, &ctx.indices_solid_buf, &ctx.gl.prg_solid, &u, &dp).unwrap();
+    frm.draw(&ctx.vertex_buf, &ctx.indices_solid_buf, &ctx.prg_solid, &u, &dp).unwrap();
 
     if ctx.selected_face.is_some() {
         u.texture = ctx.textures.get("").unwrap().0.sampled();
-        frm.draw(&ctx.vertex_buf, &ctx.indices_face_sel, &ctx.gl.prg_solid, &u, &dp).unwrap();
+        frm.draw(&ctx.vertex_buf, &ctx.indices_face_sel, &ctx.prg_solid, &u, &dp).unwrap();
     }
 
     // Draw the lines:
@@ -663,12 +830,12 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
     //dp.polygon_offset = PolygonOffset::default();
     dp.line_width = Some(1.0);
     dp.smooth = Some(glium::Smooth::Nicest);
-    frm.draw(&ctx.vertex_buf, &ctx.indices_edges_buf, &ctx.gl.prg_line, &u, &dp).unwrap();
+    frm.draw(&ctx.vertex_buf, &ctx.indices_edges_buf, &ctx.prg_line, &u, &dp).unwrap();
 
     dp.depth.test = glium::DepthTest::Overwrite;
     if ctx.selected_edge.is_some() {
         dp.line_width = Some(3.0);
-        frm.draw(&ctx.vertex_buf, &ctx.indices_edge_sel, &ctx.gl.prg_line, &u, &dp).unwrap();
+        frm.draw(&ctx.vertex_buf, &ctx.indices_edge_sel, &ctx.prg_line, &u, &dp).unwrap();
     }
 
     frm.finish().unwrap();
@@ -699,29 +866,30 @@ unsafe impl glium::backend::Backend for GdkGliumBackend {
     }
 }
 
-// This contains GL objects that are overall constant
-struct GlData {
-    glctx: Rc<glium::backend::Context>,
-    prg_solid: glium::Program,
-    prg_line: glium::Program,
-}
-
 // This contains GL objects that are object specific
 struct MyContext {
-    gl: GlData,
+    gl_3d: Option<Rc<glium::backend::Context>>,
+    gl_paper: Option<Rc<glium::backend::Context>>,
 
     // The model
     model: paper::Model,
 
     // GL objects
+    prg_solid: glium::Program,
+    prg_line: glium::Program,
+    prg_solid_paper: glium::Program,
+    prg_line_paper: glium::Program,
+
     textures: HashMap<String, (glium::Texture2d, Option<gdk_pixbuf::Pixbuf>)>,
 
     vertex_buf: glium::VertexBuffer<MVertex>,
     indices_solid_buf: glium::IndexBuffer<paper::VertexIndex>,
     indices_edges_buf: glium::IndexBuffer<paper::VertexIndex>,
 
-    indices_face_sel: PersistentIndexBuffer,
-    indices_edge_sel: PersistentIndexBuffer,
+    indices_face_sel: PersistentIndexBuffer<paper::VertexIndex>,
+    indices_edge_sel: PersistentIndexBuffer<paper::VertexIndex>,
+
+    paper_vertex_buf: PersistentVertexBuffer<MVertex2D>,
 
     // State
     material: Option<String>,
@@ -732,7 +900,6 @@ struct MyContext {
 
 
     trans_3d: Transformation3D,
-
     trans_paper: TransformationPaper,
 }
 
@@ -781,6 +948,7 @@ impl Transformation3D {
 }
 
 struct TransformationPaper {
+    ortho: Matrix3,
     mx: Matrix3,
 }
 
@@ -805,20 +973,71 @@ impl glium::Vertex for MVertex {
     }
 }
 
-struct PersistentIndexBuffer {
-    buffer: glium::IndexBuffer<paper::VertexIndex>,
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct MVertex2D {
+    pub pos: Vector2,
+    pub uv: Vector2,
+}
+
+impl glium::Vertex for MVertex2D {
+    fn build_bindings() -> glium::VertexFormat {
+        use std::borrow::Cow::Borrowed;
+        Borrowed(
+            &[
+                (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32, false),
+                (Borrowed("uv"), 4*2, glium::vertex::AttributeType::F32F32, false),
+            ]
+        )
+    }
+}
+
+struct PersistentVertexBuffer<V: glium::Vertex> {
+    buffer: glium::VertexBuffer<V>,
     length: usize,
 }
 
-impl PersistentIndexBuffer {
-    fn new(ctx: &impl glium::backend::Facade, prim: glium::index::PrimitiveType) -> PersistentIndexBuffer {
-        let buffer = glium::IndexBuffer::empty_persistent(ctx, prim, 16).unwrap();
+impl<V: glium::Vertex> PersistentVertexBuffer<V> {
+    fn new(ctx: &impl glium::backend::Facade, initial_size: usize) -> PersistentVertexBuffer<V> {
+        let buffer = glium::VertexBuffer::empty_persistent(ctx, initial_size).unwrap();
+        PersistentVertexBuffer {
+            buffer,
+            length: 0,
+        }
+    }
+    fn update(&mut self, data: &[V]) {
+        if let Some(slice) = self.buffer.slice(0 .. data.len()) {
+            self.length = data.len();
+            slice.write(data);
+        } else {
+            // If the buffer is not big enough, remake it
+            let ctx = self.buffer.get_context();
+            self.buffer = glium::VertexBuffer::persistent(ctx, data).unwrap();
+            self.length = data.len();
+        }
+    }
+}
+
+impl<'a, V: glium::Vertex> From<&'a PersistentVertexBuffer<V>> for glium::vertex::VerticesSource<'a> {
+    fn from(buf: &'a PersistentVertexBuffer<V>) -> Self {
+        buf.buffer.slice(0 .. buf.length).unwrap().into()
+    }
+}
+
+struct PersistentIndexBuffer<V: glium::index::Index> {
+    buffer: glium::IndexBuffer<V>,
+    length: usize,
+}
+
+impl<V: glium::index::Index> PersistentIndexBuffer<V> {
+    fn new(ctx: &impl glium::backend::Facade, prim: glium::index::PrimitiveType, initial_size: usize) -> PersistentIndexBuffer<V> {
+        let buffer = glium::IndexBuffer::empty_persistent(ctx, prim, initial_size).unwrap();
         PersistentIndexBuffer {
             buffer,
             length: 0,
         }
     }
-    fn update(&mut self, data: &[paper::VertexIndex]) {
+    fn update(&mut self, data: &[V]) {
         if let Some(slice) = self.buffer.slice(0 .. data.len()) {
             self.length = data.len();
             slice.write(data);
@@ -831,8 +1050,8 @@ impl PersistentIndexBuffer {
     }
 }
 
-impl<'a> From<&'a PersistentIndexBuffer> for glium::index::IndicesSource<'a> {
-    fn from(buf: &'a PersistentIndexBuffer) -> Self {
+impl<'a, V: glium::index::Index> From<&'a PersistentIndexBuffer<V>> for glium::index::IndicesSource<'a> {
+    fn from(buf: &'a PersistentIndexBuffer<V>) -> Self {
         buf.buffer.slice(0 .. buf.length).unwrap().into()
     }
 }

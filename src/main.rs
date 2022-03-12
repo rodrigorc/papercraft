@@ -14,7 +14,7 @@ use gtk::{
     gdk::{self, EventMask}, cairo,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, cell::Cell};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -426,7 +426,10 @@ fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, vertices: &
 fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     w.attach_buffers();
     let mut ctx = ctx.borrow_mut();
-    let backend = GdkGliumBackend { ctx: w.context().unwrap() };
+    let backend = GdkGliumBackend {
+        ctx: w.context().unwrap(),
+        size: Rc::new(Cell::new((1,1))),
+    };
     let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
 
     let vsh = r"
@@ -622,6 +625,8 @@ void main(void) {
     *ctx = Some(MyContext {
         gl_3d: Some(glctx),
         gl_paper: None,
+        gl_paper_size: Rc::new(Cell::new((1,1))),
+
         model,
 
         prg_solid,
@@ -659,7 +664,10 @@ fn paper_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     let mut ctx = ctx.borrow_mut();
     let ctx = ctx.as_mut().unwrap();
 
-    let backend = GdkGliumBackend { ctx: w.context().unwrap() };
+    let backend = GdkGliumBackend {
+        ctx: w.context().unwrap(),
+        size: ctx.gl_paper_size.clone(),
+    };
     let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
     ctx.gl_paper = Some(glctx);
 }
@@ -702,13 +710,14 @@ fn paper_build(ctx: &mut MyContext) {
 
 fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyContext>>>) -> gtk::Inhibit {
     let rect = w.allocation();
+    use glium::Surface;
 
     let mut ctx = ctx.borrow_mut();
     let ctx = ctx.as_mut().unwrap();
     let gl = ctx.gl_paper.clone().unwrap();
-    let mut frm = glium::Frame::new(gl.clone(), (rect.width() as u32, rect.height() as u32));
 
-    use glium::Surface;
+
+    let mut frm = glium::Frame::new(gl.clone(), (rect.width() as u32, rect.height() as u32));
 
     frm.clear_color_and_depth((0.7, 0.7, 0.7, 1.0), 1.0);
 
@@ -736,6 +745,50 @@ fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<M
     frm.draw(&ctx.paper_vertex_buf, glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &ctx.prg_solid_paper, &u, &dp).unwrap();
 
     frm.finish().unwrap();
+
+    {
+        ctx.gl_paper_size.set((rect.width() as u32, rect.height() as u32));
+        let rb = glium::framebuffer::RenderBuffer::new(&gl, glium::texture::UncompressedFloatFormat::U8U8U8U8, rect.width() as u32, rect.height() as u32).unwrap();
+        let mut frm = glium::framebuffer::SimpleFrameBuffer::new(&gl, &rb).unwrap();
+
+        frm.clear_color_and_depth((0.7, 0.7, 0.7, 1.0), 1.0);
+
+        let mat_name = ctx.material.as_deref().unwrap_or("");
+        let (texture, _) = ctx.textures.get(mat_name)
+            .unwrap_or_else(|| ctx.textures.get("").unwrap());
+
+        let u = MyUniforms2D {
+            m: ctx.trans_paper.ortho * ctx.trans_paper.mx,
+            texture: texture.sampled(),
+        };
+
+        // Draw the textured polys
+        let dp = glium::DrawParameters {
+            viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
+            blend: glium::Blend::alpha_blending(),
+            .. Default::default()
+        };
+
+        frm.draw(&ctx.paper_vertex_buf, glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &ctx.prg_solid_paper, &u, &dp).unwrap();
+
+        let GdkPixbufDataSink(pb) = gl.read_front_buffer().unwrap();
+        /*let raw: Vec<Vec<(u8, u8, u8, u8)>> = gl.read_front_buffer().unwrap();
+
+        let h = raw.len();
+        let w = raw[0].len();
+        dbg!(w, h);
+
+        let pb = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, w as i32, h as i32).unwrap();
+        {
+            for (y, row) in raw.iter().enumerate() {
+                for (x, &(r,g,b,a)) in row.iter().enumerate() {
+                    pb.put_pixel(x as u32, y as u32, r, g, b, a);
+                }
+            }
+        }*/
+        pb.savev("test.png", "png", &[]).unwrap();
+    }
+
     Inhibit(true)
 }
 
@@ -845,6 +898,7 @@ fn gl_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<MyCo
 
 struct GdkGliumBackend {
     ctx: gdk::GLContext,
+    size: Rc<Cell<(u32, u32)>>,
 }
 
 unsafe impl glium::backend::Backend for GdkGliumBackend {
@@ -855,8 +909,9 @@ unsafe impl glium::backend::Backend for GdkGliumBackend {
         gl_loader::get_proc_address(symbol) as _
     }
     fn get_framebuffer_dimensions(&self) -> (u32, u32) {
-        let w = self.ctx.window().unwrap();
-        (w.width() as u32, w.height() as u32)
+        //let w = self.ctx.window().unwrap();
+        //(w.width() as u32, w.height() as u32)
+        self.size.get()
     }
     fn is_current(&self) -> bool {
         gdk::GLContext::current().as_ref() == Some(&self.ctx)
@@ -870,6 +925,7 @@ unsafe impl glium::backend::Backend for GdkGliumBackend {
 struct MyContext {
     gl_3d: Option<Rc<glium::backend::Context>>,
     gl_paper: Option<Rc<glium::backend::Context>>,
+    gl_paper_size: Rc<Cell<(u32, u32)>>,
 
     // The model
     model: paper::Model,
@@ -1053,6 +1109,31 @@ impl<V: glium::index::Index> PersistentIndexBuffer<V> {
 impl<'a, V: glium::index::Index> From<&'a PersistentIndexBuffer<V>> for glium::index::IndicesSource<'a> {
     fn from(buf: &'a PersistentIndexBuffer<V>) -> Self {
         buf.buffer.slice(0 .. buf.length).unwrap().into()
+    }
+}
+
+struct GdkPixbufDataSink(gdk_pixbuf::Pixbuf);
+
+impl glium::texture::Texture2dDataSink<(u8, u8, u8, u8)> for GdkPixbufDataSink {
+    fn from_raw(data: std::borrow::Cow<'_, [(u8, u8, u8, u8)]>, width: u32, height: u32) -> Self
+        where [(u8, u8, u8, u8)]: ToOwned
+    {
+        let data: &[(u8, u8, u8, u8)] = data.as_ref();
+        let data: &[u8] = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, 4 * data.len()) };
+
+        let pb = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, width as i32, height as i32).unwrap();
+        let stride = pb.rowstride() as usize;
+        let byte_width = 4 * width as usize;
+
+        unsafe {
+            let pix = pb.pixels();
+            let dsts = pix.chunks_mut(stride);
+            let srcs = data.chunks(byte_width).rev();
+            for (dst, src) in dsts.zip(srcs) {
+                dst[.. byte_width].copy_from_slice(src);
+            }
+        }
+        GdkPixbufDataSink(pb)
     }
 }
 

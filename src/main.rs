@@ -11,7 +11,7 @@ use glium::{
 };
 use gtk::{
     prelude::*,
-    gdk::{self, EventMask}, cairo,
+    gdk::{self, EventMask},
 };
 
 use std::{collections::{HashMap, HashSet}, cell::Cell};
@@ -169,76 +169,6 @@ fn main() {
     //let paper = gtk::DrawingArea::new();
     paper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
     paper.set_has_depth_buffer(true);
-    #[cfg(xxx)]
-    paper.connect_draw({
-        let ctx = ctx.clone();
-        move |_w, cr| {
-            cr.set_source_rgb(0.75, 0.75, 0.75);
-            cr.set_line_join(cairo::LineJoin::Bevel);
-            let _ = cr.paint();
-            let ctx = ctx.borrow();
-            if let Some(ctx)  = &*ctx {
-                /*let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
-                let mt = Matrix3::from_translation(Vector2::new((rect.width() / 2) as f32, (rect.height() / 2) as f32));
-                let ms = Matrix3::from_scale(500.0);
-                let m = mt * ms * mr;*/
-                let m = &ctx.trans_paper.mx;
-
-                /*
-                if let Some(face) = ctx.selected_face {
-                    let face = ctx.model.face_by_index(face);
-                    paper_draw_face(ctx, face, m, cr);
-                }
-
-                if let Some(i_edge) = ctx.selected_edge {
-                    let edge = ctx.model.edge_by_index(i_edge);
-                    let mut faces = edge.faces();
-                    if let Some(i_face_a) = faces.next() {
-                        let face_a = ctx.model.face_by_index(i_face_a);
-                        paper_draw_face(ctx, face_a, m, cr);
-                        for i_face_b in faces {
-                            let face_b = ctx.model.face_by_index(i_face_b);
-                            let medge = paper_edge_matrix(ctx, edge, face_a, face_b);
-                            paper_draw_face(ctx, face_b, &(m * medge), cr);
-                        }
-                    }
-                }*/
-                if let Some(i_face) = ctx.selected_face {
-                    let mut visited_faces = HashSet::new();
-
-                    let mut stack = Vec::new();
-                    stack.push((i_face, *m));
-                    visited_faces.insert(i_face);
-
-                    loop {
-                        let (i_face, m) = match stack.pop() {
-                            Some(x) => x,
-                            None => break,
-                        };
-
-                        let face = ctx.model.face_by_index(i_face);
-                        paper_draw_face(ctx, face, &m, cr);
-
-                        for i_edge in face.index_edges() {
-                            let edge = ctx.model.edge_by_index(i_edge);
-                            for i_next_face in edge.faces() {
-                                if visited_faces.contains(&i_next_face) {
-                                    continue;
-                                }
-
-                                let next_face = ctx.model.face_by_index(i_next_face);
-                                let medge = paper_edge_matrix(ctx, edge, face, next_face);
-
-                                stack.push((i_next_face, m * medge));
-                                visited_faces.insert(i_next_face);
-                            }
-                        }
-                    }
-                }
-            }
-            gtk::Inhibit(true)
-        }
-    });
     paper.connect_realize({
         let ctx = ctx.clone();
         move |w| paper_realize(w, &ctx)
@@ -340,86 +270,37 @@ fn paper_edge_matrix(ctx: &MyContext, edge: &paper::Edge, face_a: &paper::Face, 
     medge
 }
 
-fn _paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, cr: &cairo::Context) {
-    //#[cfg(xxx)]
-    let mat_name = ctx.material.as_deref().unwrap_or("");
-    let pixbuf = ctx.textures.get(mat_name)
-        .and_then(|(_, pb)| pb.as_ref())
-        .map(|pb| {
-            cr.set_source_pixbuf(pb, 0.0, 0.0);
-            (pb.width(), pb.height(), cr.source())
-        });
-
-    for tri in face.index_triangles() {
-        let vs: Vec<_> = tri.into_iter()
-            .map(|f| {
-                let v = ctx.model.vertex_by_index(f);
-                let v = face.normal().project(&v.pos());
-                m.transform_point(Point2::from_vec(v)).to_vec()
-            })
-            .collect();
-
-        let vlast = vs[vs.len()-1];
-        cr.move_to(vlast[0] as f64, vlast[1] as f64);
-        for v in &vs {
-            cr.line_to(v[0] as f64, v[1] as f64);
-        }
-
-
-        match pixbuf {
-            Some((width, height, ref pat)) => {
-                let uv = tri.map(|idx| ctx.model.vertex_by_index(idx).uv_inv());
-                let m0 = util_3d::basis_2d_matrix(uv);
-                let m1 = util_3d::basis_2d_matrix([vs[0], vs[1], vs[2]]);
-                let ss = Matrix3::from_nonuniform_scale(width as f32, height as f32);
-                let m = ss * m0.invert().unwrap() * m1;
-                let m = cairo::Matrix::new(
-                    m[0][0] as f64, m[0][1] as f64,
-                    m[1][0] as f64, m[1][1] as f64,
-                    m[2][0] as f64, m[2][1] as f64,
-                );
-                pat.set_matrix(m);
-            }
-            None => { cr.set_source_rgb(0.1, 0.1, 0.1); }
-        }
-        cr.set_line_width(1.0);
-        let _ = cr.stroke_preserve();
-        let _ = cr.fill();
-
-        //cr.set_source_rgb(0.0, 0.0, 0.0);
-        //cr.set_line_width(2.0);
-        //let _ = cr.stroke();
-    }
-
-    let vs: Vec<_> = face.index_vertices()
-        .map(|f| {
-            let v = ctx.model.vertex_by_index(f);
-            let v = face.normal().project(&v.pos());
-            m.transform_point(Point2::from_vec(v)).to_vec()
-        })
-        .collect();
-    let vlast = vs[vs.len()-1];
-    cr.move_to(vlast[0] as f64, vlast[1] as f64);
-    for v in &vs {
-        cr.line_to(v[0] as f64, v[1] as f64);
-    }
-    cr.set_source_rgb(0.0, 0.0, 0.0);
-    cr.set_line_width(2.0);
-    let _ = cr.stroke();
-}
-
-fn paper_draw_face(ctx: &MyContext, face: &paper::Face, m: &Matrix3, vertices: &mut Vec<MVertex2D>) {
+fn paper_draw_face(ctx: &MyContext, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, vertices: &mut Vec<MVertex2D>, indices_solid: &mut Vec<u32>, indices_edge: &mut Vec<u32>, vertex_map: &mut HashMap<(paper::FaceIndex, paper::VertexIndex), u32>) {
     for tri in face.index_triangles() {
         for i_v in tri {
-            let v = ctx.model.vertex_by_index(i_v);
-            let p2 = face.normal().project(&v.pos());
-            let pos = m.transform_point(Point2::from_vec(p2)).to_vec();
-            vertices.push(MVertex2D {
-                pos,
-                uv: v.uv_inv(),
-            })
+            let i = vertex_map
+                .entry((i_face, i_v))
+                .or_insert_with(|| {
+                    let v = ctx.model.vertex_by_index(i_v);
+                    let p2 = face.normal().project(&v.pos());
+                    let pos = m.transform_point(Point2::from_vec(p2)).to_vec();
+                    let idx = vertices.len();
+                    vertices.push(MVertex2D {
+                        pos,
+                        uv: v.uv_inv(),
+                    });
+                    idx as u32
+                });
+            indices_solid.push(*i);
         }
     }
+
+    let mut vs = face.index_vertices();
+    let first = vs.next().unwrap();
+    let first = *vertex_map.get(&(i_face, first)).unwrap();
+    indices_edge.push(first);
+
+    for v in face.index_vertices() {
+        let v = *vertex_map.get(&(i_face, v)).unwrap();
+        indices_edge.push(v);
+        indices_edge.push(v);
+    }
+    indices_edge.push(first);
 }
 
 
@@ -511,7 +392,7 @@ void main(void) {
     let prg_solid_paper = glium::Program::from_source(&glctx, vsh_paper, fsh_solid, None).unwrap();
     let prg_line_paper = glium::Program::from_source(&glctx, vsh_paper, fsh_line, None).unwrap();
 
-    let f = std::fs::File::open("pikachu.obj").unwrap();
+    let f = std::fs::File::open("v2.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
 
@@ -603,6 +484,8 @@ void main(void) {
     let indices_edge_sel = PersistentIndexBuffer::new(&glctx, glium::index::PrimitiveType::LinesList, 16);
 
     let paper_vertex_buf = PersistentVertexBuffer::new(&glctx, 0);
+    let paper_indices_solid_buf = PersistentIndexBuffer::new(&glctx, glium::index::PrimitiveType::TrianglesList, 16);
+    let paper_indices_edge_buf = PersistentIndexBuffer::new(&glctx, glium::index::PrimitiveType::LinesList, 16);
 
     let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
     let trans_3d = Transformation3D::new(
@@ -640,6 +523,8 @@ void main(void) {
         indices_face_sel,
         indices_edge_sel,
         paper_vertex_buf,
+        paper_indices_solid_buf,
+        paper_indices_edge_buf,
 
         material,
         selected_face: None,
@@ -676,11 +561,16 @@ fn paper_build(ctx: &mut MyContext) {
     if let Some(i_face) = ctx.selected_face {
         let mut visited_faces = HashSet::new();
 
+        //Maps VertexIndex in the model to index in vertices
+        let mut vertex_map = HashMap::new();
+        let mut vertices = Vec::new();
+        let mut indices_solid = Vec::new();
+        let mut indices_edge = Vec::new();
+
         let mut stack = Vec::new();
         stack.push((i_face, Matrix3::identity()));
         visited_faces.insert(i_face);
 
-        let mut vertices = Vec::new();
         loop {
             let (i_face, m) = match stack.pop() {
                 Some(x) => x,
@@ -688,7 +578,7 @@ fn paper_build(ctx: &mut MyContext) {
             };
 
             let face = ctx.model.face_by_index(i_face);
-            paper_draw_face(ctx, face, &m, &mut vertices);
+            paper_draw_face(ctx, face, i_face, &m, &mut vertices, &mut indices_solid, &mut indices_edge, &mut vertex_map);
             for i_edge in face.index_edges() {
                 let edge = ctx.model.edge_by_index(i_edge);
                 for i_next_face in edge.faces() {
@@ -705,6 +595,8 @@ fn paper_build(ctx: &mut MyContext) {
             }
         }
         ctx.paper_vertex_buf.update(&vertices);
+        ctx.paper_indices_solid_buf.update(&indices_solid);
+        ctx.paper_indices_edge_buf.update(&indices_edge);
     }
 }
 
@@ -731,7 +623,7 @@ fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<M
     };
 
     // Draw the textured polys
-    let dp = glium::DrawParameters {
+    let mut dp = glium::DrawParameters {
         viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
         blend: glium::Blend::alpha_blending(),
         depth: glium::Depth {
@@ -742,10 +634,14 @@ fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<M
         .. Default::default()
     };
 
-    frm.draw(&ctx.paper_vertex_buf, glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &ctx.prg_solid_paper, &u, &dp).unwrap();
+    frm.draw(&ctx.paper_vertex_buf, &ctx.paper_indices_solid_buf, &ctx.prg_solid_paper, &u, &dp).unwrap();
+
+    dp.line_width = Some(3.0);
+    frm.draw(&ctx.paper_vertex_buf, &ctx.paper_indices_edge_buf, &ctx.prg_line_paper, &u, &dp).unwrap();
 
     frm.finish().unwrap();
 
+    #[cfg(xxx)]
     {
         ctx.gl_paper_size.set((rect.width() as u32, rect.height() as u32));
         let rb = glium::framebuffer::RenderBuffer::new(&gl, glium::texture::UncompressedFloatFormat::U8U8U8U8, rect.width() as u32, rect.height() as u32).unwrap();
@@ -769,23 +665,9 @@ fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<M
             .. Default::default()
         };
 
-        frm.draw(&ctx.paper_vertex_buf, glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &ctx.prg_solid_paper, &u, &dp).unwrap();
+        frm.draw(&ctx.paper_vertex_buf, &ctx.paper_indices_solid_buf, &ctx.prg_solid_paper, &u, &dp).unwrap();
 
         let GdkPixbufDataSink(pb) = gl.read_front_buffer().unwrap();
-        /*let raw: Vec<Vec<(u8, u8, u8, u8)>> = gl.read_front_buffer().unwrap();
-
-        let h = raw.len();
-        let w = raw[0].len();
-        dbg!(w, h);
-
-        let pb = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, w as i32, h as i32).unwrap();
-        {
-            for (y, row) in raw.iter().enumerate() {
-                for (x, &(r,g,b,a)) in row.iter().enumerate() {
-                    pb.put_pixel(x as u32, y as u32, r, g, b, a);
-                }
-            }
-        }*/
         pb.savev("test.png", "png", &[]).unwrap();
     }
 
@@ -946,6 +828,8 @@ struct MyContext {
     indices_edge_sel: PersistentIndexBuffer<paper::VertexIndex>,
 
     paper_vertex_buf: PersistentVertexBuffer<MVertex2D>,
+    paper_indices_solid_buf: PersistentIndexBuffer<u32>,
+    paper_indices_edge_buf: PersistentIndexBuffer<u32>,
 
     // State
     material: Option<String>,

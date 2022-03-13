@@ -313,86 +313,18 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     };
     let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
 
-    let vsh = r"
-#version 150
+    let vert_3d = include_str!("shaders/3d.vert");
+    let vert_2d = include_str!("shaders/2d.vert");
+    let frag_solid = include_str!("shaders/solid.frag");
+    let frag_line = include_str!("shaders/line.frag");
 
-uniform mat4 m;
-uniform mat3 mnormal;
+    let prg_solid = glium::Program::from_source(&glctx, vert_3d, frag_solid, None).unwrap();
+    let prg_line = glium::Program::from_source(&glctx, vert_3d, frag_line, None).unwrap();
 
-uniform vec3 lights[2];
-in vec3 pos;
-in vec3 normal;
-in vec2 uv;
+    let prg_solid_paper = glium::Program::from_source(&glctx, vert_2d, frag_solid, None).unwrap();
+    let prg_line_paper = glium::Program::from_source(&glctx, vert_2d, frag_line, None).unwrap();
 
-out vec2 v_uv;
-out float v_light;
-
-void main(void) {
-    gl_Position = m * vec4(pos, 1.0);
-    vec3 obj_normal = normalize(mnormal * normal);
-
-    float light = 0.2;
-    for (int i = 0; i < 2; ++i) {
-        float diffuse = max(abs(dot(obj_normal, -lights[i])), 0.0);
-        light += diffuse;
-    }
-    v_light = light;
-    v_uv = uv;
-}
-";
-    let fsh_solid = r"
-#version 150
-
-uniform sampler2D tex;
-
-in vec2 v_uv;
-in float v_light;
-out vec4 out_frag_color;
-
-void main(void) {
-    vec4 base;
-    if (gl_FrontFacing)
-        base = texture2D(tex, v_uv);
-    else
-        base = vec4(0.8, 0.3, 0.3, 1.0);
-    out_frag_color = vec4(v_light * base.rgb, base.a);
-}
-";
-    let fsh_line = r"
-#version 150
-
-in float v_light;
-out vec4 out_frag_color;
-
-void main(void) {
-    out_frag_color = vec4(0.0, 0.0, 0.0, 1.0);
-}
-    ";
-    let vsh_paper = r"
-#version 150
-
-uniform mat3 m;
-
-in vec2 pos;
-in vec2 uv;
-
-out vec2 v_uv;
-out float v_light;
-
-void main(void) {
-    gl_Position = vec4((m * vec3(pos, 1.0)).xy, 0.0, 1.0);
-    v_light = 1.0;
-    v_uv = uv;
-}
-";
-
-    let prg_solid = glium::Program::from_source(&glctx, vsh, fsh_solid, None).unwrap();
-    let prg_line = glium::Program::from_source(&glctx, vsh, fsh_line, None).unwrap();
-
-    let prg_solid_paper = glium::Program::from_source(&glctx, vsh_paper, fsh_solid, None).unwrap();
-    let prg_line_paper = glium::Program::from_source(&glctx, vsh_paper, fsh_line, None).unwrap();
-
-    let f = std::fs::File::open("v2.obj").unwrap();
+    let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
 

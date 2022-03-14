@@ -135,6 +135,7 @@ pub struct Uniforms3D<'a> {
     pub mnormal: Matrix3,
     pub lights: [Vector3; 2],
     pub texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
+    pub color: [f32; 4],
 }
 
 impl glium::uniforms::Uniforms for Uniforms3D<'_> {
@@ -146,12 +147,14 @@ impl glium::uniforms::Uniforms for Uniforms3D<'_> {
         visit("lights[0]", Vec3(array3(self.lights[0])));
         visit("lights[1]", Vec3(array3(self.lights[1])));
         visit("tex", self.texture.as_uniform_value());
+        visit("color", Vec4(self.color));
     }
 }
 
 pub struct Uniforms2D<'a> {
     pub m: Matrix3,
     pub texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
+    pub color: [f32; 4],
 }
 
 impl glium::uniforms::Uniforms for Uniforms2D<'_> {
@@ -160,6 +163,7 @@ impl glium::uniforms::Uniforms for Uniforms2D<'_> {
 
         visit("m", Mat3(array3x3(self.m)));
         visit("tex", self.texture.as_uniform_value());
+        visit("color", Vec4(self.color));
     }
 }
 

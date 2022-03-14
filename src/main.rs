@@ -574,16 +574,15 @@ impl MyContext {
         let vert_3d = include_str!("shaders/3d.vert");
         let vert_2d = include_str!("shaders/2d.vert");
         let frag_solid = include_str!("shaders/solid.frag");
-        let frag_line = include_str!("shaders/line.frag");
+        let frag_color = include_str!("shaders/color.frag");
         let vert_quad = include_str!("shaders/quad.vert");
-        let frag_quad = include_str!("shaders/quad.frag");
 
         let prg_solid = glium::Program::from_source(gl, vert_3d, frag_solid, None).unwrap();
-        let prg_line = glium::Program::from_source(gl, vert_3d, frag_line, None).unwrap();
+        let prg_line = glium::Program::from_source(gl, vert_3d, frag_color, None).unwrap();
 
         let prg_solid_paper = glium::Program::from_source(gl, vert_2d, frag_solid, None).unwrap();
-        let prg_line_paper = glium::Program::from_source(gl, vert_2d, frag_line, None).unwrap();
-        let prg_quad = glium::Program::from_source(gl, vert_quad, frag_quad, None).unwrap();
+        let prg_line_paper = glium::Program::from_source(gl, vert_2d, frag_color, None).unwrap();
+        let prg_quad = glium::Program::from_source(gl, vert_quad, frag_color, None).unwrap();
 
         let vertices: Vec<MVertex3D> = self.model.vertices()
             .map(|v| {
@@ -759,6 +758,7 @@ impl MyContext {
             mnormal: self.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
             texture: texture.sampled(),
+            color: [0.0, 0.0, 0.0, 1.0], //black, for the lines
         };
 
         // Draw the textured polys
@@ -821,6 +821,7 @@ impl MyContext {
         let u = Uniforms2D {
             m: self.trans_paper.ortho * self.trans_paper.mx,
             texture: texture.sampled(),
+            color: [0.0, 0.0, 0.0, 1.0], //black, for the lines
         };
 
         // Draw the textured polys
@@ -834,18 +835,35 @@ impl MyContext {
             .. Default::default()
         };
 
+        // Textured faces
         frm.draw(&gl_objs.paper_vertex_buf, &gl_objs.paper_indices_solid_buf, &gl_objs.prg_solid_paper, &u, &dp).unwrap();
 
+        // Lines
         dp.line_width = Some(3.0);
+        dp.stencil.depth_pass_operation_counter_clockwise = glium::StencilOperation::Keep;
         frm.draw(&gl_objs.paper_vertex_buf, &gl_objs.paper_indices_edge_buf, &gl_objs.prg_line_paper, &u, &dp).unwrap();
 
-        dp.stencil = glium::draw_parameters::Stencil {
-            test_counter_clockwise: glium::StencilTest::IfLess { mask: 0xff },
-            reference_value_counter_clockwise: 1,
-            write_mask_counter_clockwise: 0,
-            .. Default::default()
-        };
-        frm.draw(&gl_objs.quad_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_quad, &u, &dp).unwrap();
+        // Overlaps
+        #[cfg(xxx)]
+        {
+            u.color = [1.0, 1.0, 1.0, 0.75];
+            dp.stencil = glium::draw_parameters::Stencil {
+                test_counter_clockwise: glium::StencilTest::IfEqual { mask: 0xff },
+                reference_value_counter_clockwise: 1,
+                write_mask_counter_clockwise: 0,
+                .. Default::default()
+            };
+            frm.draw(&gl_objs.quad_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_quad, &u, &dp).unwrap();
+
+            u.color = [1.0, 0.0, 0.0, 0.75];
+            dp.stencil = glium::draw_parameters::Stencil {
+                test_counter_clockwise: glium::StencilTest::IfLess { mask: 0xff },
+                reference_value_counter_clockwise: 1,
+                write_mask_counter_clockwise: 0,
+                .. Default::default()
+            };
+            frm.draw(&gl_objs.quad_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_quad, &u, &dp).unwrap();
+        }
 
         frm.finish().unwrap();
 

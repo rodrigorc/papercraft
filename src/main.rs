@@ -168,7 +168,7 @@ fn main() {
 
     //let paper = gtk::DrawingArea::new();
     paper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
-    paper.set_has_depth_buffer(true);
+    paper.set_has_stencil_buffer(true);
     paper.connect_realize({
         let ctx = ctx.clone();
         move |w| paper_realize(w, &ctx)
@@ -317,12 +317,15 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     let vert_2d = include_str!("shaders/2d.vert");
     let frag_solid = include_str!("shaders/solid.frag");
     let frag_line = include_str!("shaders/line.frag");
+    let vert_quad = include_str!("shaders/quad.vert");
+    let frag_quad = include_str!("shaders/quad.frag");
 
     let prg_solid = glium::Program::from_source(&glctx, vert_3d, frag_solid, None).unwrap();
     let prg_line = glium::Program::from_source(&glctx, vert_3d, frag_line, None).unwrap();
 
     let prg_solid_paper = glium::Program::from_source(&glctx, vert_2d, frag_solid, None).unwrap();
     let prg_line_paper = glium::Program::from_source(&glctx, vert_2d, frag_line, None).unwrap();
+    let prg_quad = glium::Program::from_source(&glctx, vert_quad, frag_quad, None).unwrap();
 
     let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
@@ -419,6 +422,13 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
     let paper_indices_solid_buf = PersistentIndexBuffer::new(&glctx, glium::index::PrimitiveType::TrianglesList, 16);
     let paper_indices_edge_buf = PersistentIndexBuffer::new(&glctx, glium::index::PrimitiveType::LinesList, 16);
 
+    let quad_vertex_buf = glium::VertexBuffer::immutable(&glctx,
+        &[
+            MVertexQuad { pos: [-1.0, -1.0] },
+            MVertexQuad { pos: [ 3.0, -1.0] },
+            MVertexQuad { pos: [-1.0,  3.0] },
+        ]).unwrap();
+
     let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
     let trans_3d = Transformation3D::new(
         Vector3::new(0.0, 0.0, -30.0),
@@ -448,6 +458,7 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
         prg_line,
         prg_solid_paper,
         prg_line_paper,
+        prg_quad,
         textures,
         vertex_buf,
         indices_solid_buf,
@@ -457,6 +468,7 @@ fn gl_realize(w: &gtk::GLArea, ctx: &Rc<RefCell<Option<MyContext>>>) {
         paper_vertex_buf,
         paper_indices_solid_buf,
         paper_indices_edge_buf,
+        quad_vertex_buf,
 
         material,
         selected_face: None,
@@ -543,7 +555,8 @@ fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<M
 
     let mut frm = glium::Frame::new(gl.clone(), (rect.width() as u32, rect.height() as u32));
 
-    frm.clear_color_and_depth((0.7, 0.7, 0.7, 1.0), 1.0);
+    //frm.clear_color_and_depth((0.7, 0.7, 0.7, 1.0), 1.0);
+    frm.clear_all((0.7, 0.7, 0.7, 1.0), 1.0, 0);
 
     let mat_name = ctx.material.as_deref().unwrap_or("");
     let (texture, _) = ctx.textures.get(mat_name)
@@ -558,9 +571,8 @@ fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<M
     let mut dp = glium::DrawParameters {
         viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
         blend: glium::Blend::alpha_blending(),
-        depth: glium::Depth {
-            test: glium::DepthTest::IfLessOrEqual,
-            write: true,
+        stencil: glium::draw_parameters::Stencil {
+            depth_pass_operation_counter_clockwise: glium::StencilOperation::Increment,
             .. Default::default()
         },
         .. Default::default()
@@ -570,6 +582,14 @@ fn paper_render(w: &gtk::GLArea, _gl: &gdk::GLContext, ctx: &Rc<RefCell<Option<M
 
     dp.line_width = Some(3.0);
     frm.draw(&ctx.paper_vertex_buf, &ctx.paper_indices_edge_buf, &ctx.prg_line_paper, &u, &dp).unwrap();
+
+    dp.stencil = glium::draw_parameters::Stencil {
+        test_counter_clockwise: glium::StencilTest::IfLess { mask: 0xff },
+        reference_value_counter_clockwise: 1,
+        write_mask_counter_clockwise: 0,
+        .. Default::default()
+    };
+    frm.draw(&ctx.quad_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &ctx.prg_quad, &u, &dp).unwrap();
 
     frm.finish().unwrap();
 
@@ -749,19 +769,21 @@ struct MyContext {
     prg_line: glium::Program,
     prg_solid_paper: glium::Program,
     prg_line_paper: glium::Program,
+    prg_quad: glium::Program,
 
     textures: HashMap<String, (glium::Texture2d, Option<gdk_pixbuf::Pixbuf>)>,
 
     vertex_buf: glium::VertexBuffer<MVertex>,
     indices_solid_buf: glium::IndexBuffer<paper::VertexIndex>,
     indices_edges_buf: glium::IndexBuffer<paper::VertexIndex>,
-
     indices_face_sel: PersistentIndexBuffer<paper::VertexIndex>,
     indices_edge_sel: PersistentIndexBuffer<paper::VertexIndex>,
 
     paper_vertex_buf: PersistentVertexBuffer<MVertex2D>,
     paper_indices_solid_buf: PersistentIndexBuffer<u32>,
     paper_indices_edge_buf: PersistentIndexBuffer<u32>,
+
+    quad_vertex_buf: glium::VertexBuffer<MVertexQuad>,
 
     // State
     material: Option<String>,
@@ -859,6 +881,23 @@ impl glium::Vertex for MVertex2D {
             &[
                 (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32, false),
                 (Borrowed("uv"), 4*2, glium::vertex::AttributeType::F32F32, false),
+            ]
+        )
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct MVertexQuad {
+    pub pos: [f32; 2],
+}
+
+impl glium::Vertex for MVertexQuad {
+    fn build_bindings() -> glium::VertexFormat {
+        use std::borrow::Cow::Borrowed;
+        Borrowed(
+            &[
+                (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32, false),
             ]
         )
     }

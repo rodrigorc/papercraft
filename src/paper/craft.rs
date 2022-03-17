@@ -16,10 +16,26 @@ pub struct Papercraft {
 impl Papercraft {
     pub fn new(model: &Model) -> Papercraft {
         let edges = vec![EdgeStatus::Cut; model.num_edges()];
+        let mut row_height = 0.0f32;
+        let mut pos_x = 0.0;
+        let mut pos_y = 0.0;
         let islands = model.faces()
-            .map(|(i_face, _)| Island {
-                mx: Matrix3::from_translation(Vector2::new(u32::from(i_face) as f32 * 0.1, 0.0)),
-                faces: vec![i_face],
+            .map(|(i_face, _)| {
+                let face = model.face_by_index(i_face);
+                let bbox = model.bounding_box(&face);
+                let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
+                pos_x += bbox.1.x - bbox.0.x + 0.05;
+                row_height = row_height.max(bbox.1.y - bbox.0.y);
+
+                if pos_x > 2.0 {
+                    pos_y += row_height + 0.05;
+                    row_height = 0.0;
+                    pos_x = 0.0;
+                }
+                Island {
+                    mx: Matrix3::from_translation(pos),
+                    faces: vec![i_face],
+                }
             })
             .collect();
         Papercraft {

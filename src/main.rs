@@ -20,9 +20,8 @@ mod waveobj;
 mod paper;
 mod util_3d;
 mod util_gl;
-mod papercraft;
 
-use papercraft::{EdgeStatus, Papercraft};
+use paper::{EdgeStatus, Papercraft};
 
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3};
 use util_gl::{GdkGliumBackend, Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, PersistentIndexBuffer, PersistentVertexBuffer};
@@ -89,12 +88,12 @@ fn main() {
     );
     let trans_paper = {
         //let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
-        //let mt = Matrix3::from_translation(Vector2::new(0.0, 0.0));
+        let mt = Matrix3::from_translation(Vector2::new(-1.0, -1.5));
         let ms = Matrix3::from_scale(200.0);
         TransformationPaper {
             ortho: util_3d::ortho2d(1.0, 1.0),
             //mx: mt * ms * mr,
-            mx: ms,
+            mx: ms * mt,
         }
     };
 

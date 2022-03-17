@@ -2,8 +2,10 @@
 
 use std::collections::{HashSet, HashMap};
 
+use cgmath::InnerSpace;
+
 use crate::waveobj;
-use crate::util_3d::{self, Vector2, Vector3};
+use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3};
 
 // We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
 // 32-bit indices should be enough for everybody ;-)
@@ -30,9 +32,21 @@ unsafe impl glium::index::Index for VertexIndex {
 #[repr(transparent)]
 pub struct EdgeIndex(u32);
 
+impl From<EdgeIndex> for u32 {
+    fn from(idx: EdgeIndex) -> u32 {
+        idx.0
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct FaceIndex(u32);
+
+impl From<FaceIndex> for u32 {
+    fn from(idx: FaceIndex) -> u32 {
+        idx.0
+    }
+}
 
 #[derive(Debug)]
 pub struct Face {
@@ -46,7 +60,7 @@ pub struct Face {
 pub struct Edge {
     v0: VertexIndex,
     v1: VertexIndex,
-    faces: Vec<FaceIndex>,
+    faces: Vec<(FaceIndex, bool)>,
 }
 
 #[derive(Debug)]
@@ -110,14 +124,14 @@ impl Model {
 
                 if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0 == v0 && p1 == v1) || (p0 == v1 && p1 == v0)) {
                     face_edges.push(EdgeIndex(i_edge as u32));
-                    edges[i_edge].faces.push(i_face);
+                    edges[i_edge].faces.push((i_face, true)); //TODO sign?
                 } else {
                     face_edges.push(EdgeIndex(idx_edges.len() as u32));
                     idx_edges.push((v0, v1));
                     edges.push(Edge {
                         v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
                         v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
-                        faces: vec![i_face],
+                        faces: vec![(i_face, false)],
                     })
                 }
             }
@@ -171,6 +185,9 @@ impl Model {
             .enumerate()
             .map(|(i, e)| (EdgeIndex(i as u32), e))
     }
+    pub fn num_edges(&self) -> usize {
+        self.edges.len()
+    }
     pub fn face_by_index(&self, idx: FaceIndex) -> &Face {
         &self.faces[idx.0 as usize]
     }
@@ -180,7 +197,6 @@ impl Model {
     pub fn edge_by_index(&self, idx: EdgeIndex) -> &Edge {
         &self.edges[idx.0 as usize]
     }
-
     pub fn faces_by_edge(&self, edge: EdgeIndex) -> [(FaceIndex, &Face); 2] {
         let mut res = Vec::with_capacity(2);
         for (iface, face) in self.faces() {
@@ -193,6 +209,19 @@ impl Model {
         }
         //TODO: do not panic
         panic!("unconnected edge")
+    }
+    pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
+        let v0 = self.vertex_by_index(edge.v0()).pos();
+        let v1 = self.vertex_by_index(edge.v1()).pos();
+        let a0 = face_a.normal().project(&v0);
+        let b0 = face_b.normal().project(&v0);
+        let a1 = face_a.normal().project(&v1);
+        let b1 = face_b.normal().project(&v1);
+        let mabt0 = Matrix3::from_translation(-b0);
+        let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
+        let mabt1 = Matrix3::from_translation(a0);
+        let medge = mabt1 * mabr * mabt0;
+        medge
     }
 }
 
@@ -245,6 +274,40 @@ impl Edge {
         self.v1
     }
     pub fn faces(&self) -> impl Iterator<Item = FaceIndex> + '_ {
-        self.faces.iter().copied()
+        self.faces.iter().map(|(f, _)| *f)
+    }
+    pub fn face_sign(&self, face: FaceIndex) -> bool {
+        self.faces.iter().find(|(f, _)| *f == face).unwrap().1
+    }
+}
+
+pub fn traverse_faces(model: &Model, root: FaceIndex, root_mx: &Matrix3, mut visit_face: impl FnMut(FaceIndex, &Face, &Matrix3), mut visit_edge: impl FnMut(EdgeIndex) -> bool) {
+    let mut visited_faces = HashSet::new();
+    let mut stack = Vec::new();
+    stack.push((root, *root_mx));
+    visited_faces.insert(root);
+
+    while let Some((i_face, m)) = stack.pop() {
+        let face = model.face_by_index(i_face);
+        visit_face(i_face, face, &m);
+        for i_edge in face.index_edges() {
+
+            if !visit_edge(i_edge) {
+                continue;
+            }
+
+            let edge = model.edge_by_index(i_edge);
+            for i_next_face in edge.faces() {
+                if visited_faces.contains(&i_next_face) {
+                    continue;
+                }
+
+                let next_face = model.face_by_index(i_next_face);
+                let medge = model.face_to_face_edge_matrix(edge, face, next_face);
+
+                stack.push((i_next_face, m * medge));
+                visited_faces.insert(i_next_face);
+            }
+        }
     }
 }

@@ -295,34 +295,3 @@ impl Edge {
         self.faces.iter().find(|(f, _)| *f == face).unwrap().1
     }
 }
-
-pub fn traverse_faces(model: &Model, root: FaceIndex, root_mx: &Matrix3, mut visit_face: impl FnMut(FaceIndex, &Face, &Matrix3), mut visit_edge: impl FnMut(EdgeIndex) -> bool) {
-    let mut visited_faces = HashSet::new();
-    let mut stack = Vec::new();
-    stack.push((root, *root_mx));
-    visited_faces.insert(root);
-
-    while let Some((i_face, m)) = stack.pop() {
-        let face = model.face_by_index(i_face);
-        visit_face(i_face, face, &m);
-        for i_edge in face.index_edges() {
-
-            if !visit_edge(i_edge) {
-                continue;
-            }
-
-            let edge = model.edge_by_index(i_edge);
-            for i_next_face in edge.faces() {
-                if visited_faces.contains(&i_next_face) {
-                    continue;
-                }
-
-                let next_face = model.face_by_index(i_next_face);
-                let medge = model.face_to_face_edge_matrix(edge, face, next_face);
-
-                stack.push((i_next_face, m * medge));
-                visited_faces.insert(i_next_face);
-            }
-        }
-    }
-}

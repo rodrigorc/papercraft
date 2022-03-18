@@ -21,7 +21,7 @@ mod paper;
 mod util_3d;
 mod util_gl;
 
-use paper::{EdgeStatus, Papercraft};
+use paper::Papercraft;
 
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3};
 use util_gl::{GdkGliumBackend, Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, PersistentIndexBuffer, PersistentVertexBuffer};
@@ -440,6 +440,7 @@ struct TransformationPaper {
     mx: Matrix3,
 }
 
+#[derive(Debug)]
 enum ClickResult {
     None,
     Face(paper::FaceIndex),
@@ -537,48 +538,46 @@ impl MyContext {
 
         for island in self.papercraft.islands() {
 
-            paper::traverse_faces(&self.model, island.root_face(), &island.matrix(),
-            |i_face, face, fmx| {
-                let normal = face.normal();
-                for tri in face.index_triangles() {
-                    let tri = tri.map(|v| {
-                        let v3 = self.model.vertex_by_index(v).pos();
-                        let v2 = normal.project(&v3);
-                        fmx.transform_point(Point2::from_vec(v2)).to_vec()
-                    });
-                    if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
-                        face_sel = Some(i_face);
+            self.papercraft.traverse_faces(&self.model, island,
+                |i_face, face, fmx| {
+                    let normal = face.normal();
+                    for tri in face.index_triangles() {
+                        let tri = tri.map(|v| {
+                            let v3 = self.model.vertex_by_index(v).pos();
+                            let v2 = normal.project(&v3);
+                            fmx.transform_point(Point2::from_vec(v2)).to_vec()
+                        });
+                        if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
+                            face_sel = Some(i_face);
+                        }
+                    }
+
+                    for i_edge in face.index_edges() {
+                        let edge = self.model.edge_by_index(i_edge);
+                        let v0 = self.model.vertex_by_index(edge.v0()).pos();
+                        let v0 = normal.project(&v0);
+                        let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
+                        let v1 = self.model.vertex_by_index(edge.v1()).pos();
+                        let v1 = normal.project(&v1);
+                        let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
+
+                        let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
+                        let d = d * height;
+                        if d > 10.0 { //too far?
+                            continue;
+                        }
+                        match &edge_sel {
+                            None => {
+                                edge_sel = Some((d, i_edge, i_face));
+                            }
+                            &Some((d_prev, _, _)) if d < d_prev => {
+                                edge_sel = Some((d, i_edge, i_face));
+                            }
+                            _ => {}
+                        }
                     }
                 }
-
-                for i_edge in face.index_edges() {
-                    let edge = self.model.edge_by_index(i_edge);
-                    let v0 = self.model.vertex_by_index(edge.v0()).pos();
-                    let v0 = normal.project(&v0);
-                    let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
-                    let v1 = self.model.vertex_by_index(edge.v1()).pos();
-                    let v1 = normal.project(&v1);
-                    let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
-
-                    let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
-                    let d = d * height;
-                    if d > 5.0 { //too far?
-                        continue;
-                    }
-                    match &edge_sel {
-                        None => {
-                            edge_sel = Some((d, i_edge, i_face));
-                        }
-                        &Some((d_prev, _, _)) if d < d_prev => {
-                            edge_sel = Some((d, i_edge, i_face));
-                        }
-                        _ => {}
-                    }
-                }
-            },
-            |i_edge| self.papercraft.edge_status(i_edge) == EdgeStatus::Joined,
             );
-
         }
         //Edge selection has priority
         match (edge_sel, face_sel) {
@@ -767,9 +766,8 @@ impl MyContext {
         let mut indices_edge = Vec::new();
 
         for island in self.papercraft.islands() {
-            paper::traverse_faces(&self.model, island.root_face(), &island.matrix(),
-                |i_face, face, mx| self.paper_draw_face(face, i_face, mx, &mut vertices, &mut indices_solid, &mut indices_edge, &mut vertex_map),
-                |i_edge| self.papercraft.edge_status(i_edge) == EdgeStatus::Joined,
+            self.papercraft.traverse_faces(&self.model, island,
+                |i_face, face, mx| self.paper_draw_face(face, i_face, mx, &mut vertices, &mut indices_solid, &mut indices_edge, &mut vertex_map)
             );
         }
 

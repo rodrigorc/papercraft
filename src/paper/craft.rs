@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use cgmath::{Transform, EuclideanSpace, InnerSpace};
 
 use crate::{paper::*, util_3d::*};
@@ -34,7 +36,7 @@ impl Papercraft {
                 }
                 Island {
                     mx: Matrix3::from_translation(pos),
-                    faces: vec![i_face],
+                    root: i_face,
                 }
             })
             .collect();
@@ -65,37 +67,30 @@ impl Papercraft {
 
         match edge_status {
             EdgeStatus::Joined => {
+                //one of the edge faces will be the root of the new island, but we do not know which one, yet
+                let i_island = self.islands.iter().position(|i| self.contains_face(model, i, i_face_a)).unwrap();
+
                 self.edges[u32::from(i_edge) as usize] = EdgeStatus::Cut;
-                //one of the edge faces will be the root of the new island
-                let island = self.islands.iter_mut().find(|i| i.contains_face(i_face_a)).unwrap();
-                let mx = island.mx;
-                let root = island.root_face();
-                let mut faces_keep = Vec::new();
-                let mut face_mx = None;
-                crate::paper::traverse_faces(model, root, &mx,
+
+                let mut data_found = None;
+                self.traverse_faces(model, &self.islands[i_island],
                     |i_face, _, fmx| {
-                        faces_keep.push(i_face);
-                        if i_face == i_face_a || i_face == i_face_b {
-                            face_mx = Some(*fmx);
+                        if i_face == i_face_a {
+                            data_found = Some((*fmx, i_face_b, i_face_a));
+                        } else if i_face == i_face_b {
+                            data_found = Some((*fmx, i_face_a, i_face_b));
                         }
-                    },
-                    |i_edge| self.edges[u32::from(i_edge) as usize] == EdgeStatus::Joined
+                    }
                 );
+                let (face_mx, new_root, i_face_old) = data_found.unwrap();
 
-                let (new_root, i_face_old) = if faces_keep.contains(&i_face_a) {
-                    (i_face_b, i_face_a)
-                } else {
-                    (i_face_a, i_face_b)
-                };
-                island.faces = faces_keep;
-
-                let mut faces_new = Vec::new();
-                crate::paper::traverse_faces(model, new_root, &mx,
-                    |i_face,_,_| faces_new.push(i_face),
-                    |i_edge| self.edges[u32::from(i_edge) as usize] == EdgeStatus::Joined
-                );
                 let medge = model.face_to_face_edge_matrix(edge, model.face_by_index(i_face_old), model.face_by_index(new_root));
-                let mx = face_mx.unwrap() * medge;
+                let mx = face_mx * medge;
+
+                let mut new_island = Island {
+                    mx,
+                    root: new_root,
+                };
 
                 //Compute the offset
                 let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
@@ -107,13 +102,10 @@ impl Papercraft {
                 let v1 = mx.transform_point(Point2::from_vec(v1)).to_vec();
                 let v = (v1 - v0).normalize_to(0.05);
 
-                let mut new_island = Island {
-                    mx,
-                    faces: faces_new,
-                };
-
-                if Self::compare_islands(&island, &new_island, priority_face) {
+                //priority_face makes no sense when doing a split, so pass None here unconditionally
+                if self.compare_islands(model, &self.islands[i_island], &new_island, None) {
                     let offs = Matrix3::from_translation(-sign * Vector2::new(-v.y, v.x));
+                    let island = &mut self.islands[i_island];
                     island.mx = offs * island.mx;
                 } else {
                     let offs = Matrix3::from_translation(sign * Vector2::new(-v.y, v.x));
@@ -122,67 +114,89 @@ impl Papercraft {
                 self.islands.push(new_island);
             }
             EdgeStatus::Cut => {
-                let pos_b = self.islands.iter().position(|i| i.contains_face(i_face_b)).unwrap();
-                if self.islands[pos_b].contains_face(i_face_a) {
-                    // Same island on both sides
+                let i_island_b = self.islands.iter().position(|i| self.contains_face(model, i, i_face_b)).unwrap();
+                if self.contains_face(model, &self.islands[i_island_b], i_face_a) {
+                    // Same island on both sides, nothing to do
                 } else {
                     // Join both islands
-                    self.edges[u32::from(i_edge) as usize] = EdgeStatus::Joined;
-
-                    let mut island_b = self.islands.remove(pos_b);
-                    let island_a = self.islands.iter_mut().find(|i| i.contains_face(i_face_a)).unwrap();
+                    let mut island_b = self.islands.remove(i_island_b);
+                    let i_island_a = self.islands.iter().position(|i| self.contains_face(model, i, i_face_a)).unwrap();
 
                     // Keep position of a or b?
-                    if Self::compare_islands(island_a, &island_b, priority_face) {
-                        std::mem::swap(island_a, &mut island_b);
+                    if self.compare_islands(model, &self.islands[i_island_a], &island_b, priority_face) {
+                        std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
                     }
-                    island_a.faces.extend(island_b.faces);
+
+                    self.edges[u32::from(i_edge) as usize] = EdgeStatus::Joined;
                 }
             }
         };
     }
 
-    fn compare_islands(a: &Island, b: &Island, priority_face: Option<FaceIndex>) -> bool {
+    fn compare_islands(&self, model: &Model, a: &Island, b: &Island, priority_face: Option<FaceIndex>) -> bool {
         if let Some(f) = priority_face {
-            if a.contains_face(f) {
+            if self.contains_face(model, a, f) {
                 return false;
             }
-            if b.contains_face(f) {
+            if self.contains_face(model, b, f) {
                 return true;
             }
         }
-        let weight_a = a.faces.len();
-        let weight_b = b.faces.len();
+        let (mut weight_a, mut weight_b) = (0, 0);
+        self.traverse_faces(model, a, |_,_,_| weight_a += 1);
+        self.traverse_faces(model, b, |_,_,_| weight_b += 1);
         weight_b > weight_a
     }
 
-    fn _island_by_face(&self, i_face: FaceIndex) -> &Island {
-        for i in &self.islands {
-            if i.faces.contains(&i_face) {
-                return i;
-            }
-        }
-        panic!("island not found for face");
+    fn contains_face(&self, model: &Model, island: &Island, face: FaceIndex) -> bool {
+        let mut found = false;
+        self.traverse_faces(model, island, |i_face,_,_| if i_face == face { found = true; });
+        found
     }
 
+    pub fn traverse_faces(&self, model: &Model, island: &Island, mut visit_face: impl FnMut(FaceIndex, &Face, &Matrix3)) {
+        let root = island.root_face();
+        let mut visited_faces = HashSet::new();
+        let mut stack = Vec::new();
+        stack.push((root, island.matrix()));
+        visited_faces.insert(root);
+
+        while let Some((i_face, m)) = stack.pop() {
+            let face = model.face_by_index(i_face);
+            visit_face(i_face, face, &m);
+            for i_edge in face.index_edges() {
+
+                if self.edge_status(i_edge) != EdgeStatus::Joined {
+                    continue;
+                }
+
+                let edge = model.edge_by_index(i_edge);
+                for i_next_face in edge.faces() {
+                    if visited_faces.contains(&i_next_face) {
+                        continue;
+                    }
+
+                    let next_face = model.face_by_index(i_next_face);
+                    let medge = model.face_to_face_edge_matrix(edge, face, next_face);
+
+                    stack.push((i_next_face, m * medge));
+                    visited_faces.insert(i_next_face);
+                }
+            }
+        };
+    }
 }
 
 pub struct Island {
     mx: Matrix3,
-    faces: Vec<FaceIndex>,
+    root: FaceIndex,
 }
 
 impl Island {
     pub fn root_face(&self) -> FaceIndex {
-        self.faces[0]
-    }
-    pub fn contains_face(&self, i_face: FaceIndex) -> bool {
-        self.faces.contains(&i_face)
+        self.root
     }
     pub fn matrix(&self) -> Matrix3 {
         self.mx
-    }
-    pub fn _faces(&self) -> impl Iterator<Item = FaceIndex> + '_ {
-        self.faces.iter().copied()
     }
 }

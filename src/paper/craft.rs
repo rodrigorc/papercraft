@@ -52,7 +52,7 @@ impl Papercraft {
         self.edges[u32::from(edge) as usize]
     }
 
-    pub fn edge_toggle(&mut self, model: &Model, i_edge: EdgeIndex) {
+    pub fn edge_toggle(&mut self, model: &Model, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) {
         let edge = model.edge_by_index(i_edge);
         let faces: Vec<_> = edge.faces().collect();
 
@@ -112,9 +112,7 @@ impl Papercraft {
                     faces: faces_new,
                 };
 
-                let weight_a = island.faces.len();
-                let weight_b = new_island.faces.len();
-                if weight_b > weight_a {
+                if Self::compare_islands(&island, &new_island, priority_face) {
                     let offs = Matrix3::from_translation(-sign * Vector2::new(-v.y, v.x));
                     island.mx = offs * island.mx;
                 } else {
@@ -134,17 +132,28 @@ impl Papercraft {
                     let mut island_b = self.islands.remove(pos_b);
                     let island_a = self.islands.iter_mut().find(|i| i.contains_face(i_face_a)).unwrap();
 
-                    let weight_a = island_a.faces.len();
-                    let weight_b = island_b.faces.len();
-
                     // Keep position of a or b?
-                    if weight_b > weight_a {
+                    if Self::compare_islands(island_a, &island_b, priority_face) {
                         std::mem::swap(island_a, &mut island_b);
                     }
                     island_a.faces.extend(island_b.faces);
                 }
             }
         };
+    }
+
+    fn compare_islands(a: &Island, b: &Island, priority_face: Option<FaceIndex>) -> bool {
+        if let Some(f) = priority_face {
+            if a.contains_face(f) {
+                return false;
+            }
+            if b.contains_face(f) {
+                return true;
+            }
+        }
+        let weight_a = a.faces.len();
+        let weight_b = b.faces.len();
+        weight_b > weight_a
     }
 
     fn _island_by_face(&self, i_face: FaceIndex) -> &Island {
@@ -172,5 +181,8 @@ impl Island {
     }
     pub fn matrix(&self) -> Matrix3 {
         self.mx
+    }
+    pub fn _faces(&self) -> impl Iterator<Item = FaceIndex> + '_ {
+        self.faces.iter().copied()
     }
 }

@@ -113,7 +113,7 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
     (res, plane)
 }
 
-fn point_in_triangle(p: Vector2, p0: Vector2, p1: Vector2, p2: Vector2) -> bool {
+pub fn point_in_triangle(p: Vector2, p0: Vector2, p1: Vector2, p2: Vector2) -> bool {
     let s = (p0.x - p2.x) * (p.y - p2.y) - (p0.y - p2.y) * (p.x - p2.x);
     let t = (p1.x - p0.x) * (p.y - p0.y) - (p1.y - p0.y) * (p.x - p0.x);
 
@@ -225,6 +225,29 @@ pub fn line_segment_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3
         distance2 = (line1.1 - p).magnitude2();
     }
     (l0_closest, l1_closest, distance2)
+}
+
+// Returns (offset, distance)
+pub fn point_line_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
+    let vline = line.1 - line.0;
+    let line_len = vline.magnitude();
+    let vline = vline / line_len;
+    let vline_perp = Vector2::new(vline.y, -vline.x);
+    let p = p - line.0;
+    let o = p.dot(vline) / line_len;
+    let d = p.dot(vline_perp).abs();
+    (o, d)
+}
+
+pub fn point_segment_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
+    let (o, d) = point_line_distance(p, line);
+    if o < 0.0 {
+        (0.0, 10000.0)//(0.0, (p - line.0).magnitude())
+    } else if o > 1.0 {
+        (1.0, 10000.0)//(1.0, (p - line.1).magnitude())
+    } else {
+        (o, d)
+    }
 }
 
 pub fn ortho2d(width: f32, height: f32) -> Matrix3 {

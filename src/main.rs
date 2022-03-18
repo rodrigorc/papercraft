@@ -151,32 +151,7 @@ fn main() {
                 let click = Point3::new(x as f32, y as f32, 1.0);
 
                 let selection = ctx.analyze_click(click, rect.height() as f32);
-                match selection {
-                    ClickResult::None => {
-                        ctx.selected_edge = None;
-                        ctx.selected_face = None;
-                    }
-                    ClickResult::Face(i_face) => {
-                        let face = ctx.model.face_by_index(i_face);
-                        let idxs: Vec<_> = face.index_triangles()
-                            .flatten()
-                            .collect();
-                        ctx.gl_objs.as_mut().map(|gl_objs| gl_objs.indices_face_sel.update(&idxs));
-                        ctx.selected_face = Some(i_face);
-                        ctx.selected_edge = None;
-                    }
-                    ClickResult::Edge(i_edge) => {
-                        let edge = ctx.model.edge_by_index(i_edge);
-                        let idxs = [edge.v0(), edge.v1()];
-                        ctx.gl_objs.as_mut().map(|gl_objs| gl_objs.indices_edge_sel.update(&idxs));
-                        ctx.selected_edge = Some(i_edge);
-                        ctx.selected_face = None;
-                        ctx.papercraft.edge_toggle(&mut ctx.model, i_edge);
-                    }
-                }
-                ctx.paper_build();
-                ctx.wscene.queue_render();
-                ctx.wpaper.queue_render();
+                ctx.set_selection(selection);
             }
             Inhibit(false)
         }
@@ -295,7 +270,19 @@ fn main() {
         let ctx = ctx.clone();
         move |w, ev|  {
             w.grab_focus();
-            ctx.borrow_mut().last_cursor_pos = ev.position();
+            let mut ctx = ctx.borrow_mut();
+            let ctx = &mut *ctx;
+            ctx.last_cursor_pos = ev.position();
+            if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
+                let rect = w.allocation();
+                let (x, y) = ev.position();
+                let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
+                let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
+                let click = Point2::new(x as f32, y as f32);
+
+                let selection = ctx.analyze_click_paper(click, rect.height() as f32);
+                ctx.set_selection(selection);
+            }
             Inhibit(true)
         }
     });
@@ -456,7 +443,7 @@ struct TransformationPaper {
 enum ClickResult {
     None,
     Face(paper::FaceIndex),
-    Edge(paper::EdgeIndex),
+    Edge(paper::EdgeIndex, Option<paper::FaceIndex>),
 }
 
 impl MyContext {
@@ -530,7 +517,7 @@ impl MyContext {
         //dbg!(hit_edge);
 
         match (hit_face, hit_edge) {
-            (_, Some((e, _, _))) => ClickResult::Edge(e),
+            (_, Some((e, _, _))) => ClickResult::Edge(e, None),
             (Some((f, _)), None) => ClickResult::Face(f),
             (None, None) => ClickResult::None,
         }
@@ -541,7 +528,93 @@ impl MyContext {
             iedge
         });*/
     }
+    fn analyze_click_paper(&self, click: cgmath::Point2<f32>, height: f32) -> ClickResult {
+        let mx_inv = (self.trans_paper.ortho * self.trans_paper.mx).invert().unwrap();
+        let click = mx_inv.transform_point(click).to_vec();
 
+        let mut edge_sel = None;
+        let mut face_sel = None;
+
+        for island in self.papercraft.islands() {
+
+            paper::traverse_faces(&self.model, island.root_face(), &island.matrix(),
+            |i_face, face, fmx| {
+                let normal = face.normal();
+                for tri in face.index_triangles() {
+                    let tri = tri.map(|v| {
+                        let v3 = self.model.vertex_by_index(v).pos();
+                        let v2 = normal.project(&v3);
+                        fmx.transform_point(Point2::from_vec(v2)).to_vec()
+                    });
+                    if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
+                        face_sel = Some(i_face);
+                    }
+                }
+
+                for i_edge in face.index_edges() {
+                    let edge = self.model.edge_by_index(i_edge);
+                    let v0 = self.model.vertex_by_index(edge.v0()).pos();
+                    let v0 = normal.project(&v0);
+                    let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
+                    let v1 = self.model.vertex_by_index(edge.v1()).pos();
+                    let v1 = normal.project(&v1);
+                    let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
+
+                    let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
+                    let d = d * height;
+                    if d > 5.0 { //too far?
+                        continue;
+                    }
+                    match &edge_sel {
+                        None => {
+                            edge_sel = Some((d, i_edge, i_face));
+                        }
+                        &Some((d_prev, _, _)) if d < d_prev => {
+                            edge_sel = Some((d, i_edge, i_face));
+                        }
+                        _ => {}
+                    }
+                }
+            },
+            |i_edge| self.papercraft.edge_status(i_edge) == EdgeStatus::Joined,
+            );
+
+        }
+        //Edge selection has priority
+        match (edge_sel, face_sel) {
+            (Some((_, i_edge, i_face)), _) => ClickResult::Edge(i_edge, Some(i_face)),
+            (None, Some(i_face)) => ClickResult::Face(i_face),
+            (None, None) => ClickResult::None,
+        }
+    }
+    fn set_selection(&mut self, selection: ClickResult) {
+        match selection {
+            ClickResult::None => {
+                self.selected_edge = None;
+                self.selected_face = None;
+            }
+            ClickResult::Face(i_face) => {
+                let face = self.model.face_by_index(i_face);
+                let idxs: Vec<_> = face.index_triangles()
+                    .flatten()
+                    .collect();
+                self.gl_objs.as_mut().map(|gl_objs| gl_objs.indices_face_sel.update(&idxs));
+                self.selected_face = Some(i_face);
+                self.selected_edge = None;
+            }
+            ClickResult::Edge(i_edge, priority_face) => {
+                let edge = self.model.edge_by_index(i_edge);
+                let idxs = [edge.v0(), edge.v1()];
+                self.gl_objs.as_mut().map(|gl_objs| gl_objs.indices_edge_sel.update(&idxs));
+                self.selected_edge = Some(i_edge);
+                self.selected_face = None;
+                self.papercraft.edge_toggle(&mut self.model, i_edge, priority_face);
+                self.paper_build();
+            }
+        }
+        self.wscene.queue_render();
+        self.wpaper.queue_render();
+    }
     fn build_gl_objects(&mut self, gl: &Rc<glium::backend::Context>) {
         if self.gl_objs.is_some() {
             return;
@@ -687,61 +760,24 @@ impl MyContext {
     }
 
     fn paper_build(&mut self) {
-        //if let Some(i_face) = self.selected_face {
-        {
-            //let mut visited_faces = HashSet::new();
+        //Maps VertexIndex in the model to index in vertices
+        let mut vertex_map = HashMap::new();
+        let mut vertices = Vec::new();
+        let mut indices_solid = Vec::new();
+        let mut indices_edge = Vec::new();
 
-            //Maps VertexIndex in the model to index in vertices
-            let mut vertex_map = HashMap::new();
-            let mut vertices = Vec::new();
-            let mut indices_solid = Vec::new();
-            let mut indices_edge = Vec::new();
-
-            for island in self.papercraft.islands() {
-                paper::traverse_faces(&self.model, island.root_face(), &island.matrix(),
-                    |i_face, face, mx| self.paper_draw_face(face, i_face, mx, &mut vertices, &mut indices_solid, &mut indices_edge, &mut vertex_map),
-                    |i_edge| self.papercraft.edge_status(i_edge) == EdgeStatus::Joined,
-                );
-            }
-
-                /*
-                let root = island.root_face();
-
-                let mut stack = Vec::new();
-                stack.push((root, island.matrix()));
-                visited_faces.insert(root);
-
-                while let Some((i_face, m)) = stack.pop() {
-                    let face = self.model.face_by_index(i_face);
-                    self.paper_draw_face(face, i_face, &m, &mut vertices, &mut indices_solid, &mut indices_edge, &mut vertex_map);
-                    for i_edge in face.index_edges() {
-
-                        if self.papercraft.edge_status(i_edge) == EdgeStatus::Cut {
-                            continue;
-                        }
-
-                        let edge = self.model.edge_by_index(i_edge);
-                        for i_next_face in edge.faces() {
-                            if visited_faces.contains(&i_next_face) {
-                                continue;
-                            }
-
-                            let next_face = self.model.face_by_index(i_next_face);
-                            let medge = self.model.face_to_face_edge_matrix(edge, face, next_face);
-
-                            stack.push((i_next_face, m * medge));
-                            visited_faces.insert(i_next_face);
-                        }
-                    }
-                }
-                */
-
-            self.gl_objs.as_mut().map(|gl_objs| {
-                gl_objs.paper_vertex_buf.update(&vertices);
-                gl_objs.paper_indices_solid_buf.update(&indices_solid);
-                gl_objs.paper_indices_edge_buf.update(&indices_edge);
-            });
+        for island in self.papercraft.islands() {
+            paper::traverse_faces(&self.model, island.root_face(), &island.matrix(),
+                |i_face, face, mx| self.paper_draw_face(face, i_face, mx, &mut vertices, &mut indices_solid, &mut indices_edge, &mut vertex_map),
+                |i_edge| self.papercraft.edge_status(i_edge) == EdgeStatus::Joined,
+            );
         }
+
+        self.gl_objs.as_mut().map(|gl_objs| {
+            gl_objs.paper_vertex_buf.update(&vertices);
+            gl_objs.paper_indices_solid_buf.update(&indices_solid);
+            gl_objs.paper_indices_edge_buf.update(&indices_edge);
+        });
     }
 
     fn scene_render(&self) {

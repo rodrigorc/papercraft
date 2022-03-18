@@ -12,7 +12,7 @@ use gtk::{
     gdk::{self, EventMask},
 };
 
-use std::{collections::HashMap, cell::Cell};
+use std::{collections::HashMap, cell::Cell, ops::ControlFlow};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -30,7 +30,7 @@ fn main() {
     std::env::set_var("GTK_CSD", "0");
     gtk::init().expect("gtk::init");
 
-    let f = std::fs::File::open("moebius.obj").unwrap();
+    let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
 
@@ -303,7 +303,7 @@ fn main() {
         }
     });
     wpaper.connect_scroll_event({
-        let ctx = ctx.clone();
+        let ctx = ctx;
         move |_w, ev|  {
             let mut ctx = ctx.borrow_mut();
             let dz = match ev.direction() {
@@ -460,7 +460,7 @@ impl MyContext {
         let mut hit_face = None;
         for (iface, face) in self.model.faces() {
             for tri in face.index_triangles() {
-                let tri = tri.map(|v| self.model.vertex_by_index(v).pos());
+                let tri = tri.map(|v| self.model[v].pos());
                 let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
                 if let Some(new_hit) = maybe_new_hit {
                     //dbg!(new_hit);
@@ -474,20 +474,10 @@ impl MyContext {
             }
         }
 
-        //dbg!(hit_face);
-        /*self.selected_face = hit_face.map(|(iface, _distance)| {
-            let face = self.model.face_by_index(iface);
-            let idxs: Vec<_> = face.index_triangles()
-                .flatten()
-                .collect();
-                self.indices_face_sel.update(&idxs);
-            iface
-        });*/
-
         let mut hit_edge = None;
         for (iedge, edge) in self.model.edges() {
-            let v1 = self.model.vertex_by_index(edge.v0()).pos();
-            let v2 = self.model.vertex_by_index(edge.v1()).pos();
+            let v1 = self.model[edge.v0()].pos();
+            let v2 = self.model[edge.v1()].pos();
             let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
 
             // Behind the screen, it is not a hit
@@ -524,13 +514,8 @@ impl MyContext {
             (Some((f, _)), None) => ClickResult::Face(f),
             (None, None) => ClickResult::None,
         }
-        /*self.selected_edge = hit_edge.map(|(iedge, _, _)| {
-            let edge = self.model.edge_by_index(iedge);
-            let idxs = [edge.v0(), edge.v1()];
-            self.indices_edge_sel.update(&idxs);
-            iedge
-        });*/
     }
+
     fn analyze_click_paper(&self, click: cgmath::Point2<f32>, height: f32) -> ClickResult {
         let mx_inv = (self.trans_paper.ortho * self.trans_paper.mx).invert().unwrap();
         let click = mx_inv.transform_point(click).to_vec();
@@ -539,13 +524,12 @@ impl MyContext {
         let mut face_sel = None;
 
         for island in self.papercraft.islands() {
-
             self.papercraft.traverse_faces(&self.model, island,
                 |i_face, face, fmx| {
                     let normal = face.normal();
                     for tri in face.index_triangles() {
                         let tri = tri.map(|v| {
-                            let v3 = self.model.vertex_by_index(v).pos();
+                            let v3 = self.model[v].pos();
                             let v2 = normal.project(&v3);
                             fmx.transform_point(Point2::from_vec(v2)).to_vec()
                         });
@@ -555,11 +539,11 @@ impl MyContext {
                     }
 
                     for i_edge in face.index_edges() {
-                        let edge = self.model.edge_by_index(i_edge);
-                        let v0 = self.model.vertex_by_index(edge.v0()).pos();
+                        let edge = &self.model[i_edge];
+                        let v0 = self.model[edge.v0()].pos();
                         let v0 = normal.project(&v0);
                         let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
-                        let v1 = self.model.vertex_by_index(edge.v1()).pos();
+                        let v1 = self.model[edge.v1()].pos();
                         let v1 = normal.project(&v1);
                         let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
 
@@ -578,6 +562,7 @@ impl MyContext {
                             _ => {}
                         }
                     }
+                    ControlFlow::Continue(())
                 }
             );
         }
@@ -595,7 +580,7 @@ impl MyContext {
                 self.selected_face = None;
             }
             ClickResult::Face(i_face) => {
-                let face = self.model.face_by_index(i_face);
+                let face = &self.model[i_face];
                 let idxs: Vec<_> = face.index_triangles()
                     .flatten()
                     .collect();
@@ -607,14 +592,14 @@ impl MyContext {
                 self.paper_build();
             }
             ClickResult::Edge(i_edge, priority_face) => {
-                let edge = self.model.edge_by_index(i_edge);
+                let edge = &self.model[i_edge];
                 let idxs = [edge.v0(), edge.v1()];
                 if let Some(gl_objs) = &mut self.gl_objs {
                     gl_objs.indices_edge_sel.update(&idxs);
                 }
                 self.selected_edge = Some(i_edge);
                 self.selected_face = None;
-                self.papercraft.edge_toggle(&mut self.model, i_edge, priority_face);
+                self.papercraft.edge_toggle(&self.model, i_edge, priority_face);
                 self.paper_build();
             }
         }
@@ -742,7 +727,7 @@ impl MyContext {
                 let i = vertex_map
                     .entry((i_face, i_v))
                     .or_insert_with(|| {
-                        let v = self.model.vertex_by_index(i_v);
+                        let v = &self.model[i_v];
                         let p2 = face.normal().project(&v.pos());
                         let pos = m.transform_point(Point2::from_vec(p2)).to_vec();
                         let idx = vertices.len();
@@ -794,6 +779,7 @@ impl MyContext {
                     self.paper_draw_face(face, i_face, mx, &mut vertices, &mut indices_solid, &mut indices_edge,
                         &mut indices_face_sel, &mut indices_edge_sel,
                         &mut vertex_map);
+                    ControlFlow::Continue(())
                 }
             );
         }

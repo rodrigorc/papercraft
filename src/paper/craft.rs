@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::ControlFlow};
 
 use cgmath::{Transform, EuclideanSpace, InnerSpace};
 
@@ -23,8 +23,8 @@ impl Papercraft {
         let mut pos_y = 0.0;
         let islands = model.faces()
             .map(|(i_face, _)| {
-                let face = model.face_by_index(i_face);
-                let bbox = model.bounding_box(&face);
+                let face = &model[i_face];
+                let bbox = model.bounding_box(face);
                 let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
                 pos_x += bbox.1.x - bbox.0.x + 0.05;
                 row_height = row_height.max(bbox.1.y - bbox.0.y);
@@ -51,11 +51,11 @@ impl Papercraft {
     }
 
     pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {
-        self.edges[u32::from(edge) as usize]
+        self.edges[usize::from(edge)]
     }
 
     pub fn edge_toggle(&mut self, model: &Model, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) {
-        let edge = model.edge_by_index(i_edge);
+        let edge = &model[i_edge];
         let faces: Vec<_> = edge.faces().collect();
 
         let (i_face_a, i_face_b) = match &faces[..] {
@@ -63,14 +63,14 @@ impl Papercraft {
             _ => return,
         };
 
-        let edge_status = self.edges[u32::from(i_edge) as usize];
+        let edge_status = self.edges[usize::from(i_edge)];
 
         match edge_status {
             EdgeStatus::Joined => {
                 //one of the edge faces will be the root of the new island, but we do not know which one, yet
                 let i_island = self.islands.iter().position(|i| self.contains_face(model, i, i_face_a)).unwrap();
 
-                self.edges[u32::from(i_edge) as usize] = EdgeStatus::Cut;
+                self.edges[usize::from(i_edge)] = EdgeStatus::Cut;
 
                 let mut data_found = None;
                 self.traverse_faces(model, &self.islands[i_island],
@@ -80,11 +80,12 @@ impl Papercraft {
                         } else if i_face == i_face_b {
                             data_found = Some((*fmx, i_face_a, i_face_b));
                         }
+                        ControlFlow::Continue(())
                     }
                 );
                 let (face_mx, new_root, i_face_old) = data_found.unwrap();
 
-                let medge = model.face_to_face_edge_matrix(edge, model.face_by_index(i_face_old), model.face_by_index(new_root));
+                let medge = model.face_to_face_edge_matrix(edge, &model[i_face_old], &model[new_root]);
                 let mx = face_mx * medge;
 
                 let mut new_island = Island {
@@ -94,10 +95,10 @@ impl Papercraft {
 
                 //Compute the offset
                 let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
-                let new_root = model.face_by_index(new_root);
+                let new_root = &model[new_root];
                 let new_root_plane = new_root.normal();
-                let v0 = new_root_plane.project(&model.vertex_by_index(edge.v0()).pos());
-                let v1 = new_root_plane.project(&model.vertex_by_index(edge.v1()).pos());
+                let v0 = new_root_plane.project(&model[edge.v0()].pos());
+                let v1 = new_root_plane.project(&model[edge.v1()].pos());
                 let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
                 let v1 = mx.transform_point(Point2::from_vec(v1)).to_vec();
                 let v = (v1 - v0).normalize_to(0.05);
@@ -127,7 +128,7 @@ impl Papercraft {
                         std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
                     }
 
-                    self.edges[u32::from(i_edge) as usize] = EdgeStatus::Joined;
+                    self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
                 }
             }
         };
@@ -143,40 +144,48 @@ impl Papercraft {
             }
         }
         let (mut weight_a, mut weight_b) = (0, 0);
-        self.traverse_faces(model, a, |_,_,_| weight_a += 1);
-        self.traverse_faces(model, b, |_,_,_| weight_b += 1);
+        self.traverse_faces(model, a, |_,_,_| { weight_a += 1; ControlFlow::Continue(()) });
+        self.traverse_faces(model, b, |_,_,_| { weight_b += 1; ControlFlow::Continue(()) });
         weight_b > weight_a
     }
 
     fn contains_face(&self, model: &Model, island: &Island, face: FaceIndex) -> bool {
         let mut found = false;
-        self.traverse_faces(model, island, |i_face,_,_| if i_face == face { found = true; });
+        self.traverse_faces(model, island,
+            |i_face, _, _|
+                if i_face == face {
+                    found = true;
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            );
         found
     }
 
-    pub fn traverse_faces(&self, model: &Model, island: &Island, mut visit_face: impl FnMut(FaceIndex, &Face, &Matrix3)) {
+    pub fn traverse_faces<F>(&self, model: &Model, island: &Island, mut visit_face: F) -> ControlFlow<()>
+        where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
+    {
         let root = island.root_face();
         let mut visited_faces = HashSet::new();
-        let mut stack = Vec::new();
-        stack.push((root, island.matrix()));
+        let mut stack = vec![(root, island.matrix())];
         visited_faces.insert(root);
 
         while let Some((i_face, m)) = stack.pop() {
-            let face = model.face_by_index(i_face);
-            visit_face(i_face, face, &m);
+            let face = &model[i_face];
+            visit_face(i_face, face, &m)?;
             for i_edge in face.index_edges() {
-
                 if self.edge_status(i_edge) != EdgeStatus::Joined {
                     continue;
                 }
 
-                let edge = model.edge_by_index(i_edge);
+                let edge = &model[i_edge];
                 for i_next_face in edge.faces() {
                     if visited_faces.contains(&i_next_face) {
                         continue;
                     }
 
-                    let next_face = model.face_by_index(i_next_face);
+                    let next_face = &model[i_next_face];
                     let medge = model.face_to_face_edge_matrix(edge, face, next_face);
 
                     stack.push((i_next_face, m * medge));
@@ -184,6 +193,7 @@ impl Papercraft {
                 }
             }
         };
+        ControlFlow::Continue(())
     }
 }
 

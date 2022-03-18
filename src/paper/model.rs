@@ -32,21 +32,15 @@ unsafe impl glium::index::Index for VertexIndex {
 #[repr(transparent)]
 pub struct EdgeIndex(u32);
 
-impl From<EdgeIndex> for u32 {
-    fn from(idx: EdgeIndex) -> u32 {
-        idx.0
+impl From<EdgeIndex> for usize {
+    fn from(idx: EdgeIndex) -> usize {
+        idx.0 as usize
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct FaceIndex(u32);
-
-impl From<FaceIndex> for u32 {
-    fn from(idx: FaceIndex) -> u32 {
-        idx.0
-    }
-}
 
 #[derive(Debug)]
 pub struct Face {
@@ -188,31 +182,9 @@ impl Model {
     pub fn num_edges(&self) -> usize {
         self.edges.len()
     }
-    pub fn face_by_index(&self, idx: FaceIndex) -> &Face {
-        &self.faces[idx.0 as usize]
-    }
-    pub fn vertex_by_index(&self, idx: VertexIndex) -> &Vertex {
-        &self.vertices[idx.0 as usize]
-    }
-    pub fn edge_by_index(&self, idx: EdgeIndex) -> &Edge {
-        &self.edges[idx.0 as usize]
-    }
-    pub fn faces_by_edge(&self, edge: EdgeIndex) -> [(FaceIndex, &Face); 2] {
-        let mut res = Vec::with_capacity(2);
-        for (iface, face) in self.faces() {
-            if face.edges.contains(&edge) {
-                res.push((iface, face));
-                if res.len() == 2 {
-                    return res.try_into().unwrap();
-                }
-            }
-        }
-        //TODO: do not panic
-        panic!("unconnected edge")
-    }
     pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
-        let v0 = self.vertex_by_index(edge.v0()).pos();
-        let v1 = self.vertex_by_index(edge.v1()).pos();
+        let v0 = self[edge.v0()].pos();
+        let v1 = self[edge.v1()].pos();
         let a0 = face_a.normal().project(&v0);
         let b0 = face_b.normal().project(&v0);
         let a1 = face_a.normal().project(&v1);
@@ -220,8 +192,7 @@ impl Model {
         let mabt0 = Matrix3::from_translation(-b0);
         let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
         let mabt1 = Matrix3::from_translation(a0);
-        let medge = mabt1 * mabr * mabt0;
-        medge
+        mabt1 * mabr * mabt0
     }
 
     pub fn bounding_box(&self, face: &Face) -> (Vector2, Vector2) {
@@ -229,7 +200,7 @@ impl Model {
         let mut max = Vector2::new(-1000.0, -1000.0);
         let normal = face.normal();
         for v in face.index_vertices() {
-            let vertex = self.vertex_by_index(v);
+            let vertex = &self[v];
             let v = normal.project(&vertex.pos());
             min.x = min.x.min(v.x);
             min.y = min.y.min(v.y);
@@ -237,6 +208,30 @@ impl Model {
             max.y = max.y.max(v.y);
         }
         (min, max)
+    }
+}
+
+impl std::ops::Index<VertexIndex> for Model {
+    type Output = Vertex;
+
+    fn index(&self, index: VertexIndex) -> &Vertex {
+        &self.vertices[index.0 as usize]
+    }
+}
+
+impl std::ops::Index<FaceIndex> for Model {
+    type Output = Face;
+
+    fn index(&self, index: FaceIndex) -> &Face {
+        &self.faces[index.0 as usize]
+    }
+}
+
+impl std::ops::Index<EdgeIndex> for Model {
+    type Output = Edge;
+
+    fn index(&self, index: EdgeIndex) -> &Edge {
+        &self.edges[index.0 as usize]
     }
 }
 
@@ -295,3 +290,4 @@ impl Edge {
         self.faces.iter().find(|(f, _)| *f == face).unwrap().1
     }
 }
+

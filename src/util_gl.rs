@@ -54,7 +54,9 @@ impl<V: glium::Vertex> PersistentVertexBuffer<V> {
     pub fn update(&mut self, data: &[V]) {
         if let Some(slice) = self.buffer.slice(0 .. data.len()) {
             self.length = data.len();
-            slice.write(data);
+            if self.length > 0 {
+                slice.write(data);
+            }
         } else {
             // If the buffer is not big enough, remake it
             let ctx = self.buffer.get_context();
@@ -86,7 +88,9 @@ impl<V: glium::index::Index> PersistentIndexBuffer<V> {
     pub fn update(&mut self, data: &[V]) {
         if let Some(slice) = self.buffer.slice(0 .. data.len()) {
             self.length = data.len();
-            slice.write(data);
+            if self.length > 0 {
+                slice.write(data);
+            }
         } else {
             // If the buffer is not big enough, remake it
             let ctx = self.buffer.get_context();

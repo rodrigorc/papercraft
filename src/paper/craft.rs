@@ -1,6 +1,7 @@
 use std::{collections::HashSet, ops::ControlFlow};
 
-use cgmath::{Transform, EuclideanSpace, InnerSpace};
+use cgmath::{Transform, EuclideanSpace, InnerSpace, Rad};
+use slotmap::{SlotMap, new_key_type};
 
 use crate::{paper::*, util_3d::*};
 
@@ -9,10 +10,13 @@ pub enum EdgeStatus {
     Joined,
     Cut,
 }
+new_key_type! {
+    pub struct IslandKey;
+}
 
 pub struct Papercraft {
     edges: Vec<EdgeStatus>, //parallel to EdgeIndex
-    islands: Vec<Island>,
+    islands: SlotMap<IslandKey, Island>,
 }
 
 impl Papercraft {
@@ -38,16 +42,34 @@ impl Papercraft {
                     mx: Matrix3::from_translation(pos),
                     root: i_face,
                 }
-            })
-            .collect();
+            });
+        let mut the_islands = SlotMap::with_key();
+        for island in islands {
+            the_islands.insert(island);
+        }
         Papercraft {
             edges,
-            islands,
+            islands: the_islands,
         }
     }
 
-    pub fn islands(&self) -> impl Iterator<Item = &Island> + '_ {
+    pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
+    }
+
+    pub fn island_by_face(&self, model: &Model, i_face: FaceIndex) -> IslandKey {
+        for (i_island, island) in &self.islands {
+            if self.contains_face(model, &island, i_face) {
+                return i_island;
+            }
+        }
+        panic!("Island not found");
+    }
+    pub fn island_by_key(&self, key: IslandKey) -> Option<&Island> {
+        self.islands.get(key)
+    }
+    pub fn island_by_key_mut(&mut self, key: IslandKey) -> Option<&mut Island> {
+        self.islands.get_mut(key)
     }
 
     pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {
@@ -68,7 +90,7 @@ impl Papercraft {
         match edge_status {
             EdgeStatus::Joined => {
                 //one of the edge faces will be the root of the new island, but we do not know which one, yet
-                let i_island = self.islands.iter().position(|i| self.contains_face(model, i, i_face_a)).unwrap();
+                let i_island = self.island_by_face(model, i_face_a);
 
                 self.edges[usize::from(i_edge)] = EdgeStatus::Cut;
 
@@ -112,16 +134,16 @@ impl Papercraft {
                     let offs = Matrix3::from_translation(sign * Vector2::new(-v.y, v.x));
                     new_island.mx = offs * new_island.mx;
                 }
-                self.islands.push(new_island);
+                self.islands.insert(new_island);
             }
             EdgeStatus::Cut => {
-                let i_island_b = self.islands.iter().position(|i| self.contains_face(model, i, i_face_b)).unwrap();
+                let i_island_b = self.island_by_face(model, i_face_b);
                 if self.contains_face(model, &self.islands[i_island_b], i_face_a) {
                     // Same island on both sides, nothing to do
                 } else {
                     // Join both islands
-                    let mut island_b = self.islands.remove(i_island_b);
-                    let i_island_a = self.islands.iter().position(|i| self.contains_face(model, i, i_face_a)).unwrap();
+                    let mut island_b = self.islands.remove(i_island_b).unwrap();
+                    let i_island_a = self.island_by_face(model, i_face_a);
 
                     // Keep position of a or b?
                     if self.compare_islands(model, &self.islands[i_island_a], &island_b, priority_face) {
@@ -208,5 +230,11 @@ impl Island {
     }
     pub fn matrix(&self) -> Matrix3 {
         self.mx
+    }
+    pub fn translate(&mut self, delta: Vector2) {
+        self.mx = Matrix3::from_translation(delta) * self.mx;
+    }
+    pub fn rotate(&mut self, angle: impl Into<Rad<f32>>) {
+        self.mx = self.mx * Matrix3::from(cgmath::Matrix2::from_angle(angle));
     }
 }

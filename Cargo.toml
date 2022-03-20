@@ -13,6 +13,7 @@ gl_loader = "*"
 cgmath = "*"
 anyhow = "*"
 gdk-pixbuf = "*"
+slotmap = "*"
 
 [patch.crates-io]
 glium = { path = "./glium-0.31.0" }

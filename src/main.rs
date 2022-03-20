@@ -2,7 +2,7 @@
 
 use cgmath::{
     prelude::*,
-    Deg,
+    Deg, Rad,
 };
 use glium::{
     draw_parameters::PolygonOffset,
@@ -116,6 +116,7 @@ fn main() {
         material,
         selected_face: None,
         selected_edge: None,
+        selected_island: None,
 
         last_cursor_pos: (0.0, 0.0),
 
@@ -272,7 +273,13 @@ fn main() {
             ctx.last_cursor_pos = ev.position();
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
                 let selection = ctx.analyze_click_paper(ev.position());
-                ctx.set_selection(selection, true);
+                if let ClickResult::Face(i_face) = selection {
+                    let i_island = ctx.papercraft.island_by_face(&ctx.model, i_face);
+                    ctx.selected_island = Some(i_island);
+                } else {
+                    ctx.selected_island = None;
+                    ctx.set_selection(selection, true);
+                }
             }
             Inhibit(true)
         }
@@ -282,12 +289,26 @@ fn main() {
         move |_w, ev| {
             let mut ctx = ctx.borrow_mut();
             let pos = ev.position();
-            let dx = (pos.0 - ctx.last_cursor_pos.0)  as f32;
-            let dy = (pos.1 - ctx.last_cursor_pos.1) as f32;
+            let delta = Vector2::new((pos.0 - ctx.last_cursor_pos.0)  as f32,(pos.1 - ctx.last_cursor_pos.1) as f32);
             ctx.last_cursor_pos = pos;
             if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
-                ctx.trans_paper.mx = Matrix3::from_translation(Vector2::new(dx, dy)) * ctx.trans_paper.mx;
+                ctx.trans_paper.mx = Matrix3::from_translation(delta) * ctx.trans_paper.mx;
                 ctx.wpaper.queue_render();
+            } else if ev.state().contains(gdk::ModifierType::BUTTON1_MASK) {
+                if let Some(i_island) = ctx.selected_island {
+                    let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&ctx.trans_paper.mx, delta).unwrap();
+                    if let Some(island) = ctx.papercraft.island_by_key_mut(i_island) {
+                        if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
+                            // Rotate island
+                            island.rotate(Deg(delta.y));
+                        } else {
+                            // Move island
+                            island.translate(delta_scaled);
+                        }
+                        ctx.paper_build();
+                        ctx.wpaper.queue_render();
+                    }
+                }
             } else {
                 let selection = ctx.analyze_click_paper(ev.position());
                 ctx.set_selection(selection, false);
@@ -378,6 +399,7 @@ struct MyContext {
     material: Option<String>,
     selected_face: Option<paper::FaceIndex>,
     selected_edge: Option<paper::EdgeIndex>,
+    selected_island: Option<paper::IslandKey>,
 
     last_cursor_pos: (f64, f64),
 
@@ -529,7 +551,7 @@ impl MyContext {
         let mut edge_sel = None;
         let mut face_sel = None;
 
-        for island in self.papercraft.islands() {
+        for (_i_island, island) in self.papercraft.islands() {
             self.papercraft.traverse_faces(&self.model, island,
                 |i_face, face, fmx| {
                     let normal = face.normal();
@@ -786,7 +808,7 @@ impl MyContext {
         let mut indices_face_sel = Vec::new();
         let mut indices_edge_sel = Vec::new();
 
-        for island in self.papercraft.islands() {
+        for (_i_island, island) in self.papercraft.islands() {
             self.papercraft.traverse_faces(&self.model, island,
                 |i_face, face, mx| {
                     self.paper_draw_face(face, i_face, mx, &mut vertices, &mut indices_solid, &mut indices_edge,

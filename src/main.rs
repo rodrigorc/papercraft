@@ -132,7 +132,7 @@ fn main() {
     });
     gl_loader::init_gl();
 
-    wscene.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
+    wscene.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wscene.set_has_depth_buffer(true);
 
     wscene.connect_button_press_event({
@@ -144,15 +144,9 @@ fn main() {
             ctx.last_cursor_pos = ev.position();
 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let rect = w.allocation();
-                let (x, y) = ev.position();
-                let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
-                let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
-                let click = Point3::new(x as f32, y as f32, 1.0);
-
-                let selection = ctx.analyze_click(click, rect.height() as f32);
-                ctx.set_selection(selection);
-            }
+                let selection = ctx.analyze_click(ev.position());
+                ctx.set_selection(selection, true);
+             }
             Inhibit(false)
         }
     });
@@ -203,6 +197,9 @@ fn main() {
                 ctx.trans_scene.location += Vector3::new(dx, dy, 0.0);
                 ctx.trans_scene.recompute_obj();
                 ctx.wscene.queue_render();
+            } else {
+                let selection = ctx.analyze_click(ev.position());
+                ctx.set_selection(selection, false);
             }
             Inhibit(true)
         }
@@ -237,7 +234,7 @@ fn main() {
 
 
     //let paper = gtk::DrawingArea::new();
-    wpaper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::SCROLL_MASK);
+    wpaper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wpaper.set_has_stencil_buffer(true);
     wpaper.connect_realize({
         let ctx = ctx.clone();
@@ -274,14 +271,8 @@ fn main() {
             let ctx = &mut *ctx;
             ctx.last_cursor_pos = ev.position();
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let rect = w.allocation();
-                let (x, y) = ev.position();
-                let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
-                let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
-                let click = Point2::new(x as f32, y as f32);
-
-                let selection = ctx.analyze_click_paper(click, rect.height() as f32);
-                ctx.set_selection(selection);
+                let selection = ctx.analyze_click_paper(ev.position());
+                ctx.set_selection(selection, true);
             }
             Inhibit(true)
         }
@@ -294,10 +285,12 @@ fn main() {
             let dx = (pos.0 - ctx.last_cursor_pos.0)  as f32;
             let dy = (pos.1 - ctx.last_cursor_pos.1) as f32;
             ctx.last_cursor_pos = pos;
-
             if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
                 ctx.trans_paper.mx = Matrix3::from_translation(Vector2::new(dx, dy)) * ctx.trans_paper.mx;
                 ctx.wpaper.queue_render();
+            } else {
+                let selection = ctx.analyze_click_paper(ev.position());
+                ctx.set_selection(selection, false);
             }
             Inhibit(true)
         }
@@ -450,7 +443,14 @@ enum ClickResult {
 }
 
 impl MyContext {
-    fn analyze_click(&self, click: Point3, height: f32) -> ClickResult {
+    fn analyze_click(&self, (x, y): (f64, f64)) -> ClickResult {
+        let rect = self.wscene.allocation();
+        let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
+        let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
+        let click = Point3::new(x as f32, y as f32, 1.0);
+        let height = rect.height() as f32;
+
+
         let click_camera = self.trans_scene.persp_inv.transform_point(click);
         let click_obj = self.trans_scene.obj_inv.transform_point(click_camera);
         let camera_obj = self.trans_scene.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
@@ -516,7 +516,13 @@ impl MyContext {
         }
     }
 
-    fn analyze_click_paper(&self, click: cgmath::Point2<f32>, height: f32) -> ClickResult {
+    fn analyze_click_paper(&self, (x, y): (f64, f64)) -> ClickResult {
+        let rect = self.wpaper.allocation();
+        let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
+        let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
+        let click = Point2::new(x as f32, y as f32);
+        let height = rect.height() as f32;
+
         let mx_inv = (self.trans_paper.ortho * self.trans_paper.mx).invert().unwrap();
         let click = mx_inv.transform_point(click).to_vec();
 
@@ -573,7 +579,7 @@ impl MyContext {
             (None, None) => ClickResult::None,
         }
     }
-    fn set_selection(&mut self, selection: ClickResult) {
+    fn set_selection(&mut self, selection: ClickResult, toggle: bool) {
         match selection {
             ClickResult::None => {
                 self.selected_edge = None;
@@ -599,7 +605,9 @@ impl MyContext {
                 }
                 self.selected_edge = Some(i_edge);
                 self.selected_face = None;
-                self.papercraft.edge_toggle(&self.model, i_edge, priority_face);
+                if toggle {
+                    self.papercraft.edge_toggle(&self.model, i_edge, priority_face);
+                }
                 self.paper_build();
                 self.solid_edge_build();
             }

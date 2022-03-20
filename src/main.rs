@@ -48,7 +48,7 @@ fn main() {
         for lib in waveobj::Material::from_reader(f).unwrap()  {
             if let Some(map) = lib.map() {
                 let pbl = gdk_pixbuf::PixbufLoader::new();
-                let data = std::fs::read(map).unwrap();
+                let data = std::fs::read(dbg!(map)).unwrap();
                 pbl.write(&data).ok().unwrap();
                 pbl.close().ok().unwrap();
                 let img = pbl.pixbuf().unwrap();
@@ -353,7 +353,7 @@ struct GLObjects {
 
     vertex_buf: glium::VertexBuffer<MVertex3D>,
     indices_solid_buf: glium::IndexBuffer<paper::VertexIndex>,
-    indices_edges_buf: glium::IndexBuffer<paper::VertexIndex>,
+    indices_edges_buf_cut: PersistentIndexBuffer<paper::VertexIndex>,
     indices_face_sel: PersistentIndexBuffer<paper::VertexIndex>,
     indices_edge_sel: PersistentIndexBuffer<paper::VertexIndex>,
 
@@ -601,6 +601,7 @@ impl MyContext {
                 self.selected_face = None;
                 self.papercraft.edge_toggle(&self.model, i_edge, priority_face);
                 self.paper_build();
+                self.solid_edge_build();
             }
         }
         self.wscene.queue_render();
@@ -666,19 +667,23 @@ impl MyContext {
             }).collect();
 
         let mut indices_solid = Vec::new();
-        let mut indices_edges = Vec::new();
         for (_, face) in self.model.faces() {
             indices_solid.extend(face.index_triangles().flatten());
         }
-        for (_, edge) in self.model.edges() {
-            indices_edges.push(edge.v0());
-            indices_edges.push(edge.v1());
+
+        let mut indices_edges = Vec::new();
+        for (i_edge, edge) in self.model.edges() {
+            if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Cut {
+                indices_edges.push(edge.v0());
+                indices_edges.push(edge.v1());
+            }
         }
 
 
         let vertex_buf = glium::VertexBuffer::immutable(gl, &vertices).unwrap();
         let indices_solid_buf = glium::IndexBuffer::immutable(gl, glium::index::PrimitiveType::TrianglesList, &indices_solid).unwrap();
-        let indices_edges_buf = glium::IndexBuffer::immutable(gl, glium::index::PrimitiveType::LinesList, &indices_edges).unwrap();
+        let mut indices_edges_buf_cut = PersistentIndexBuffer::new(gl, glium::index::PrimitiveType::LinesList, indices_edges.len());
+        indices_edges_buf_cut.update(&indices_edges);
 
         let indices_face_sel = PersistentIndexBuffer::new(gl, glium::index::PrimitiveType::TrianglesList, 16);
         let indices_edge_sel = PersistentIndexBuffer::new(gl, glium::index::PrimitiveType::LinesList, 16);
@@ -705,7 +710,7 @@ impl MyContext {
             textures,
             vertex_buf,
             indices_solid_buf,
-            indices_edges_buf,
+            indices_edges_buf_cut,
             indices_face_sel,
             indices_edge_sel,
             paper_vertex_buf,
@@ -856,15 +861,15 @@ impl MyContext {
         //dp.color_mask = (true, true, true, true);
         //dp.polygon_offset = PolygonOffset::default();
         u.color = [0.0, 0.0, 0.0, 1.0]; //black
-        dp.line_width = Some(1.0);
+        dp.line_width = Some(3.0);
         dp.smooth = Some(glium::Smooth::Nicest);
-        frm.draw(&gl_objs.vertex_buf, &gl_objs.indices_edges_buf, &gl_objs.prg_line, &u, &dp).unwrap();
+        frm.draw(&gl_objs.vertex_buf, &gl_objs.indices_edges_buf_cut, &gl_objs.prg_line, &u, &dp).unwrap();
 
         // The selected edge
-        u.color = [0.0, 0.0, 1.0, 1.0]; //white
+        u.color = [0.5, 0.5, 1.0, 1.0]; //blue
         dp.depth.test = glium::DepthTest::Overwrite;
         if self.selected_edge.is_some() {
-            dp.line_width = Some(3.0);
+            dp.line_width = Some(1.0);
             frm.draw(&gl_objs.vertex_buf, &gl_objs.indices_edge_sel, &gl_objs.prg_line, &u, &dp).unwrap();
         }
 
@@ -916,7 +921,7 @@ impl MyContext {
         frm.draw(&gl_objs.paper_vertex_buf, &gl_objs.paper_indices_edge_buf, &gl_objs.prg_line_paper, &u, &dp).unwrap();
 
         if self.selected_edge.is_some() {
-            u.color = [0.0, 0.0, 1.0, 1.0]; //blue
+            u.color = [0.5, 0.5, 1.0, 1.0]; //blue
             dp.line_width = Some(3.0);
             frm.draw(&gl_objs.paper_vertex_buf, &gl_objs.paper_indices_edge_sel, &gl_objs.prg_line_paper, &u, &dp).unwrap();
         }
@@ -973,6 +978,19 @@ impl MyContext {
 
             let GdkPixbufDataSink(pb) = gl.read_front_buffer().unwrap();
             pb.savev("test.png", "png", &[]).unwrap();
+        }
+    }
+
+    fn solid_edge_build(&mut self) {
+        if let Some(gl_objs) = &mut self.gl_objs {
+            let mut indices_edges = Vec::new();
+            for (i_edge, edge) in self.model.edges() {
+                if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Cut {
+                    indices_edges.push(edge.v0());
+                    indices_edges.push(edge.v1());
+                }
+            }
+            gl_objs.indices_edges_buf_cut.update(&indices_edges);
         }
     }
 }

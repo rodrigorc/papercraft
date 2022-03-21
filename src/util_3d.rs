@@ -135,7 +135,7 @@ pub fn point_in_triangle(p: Vector2, p0: Vector2, p1: Vector2, p2: Vector2) -> b
     }
 }
 
-pub fn bounding_box(vs: impl IntoIterator<Item=Vector3>) -> (Vector3, Vector3) {
+pub fn bounding_box_3d(vs: impl IntoIterator<Item=Vector3>) -> (Vector3, Vector3) {
     let mut vs = vs.into_iter();
     let (mut a, mut b) = match vs.next() {
         Some(v) => (v, v),
@@ -148,6 +148,21 @@ pub fn bounding_box(vs: impl IntoIterator<Item=Vector3>) -> (Vector3, Vector3) {
         b.x = b.x.max(v.x);
         b.y = b.y.max(v.y);
         b.z = b.z.max(v.z);
+    }
+    (a, b)
+}
+
+pub fn bounding_box_2d(vs: impl IntoIterator<Item=Vector2>) -> (Vector2, Vector2) {
+    let mut vs = vs.into_iter();
+    let (mut a, mut b) = match vs.next() {
+        Some(v) => (v, v),
+        None => return (Vector2::zero(), Vector2::zero()),
+    };
+    for v in vs {
+        a.x = a.x.min(v.x);
+        a.y = a.y.min(v.y);
+        b.x = b.x.max(v.x);
+        b.y = b.y.max(v.y);
     }
     (a, b)
 }

@@ -205,18 +205,8 @@ impl Model {
     }
 
     pub fn bounding_box(&self, face: &Face) -> (Vector2, Vector2) {
-        let mut min = Vector2::new(f32::MAX, f32::MAX);
-        let mut max = Vector2::new(f32::MIN, f32::MIN);
         let normal = face.normal(self);
-        for v in face.index_vertices() {
-            let vertex = &self[v];
-            let v = normal.project(&vertex.pos());
-            min.x = min.x.min(v.x);
-            min.y = min.y.min(v.y);
-            max.x = max.x.max(v.x);
-            max.y = max.y.max(v.y);
-        }
-        (min, max)
+        util_3d::bounding_box_2d(face.index_vertices().map(|v| normal.project(&self[v].pos())))
     }
 }
 

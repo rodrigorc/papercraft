@@ -40,21 +40,25 @@ impl Papercraft {
         let mut pos_x = 0.0;
         let mut pos_y = 0.0;
 
-        let mut faces: HashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
+        let mut pending_faces: HashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
 
         let mut islands = SlotMap::with_key();
-        while let Some(root) = faces.iter().copied().next() {
-            faces.remove(&root);
-            Self::traverse_faces_ex(model, root, Matrix3::one(), |i_face, _, _| {
-                faces.remove(&i_face);
+        while let Some(root) = pending_faces.iter().copied().next() {
+            pending_faces.remove(&root);
+            let mut vx = Vec::new();
+            Self::traverse_faces_ex(model, root, Matrix3::one(), |i_face, face, mx| {
+                pending_faces.remove(&i_face);
+                let normal = face.normal(model);
+                vx.extend(face.index_vertices().map(|v| {
+                    mx.transform_point(Point2::from_vec(normal.project(&model[v].pos()))).to_vec()
+                }));
                 ControlFlow::Continue(())
             },
             |i_edge| {
                 edges[usize::from(i_edge)] != EdgeStatus::Cut
             });
 
-            let face = &model[root];
-            let bbox = model.bounding_box(face);
+            let bbox = bounding_box_2d(vx);
             let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
             pos_x += bbox.1.x - bbox.0.x + 0.05;
             row_height = row_height.max(bbox.1.y - bbox.0.y);
@@ -71,29 +75,7 @@ impl Papercraft {
             };
             islands.insert(island);
         }
-/*
-        let islands = model.faces()
-            .map(|(i_face, _)| {
-                let face = &model[i_face];
-                let bbox = model.bounding_box(face);
-                let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
-                pos_x += bbox.1.x - bbox.0.x + 0.05;
-                row_height = row_height.max(bbox.1.y - bbox.0.y);
 
-                if pos_x > 2.0 {
-                    pos_y += row_height + 0.05;
-                    row_height = 0.0;
-                    pos_x = 0.0;
-                }
-                Island {
-                    mx: Matrix3::from_translation(pos),
-                    root: i_face,
-                }
-            });
-        let mut the_islands = SlotMap::with_key();
-        for island in islands {
-            the_islands.insert(island);
-        } */
         Papercraft {
             edges,
             islands,

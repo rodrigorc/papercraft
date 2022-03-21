@@ -62,7 +62,7 @@ fn main() {
     let (mut model, facemap) = paper::Model::from_waveobj(obj);
 
     // Compute the bounding box, then move to the center and scale to a standard size
-    let (v_min, v_max) = util_3d::bounding_box(
+    let (v_min, v_max) = util_3d::bounding_box_3d(
         model
             .vertices()
             .map(|v| v.pos())

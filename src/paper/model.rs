@@ -28,6 +28,12 @@ unsafe impl glium::index::Index for VertexIndex {
     }
 }
 
+impl From<VertexIndex> for usize {
+    fn from(idx: VertexIndex) -> usize {
+        idx.0 as usize
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct EdgeIndex(u32);
@@ -37,6 +43,11 @@ impl From<EdgeIndex> for usize {
         idx.0 as usize
     }
 }
+impl From<usize> for EdgeIndex {
+    fn from(idx: usize) -> EdgeIndex {
+        EdgeIndex(idx as u32)
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -44,10 +55,8 @@ pub struct FaceIndex(u32);
 
 #[derive(Debug)]
 pub struct Face {
-    vertices: Vec<VertexIndex>,
-    edges: Vec<EdgeIndex>,
-    tris: Vec<[u32; 3]>, //result of tesselation, indices in self.vertices
-    plane: util_3d::Plane,
+    vertices: [VertexIndex; 3],
+    edges: [EdgeIndex; 3],
 }
 
 #[derive(Debug)]
@@ -65,9 +74,9 @@ pub struct Vertex {
 }
 
 impl Model {
-    pub fn from_waveobj(obj: &waveobj::Model) -> Model {
+    pub fn from_waveobj(obj: &waveobj::Model) -> (Model, HashMap<FaceIndex, u32>) {
         // Remove duplicated vertices by adding them into a set
-        let all_vertices: HashSet<_> =
+        let all_vertices: HashSet<waveobj::FaceVertex> =
             obj.faces()
                 .iter()
                 .flat_map(|f| f.vertices())
@@ -78,13 +87,13 @@ impl Model {
         let all_vertices = Vec::from_iter(all_vertices);
 
         // TODO: iterate all_vertices only once
-        let idx_vertices: HashMap<_, _> =
+        let idx_vertices: HashMap<waveobj::FaceVertex, u32> =
             all_vertices
                 .iter()
                 .enumerate()
                 .map(|(i, v)| (*v, i as u32))
                 .collect();
-        let vertices: Vec<_> =
+        let vertices: Vec<Vertex> =
             all_vertices
                 .iter()
                 .map(|fv| Vertex {
@@ -98,9 +107,9 @@ impl Model {
         let mut edges: Vec<Edge> = Vec::new();
         //TODO: index idx_edges?
         let mut idx_edges = Vec::new();
+        let mut facemap: HashMap<FaceIndex, u32> = HashMap::new();
 
-        for (i_face, face) in obj.faces().iter().enumerate() {
-            let i_face = FaceIndex(i_face as u32);
+        for (index, face) in obj.faces().iter().enumerate() {
             let face_verts: Vec<_> = face
                 .vertices()
                 .iter()
@@ -112,57 +121,55 @@ impl Model {
                 .map(|idx| idx.v())
                 .collect();
 
-            let mut face_edges = Vec::with_capacity(face_verts_orig.len());
-            for (i0, &v0) in face_verts_orig.iter().enumerate() {
-                let v1 = face_verts_orig[(i0 + 1) % face_verts_orig.len()];
+            let to_tess: Vec<_> = face_verts
+                .iter()
+                .map(|v| vertices[usize::from(*v)].pos)
+                .collect();
+            let (tris, _) = util_3d::tessellate(&to_tess);
 
-                if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0 == v0 && p1 == v1) || (p0 == v1 && p1 == v0)) {
-                    face_edges.push(EdgeIndex(i_edge as u32));
-                    edges[i_edge].faces.push((i_face, true)); //TODO sign?
-                } else {
-                    face_edges.push(EdgeIndex(idx_edges.len() as u32));
-                    idx_edges.push((v0, v1));
-                    edges.push(Edge {
-                        v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
-                        v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
-                        faces: vec![(i_face, false)],
-                    })
+            for tri in tris {
+                let i_face = FaceIndex(faces.len() as u32);
+                facemap.insert(i_face, index as u32);
+
+                let mut face_vertices = [VertexIndex(0); 3];
+                let mut face_edges = [EdgeIndex(0); 3];
+
+                for i in 0 .. 3 {
+                    face_vertices[i] = face_verts[tri[i]];
+                    let v0 = face_verts_orig[tri[i]];
+                    let v1 = face_verts_orig[tri[(i + 1) % 3]];
+                    if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0 == v0 && p1 == v1) || (p0 == v1 && p1 == v0)) {
+                        face_edges[i] = EdgeIndex(i_edge as u32);
+                        edges[i_edge].faces.push((i_face, true)); //TODO sign?
+                    } else {
+                        face_edges[i] = EdgeIndex(idx_edges.len() as u32);
+                        idx_edges.push((v0, v1));
+                        edges.push(Edge {
+                            v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
+                            v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
+                            faces: vec![(i_face, false)],
+                        })
+                    }
                 }
+                faces.push(Face {
+                    vertices: face_vertices,
+                    edges: face_edges,
+                });
             }
-            faces.push(Face {
-                vertices: face_verts,
-                edges: face_edges,
-                tris: Vec::new(),
-                plane: util_3d::Plane::default(),
-            });
         }
 
-        Model {
+        let model = Model {
             vertices,
             edges,
             faces,
-        }
+        };
+        (model, facemap)
     }
     // F gets (pos, normal)
     pub fn transform_vertices<F>(&mut self, mut f: F)
         where F: FnMut(&mut Vector3, &mut Vector3)
     {
         self.vertices.iter_mut().for_each(|v| f(&mut v.pos, &mut v.normal));
-    }
-    pub fn tessellate_faces(&mut self) {
-        for face in &mut self.faces {
-            let to_tess: Vec<_> = face.vertices
-                .iter()
-                .map(|v| self.vertices[v.0 as usize].pos)
-                .collect();
-            let (tris, plane) = util_3d::tessellate(&to_tess);
-            face.tris =
-                tris
-                    .into_iter()
-                    .map(|tri| tri.map(|x| x as u32))
-                    .collect();
-            face.plane = plane;
-        }
     }
     pub fn vertices(&self) -> impl Iterator<Item = &Vertex> {
         self.vertices.iter()
@@ -185,10 +192,12 @@ impl Model {
     pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
         let v0 = self[edge.v0()].pos();
         let v1 = self[edge.v1()].pos();
-        let a0 = face_a.normal().project(&v0);
-        let b0 = face_b.normal().project(&v0);
-        let a1 = face_a.normal().project(&v1);
-        let b1 = face_b.normal().project(&v1);
+        let plane_a = face_a.normal(self);
+        let plane_b = face_b.normal(self);
+        let a0 = plane_a.project(&v0);
+        let b0 = plane_b.project(&v0);
+        let a1 = plane_a.project(&v1);
+        let b1 = plane_b.project(&v1);
         let mabt0 = Matrix3::from_translation(-b0);
         let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
         let mabt1 = Matrix3::from_translation(a0);
@@ -196,9 +205,9 @@ impl Model {
     }
 
     pub fn bounding_box(&self, face: &Face) -> (Vector2, Vector2) {
-        let mut min = Vector2::new(1000.0, 1000.0);
-        let mut max = Vector2::new(-1000.0, -1000.0);
-        let normal = face.normal();
+        let mut min = Vector2::new(f32::MAX, f32::MAX);
+        let mut max = Vector2::new(f32::MIN, f32::MIN);
+        let normal = face.normal(self);
         for v in face.index_vertices() {
             let vertex = &self[v];
             let v = normal.project(&vertex.pos());
@@ -236,25 +245,29 @@ impl std::ops::Index<EdgeIndex> for Model {
 }
 
 impl Face {
-    pub fn index_vertices(&self) -> impl Iterator<Item = VertexIndex> + '_ {
-        self.vertices.iter().copied()
+    pub fn index_vertices(&self) -> [VertexIndex; 3] {
+        self.vertices
     }
-    pub fn index_edges(&self) -> impl Iterator<Item = EdgeIndex> + '_ {
-        self.edges.iter().copied()
+    pub fn index_edges(&self) -> [EdgeIndex; 3] {
+        self.edges
     }
-    pub fn index_triangles(&self) -> impl Iterator<Item = [VertexIndex; 3]> + '_ {
-        self.tris
+    pub fn normal(&self, model: &Model) -> util_3d::Plane {
+        util_3d::Plane::from_tri([
+            model[self.vertices[0]].pos(),
+            model[self.vertices[1]].pos(),
+            model[self.vertices[2]].pos(),
+        ])
+    }
+    pub fn edges_with_vertices(&self) -> impl Iterator<Item = (VertexIndex, VertexIndex, EdgeIndex)> + '_ {
+        self.edges
             .iter()
-            .map(|tri| tri.map(|v| self.vertices[v as usize]))
-    }
-    pub fn num_vertices(&self) -> usize {
-        self.vertices.len()
-    }
-    pub fn num_triangles(&self) -> usize {
-        self.tris.len()
-    }
-    pub fn normal(&self) -> &util_3d::Plane {
-        &self.plane
+            .copied()
+            .enumerate()
+            .map(|(i, e)| {
+                let v0 = self.vertices[i];
+                let v1 = self.vertices[(i + 1) % self.vertices.len()];
+                (v0, v1, e)
+            })
     }
 }
 

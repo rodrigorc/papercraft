@@ -34,6 +34,16 @@ impl Plane {
         let y = p.dot(self.base_y);
         Vector2::new(x, y)
     }
+    pub fn from_tri(tri: [Vector3; 3]) -> Plane {
+        let v0 = tri[1] - tri[0];
+        let v1 = tri[2] - tri[0];
+        let normal = v0.cross(v1);
+        Plane {
+            origin: tri[0],
+            base_x: v0.normalize(),
+            base_y: v0.cross(normal).normalize(),
+        }
+    }
 }
 
 // Each returned tuple is a triangle of indices into the original vector

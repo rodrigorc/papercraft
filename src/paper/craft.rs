@@ -1,6 +1,6 @@
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{collections::{HashSet, HashMap}, ops::ControlFlow};
 
-use cgmath::{Transform, EuclideanSpace, InnerSpace, Rad};
+use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad};
 use slotmap::{SlotMap, new_key_type};
 
 use crate::{paper::*, util_3d::*};
@@ -9,6 +9,7 @@ use crate::{paper::*, util_3d::*};
 pub enum EdgeStatus {
     Joined,
     Cut,
+    Hidden,
 }
 new_key_type! {
     pub struct IslandKey;
@@ -20,11 +21,57 @@ pub struct Papercraft {
 }
 
 impl Papercraft {
-    pub fn new(model: &Model) -> Papercraft {
-        let edges = vec![EdgeStatus::Cut; model.num_edges()];
+    pub fn new(model: &Model, facemap: &HashMap<FaceIndex, u32>) -> Papercraft {
+        let mut edges = vec![EdgeStatus::Cut; model.num_edges()];
+
+        for (i_edge, edge_status) in edges.iter_mut().enumerate() {
+            let i_edge = EdgeIndex::from(i_edge);
+            let edge = &model[i_edge];
+            let mut faces = edge.faces();
+            let first = faces.next().unwrap();
+            let original = facemap[&first];
+            let flat = faces.all(|f| facemap[&f] == original);
+            if flat {
+                *edge_status = EdgeStatus::Hidden;
+            }
+        }
+
         let mut row_height = 0.0f32;
         let mut pos_x = 0.0;
         let mut pos_y = 0.0;
+
+        let mut faces: HashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
+
+        let mut islands = SlotMap::with_key();
+        while let Some(root) = faces.iter().copied().next() {
+            faces.remove(&root);
+            Self::traverse_faces_ex(model, root, Matrix3::one(), |i_face, _, _| {
+                faces.remove(&i_face);
+                ControlFlow::Continue(())
+            },
+            |i_edge| {
+                edges[usize::from(i_edge)] != EdgeStatus::Cut
+            });
+
+            let face = &model[root];
+            let bbox = model.bounding_box(face);
+            let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
+            pos_x += bbox.1.x - bbox.0.x + 0.05;
+            row_height = row_height.max(bbox.1.y - bbox.0.y);
+
+            if pos_x > 2.0 {
+                pos_y += row_height + 0.05;
+                row_height = 0.0;
+                pos_x = 0.0;
+            }
+
+            let island = Island {
+                mx: Matrix3::from_translation(pos),
+                root,
+            };
+            islands.insert(island);
+        }
+/*
         let islands = model.faces()
             .map(|(i_face, _)| {
                 let face = &model[i_face];
@@ -46,10 +93,10 @@ impl Papercraft {
         let mut the_islands = SlotMap::with_key();
         for island in islands {
             the_islands.insert(island);
-        }
+        } */
         Papercraft {
             edges,
-            islands: the_islands,
+            islands,
         }
     }
 
@@ -118,7 +165,7 @@ impl Papercraft {
                 //Compute the offset
                 let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
                 let new_root = &model[new_root];
-                let new_root_plane = new_root.normal();
+                let new_root_plane = new_root.normal(model);
                 let v0 = new_root_plane.project(&model[edge.v0()].pos());
                 let v1 = new_root_plane.project(&model[edge.v1()].pos());
                 let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
@@ -153,6 +200,7 @@ impl Papercraft {
                     self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
                 }
             }
+            EdgeStatus::Hidden => {}
         };
     }
 
@@ -171,7 +219,7 @@ impl Papercraft {
         weight_b > weight_a
     }
 
-    fn contains_face(&self, model: &Model, island: &Island, face: FaceIndex) -> bool {
+    pub fn contains_face(&self, model: &Model, island: &Island, face: FaceIndex) -> bool {
         let mut found = false;
         self.traverse_faces(model, island,
             |i_face, _, _|
@@ -185,22 +233,21 @@ impl Papercraft {
         found
     }
 
-    pub fn traverse_faces<F>(&self, model: &Model, island: &Island, mut visit_face: F) -> ControlFlow<()>
-        where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
+    fn traverse_faces_ex<F, E>(model: &Model, root: FaceIndex, mx_root: Matrix3, mut visit_face: F, mut cross_edge: E) -> ControlFlow<()>
+        where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>,
+              E: FnMut(EdgeIndex) -> bool,
     {
-        let root = island.root_face();
         let mut visited_faces = HashSet::new();
-        let mut stack = vec![(root, island.matrix())];
+        let mut stack = vec![(root, mx_root)];
         visited_faces.insert(root);
 
         while let Some((i_face, m)) = stack.pop() {
             let face = &model[i_face];
             visit_face(i_face, face, &m)?;
             for i_edge in face.index_edges() {
-                if self.edge_status(i_edge) != EdgeStatus::Joined {
+                if !cross_edge(i_edge) {
                     continue;
                 }
-
                 let edge = &model[i_edge];
                 for i_next_face in edge.faces() {
                     if visited_faces.contains(&i_next_face) {
@@ -216,6 +263,19 @@ impl Papercraft {
             }
         };
         ControlFlow::Continue(())
+    }
+    pub fn traverse_faces<F>(&self, model: &Model, island: &Island, visit_face: F) -> ControlFlow<()>
+        where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
+    {
+        Self::traverse_faces_ex(model, island.root_face(), island.matrix(),
+            visit_face,
+            |i_edge| {
+                match self.edge_status(i_edge) {
+                    EdgeStatus::Cut => false,
+                    EdgeStatus::Joined |
+                    EdgeStatus::Hidden => true,
+                }
+            })
     }
 }
 

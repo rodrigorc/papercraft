@@ -59,7 +59,7 @@ fn main() {
         }
     }
 
-    let mut model = paper::Model::from_waveobj(obj);
+    let (mut model, facemap) = paper::Model::from_waveobj(obj);
 
     // Compute the bounding box, then move to the center and scale to a standard size
     let (v_min, v_max) = util_3d::bounding_box(
@@ -77,7 +77,6 @@ fn main() {
         //only scale and translate, no need to touch normals
         *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
     });
-    model.tessellate_faces();
 
     let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
     let trans_scene = Transformation3D::new(
@@ -87,7 +86,6 @@ fn main() {
          persp
     );
     let trans_paper = {
-        //let mr = Matrix3::from(Matrix2::from_angle(Deg(30.0)));
         let mt = Matrix3::from_translation(Vector2::new(-1.0, -1.5));
         let ms = Matrix3::from_scale(200.0);
         TransformationPaper {
@@ -100,7 +98,7 @@ fn main() {
     let wscene = gtk::GLArea::new();
     let wpaper = gtk::GLArea::new();
 
-    let papercraft = Papercraft::new(&model);
+    let papercraft = Papercraft::new(&model, &facemap);
 
     let ctx = MyContext {
         wscene: wscene.clone(),
@@ -116,7 +114,7 @@ fn main() {
         material,
         selected_face: None,
         selected_edge: None,
-        selected_island: None,
+        grabbed_island: None,
 
         last_cursor_pos: (0.0, 0.0),
 
@@ -234,7 +232,6 @@ fn main() {
     });
 
 
-    //let paper = gtk::DrawingArea::new();
     wpaper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wpaper.set_has_stencil_buffer(true);
     wpaper.connect_realize({
@@ -275,9 +272,9 @@ fn main() {
                 let selection = ctx.analyze_click_paper(ev.position());
                 if let ClickResult::Face(i_face) = selection {
                     let i_island = ctx.papercraft.island_by_face(&ctx.model, i_face);
-                    ctx.selected_island = Some(i_island);
+                    ctx.grabbed_island = Some(i_island);
                 } else {
-                    ctx.selected_island = None;
+                    ctx.grabbed_island = None;
                     ctx.set_selection(selection, true);
                 }
             }
@@ -295,7 +292,7 @@ fn main() {
                 ctx.trans_paper.mx = Matrix3::from_translation(delta) * ctx.trans_paper.mx;
                 ctx.wpaper.queue_render();
             } else if ev.state().contains(gdk::ModifierType::BUTTON1_MASK) {
-                if let Some(i_island) = ctx.selected_island {
+                if let Some(i_island) = ctx.grabbed_island {
                     let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&ctx.trans_paper.mx, delta).unwrap();
                     if let Some(island) = ctx.papercraft.island_by_key_mut(i_island) {
                         if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
@@ -399,7 +396,7 @@ struct MyContext {
     material: Option<String>,
     selected_face: Option<paper::FaceIndex>,
     selected_edge: Option<paper::EdgeIndex>,
-    selected_island: Option<paper::IslandKey>,
+    grabbed_island: Option<paper::IslandKey>,
 
     last_cursor_pos: (f64, f64),
 
@@ -481,23 +478,22 @@ impl MyContext {
 
         let mut hit_face = None;
         for (iface, face) in self.model.faces() {
-            for tri in face.index_triangles() {
-                let tri = tri.map(|v| self.model[v].pos());
-                let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
-                if let Some(new_hit) = maybe_new_hit {
-                    //dbg!(new_hit);
-                    hit_face = match (hit_face, new_hit) {
-                        (Some((_, p)), x) if p > x && x > 0.0 => Some((iface, x)),
-                        (None, x) if x > 0.0 => Some((iface, x)),
-                        (old, _) => old
-                    };
-                    break;
-                }
+            let tri = face.index_vertices().map(|v| self.model[v].pos());
+            let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
+            if let Some(new_hit) = maybe_new_hit {
+                hit_face = match (hit_face, new_hit) {
+                    (Some((_, p)), x) if p > x && x > 0.0 => Some((iface, x)),
+                    (None, x) if x > 0.0 => Some((iface, x)),
+                    (old, _) => old
+                };
             }
         }
 
         let mut hit_edge = None;
-        for (iedge, edge) in self.model.edges() {
+        for (i_edge, edge) in self.model.edges() {
+            if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
+                continue;
+            }
             let v1 = self.model[edge.v0()].pos();
             let v2 = self.model[edge.v1()].pos();
             let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
@@ -527,9 +523,8 @@ impl MyContext {
                 _ => {}
             }
 
-            hit_edge = Some((iedge, ray_hit, new_dist));
+            hit_edge = Some((i_edge, ray_hit, new_dist));
         }
-        //dbg!(hit_edge);
 
         match (hit_face, hit_edge) {
             (_, Some((e, _, _))) => ClickResult::Edge(e, None),
@@ -554,19 +549,21 @@ impl MyContext {
         for (_i_island, island) in self.papercraft.islands() {
             self.papercraft.traverse_faces(&self.model, island,
                 |i_face, face, fmx| {
-                    let normal = face.normal();
-                    for tri in face.index_triangles() {
-                        let tri = tri.map(|v| {
-                            let v3 = self.model[v].pos();
-                            let v2 = normal.project(&v3);
-                            fmx.transform_point(Point2::from_vec(v2)).to_vec()
-                        });
-                        if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
-                            face_sel = Some(i_face);
-                        }
+                    let normal = face.normal(&self.model);
+                    let tri = face.index_vertices();
+                    let tri = tri.map(|v| {
+                        let v3 = self.model[v].pos();
+                        let v2 = normal.project(&v3);
+                        fmx.transform_point(Point2::from_vec(v2)).to_vec()
+                    });
+                    if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
+                        face_sel = Some(i_face);
                     }
 
                     for i_edge in face.index_edges() {
+                        if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
+                            continue;
+                        }
                         let edge = &self.model[i_edge];
                         let v0 = self.model[edge.v0()].pos();
                         let v0 = normal.project(&v0);
@@ -577,7 +574,7 @@ impl MyContext {
 
                         let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
                         let d = <Matrix3 as Transform<Point2>>::transform_vector(&mx, Vector2::new(d, 0.0)).magnitude();
-                        if d > 0.05 { //too far?
+                        if d > 0.02 { //too far?
                             continue;
                         }
                         match &edge_sel {
@@ -608,11 +605,14 @@ impl MyContext {
                 self.selected_face = None;
             }
             ClickResult::Face(i_face) => {
-                let face = &self.model[i_face];
-                let idxs: Vec<_> = face.index_triangles()
-                    .flatten()
-                    .collect();
                 if let Some(gl_objs) = &mut self.gl_objs {
+                    let mut idxs = Vec::new();
+                    let island = self.papercraft.island_by_face(&self.model, i_face);
+                    let island = self.papercraft.island_by_key(island).unwrap();
+                    self.papercraft.traverse_faces(&self.model, island, |_, face, _,| {
+                        idxs.extend(face.index_vertices());
+                        ControlFlow::Continue(())
+                    });
                     gl_objs.indices_face_sel.update(&idxs);
                 }
                 self.selected_face = Some(i_face);
@@ -698,22 +698,12 @@ impl MyContext {
 
         let mut indices_solid = Vec::new();
         for (_, face) in self.model.faces() {
-            indices_solid.extend(face.index_triangles().flatten());
+            indices_solid.extend(face.index_vertices());
         }
-
-        let mut indices_edges = Vec::new();
-        for (i_edge, edge) in self.model.edges() {
-            if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Cut {
-                indices_edges.push(edge.v0());
-                indices_edges.push(edge.v1());
-            }
-        }
-
 
         let vertex_buf = glium::VertexBuffer::immutable(gl, &vertices).unwrap();
         let indices_solid_buf = glium::IndexBuffer::immutable(gl, glium::index::PrimitiveType::TrianglesList, &indices_solid).unwrap();
-        let mut indices_edges_buf_cut = PersistentIndexBuffer::new(gl, glium::index::PrimitiveType::LinesList, indices_edges.len());
-        indices_edges_buf_cut.update(&indices_edges);
+        let indices_edges_buf_cut = PersistentIndexBuffer::new(gl, glium::index::PrimitiveType::LinesList, 0);
 
         let indices_face_sel = PersistentIndexBuffer::new(gl, glium::index::PrimitiveType::TrianglesList, 16);
         let indices_edge_sel = PersistentIndexBuffer::new(gl, glium::index::PrimitiveType::LinesList, 16);
@@ -753,48 +743,46 @@ impl MyContext {
 
         self.gl_objs = Some(gl_objs);
 
+        self.solid_edge_build();
         self.paper_build();
     }
 
-    fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, vertices: &mut Vec<MVertex2D>, indices_solid: &mut Vec<u32>, indices_edge: &mut Vec<u32>, indices_face_sel: &mut Vec<u32>, indices_edge_sel: &mut Vec<u32>, vertex_map: &mut HashMap<(paper::FaceIndex, paper::VertexIndex), u32>) {
-        for tri in face.index_triangles() {
-            for i_v in tri {
-                let i = vertex_map
-                    .entry((i_face, i_v))
-                    .or_insert_with(|| {
-                        let v = &self.model[i_v];
-                        let p2 = face.normal().project(&v.pos());
-                        let pos = m.transform_point(Point2::from_vec(p2)).to_vec();
-                        let idx = vertices.len();
-                        vertices.push(MVertex2D {
-                            pos,
-                            uv: v.uv_inv(),
-                        });
-                        idx as u32
+    fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, selected: bool, vertices: &mut Vec<MVertex2D>, indices_solid: &mut Vec<u32>, indices_edge: &mut Vec<u32>, indices_face_sel: &mut Vec<u32>, indices_edge_sel: &mut Vec<u32>, vertex_map: &mut HashMap<(paper::FaceIndex, paper::VertexIndex), u32>) {
+        let tri = face.index_vertices();
+        for i_v in tri {
+            let i = vertex_map
+                .entry((i_face, i_v))
+                .or_insert_with(|| {
+                    let v = &self.model[i_v];
+                    let p2 = face.normal(&self.model).project(&v.pos());
+                    let pos = m.transform_point(Point2::from_vec(p2)).to_vec();
+                    let idx = vertices.len();
+                    vertices.push(MVertex2D {
+                        pos,
+                        uv: v.uv_inv(),
                     });
-                indices_solid.push(*i);
-                if Some(i_face) == self.selected_face {
-                    indices_face_sel.push(*i);
-                }
+                    idx as u32
+                });
+            indices_solid.push(*i);
+            if selected {
+                indices_face_sel.push(*i);
             }
         }
 
-        let mut vs = face.index_vertices();
-        let first = vs.next().unwrap();
-        let first = *vertex_map.get(&(i_face, first)).unwrap();
-        indices_edge.push(first);
-
-        for v in vs {
-            let v = *vertex_map.get(&(i_face, v)).unwrap();
-            indices_edge.push(v);
-            indices_edge.push(v);
-        }
-        indices_edge.push(first);
-
-        if let Some(edge_sel) = self.selected_edge {
-            if let Some(p) = face.index_edges().position(|e| e == edge_sel) {
-                let p = indices_edge.len() - 2 * (face.num_vertices() - p);
-                indices_edge_sel.extend(&indices_edge[p .. p + 2]);
+        for (v0, v1, edge) in face.edges_with_vertices() {
+            let v0 = *vertex_map.get(&(i_face, v0)).unwrap();
+            let v1 = *vertex_map.get(&(i_face, v1)).unwrap();
+            match self.papercraft.edge_status(edge) {
+                paper::EdgeStatus::Hidden => (),
+                paper::EdgeStatus::Joined |
+                paper::EdgeStatus::Cut => {
+                    indices_edge.push(v0);
+                    indices_edge.push(v1);
+                }
+            }
+            if self.selected_edge == Some(edge) {
+                indices_edge_sel.push(v0);
+                indices_edge_sel.push(v1);
             }
         }
     }
@@ -808,10 +796,15 @@ impl MyContext {
         let mut indices_face_sel = Vec::new();
         let mut indices_edge_sel = Vec::new();
 
-        for (_i_island, island) in self.papercraft.islands() {
+        for (_, island) in self.papercraft.islands() {
+            let selected = if let Some(sel) = self.selected_face {
+                self.papercraft.contains_face(&self.model, island, sel)
+            } else {
+                true
+            };
             self.papercraft.traverse_faces(&self.model, island,
                 |i_face, face, mx| {
-                    self.paper_draw_face(face, i_face, mx, &mut vertices, &mut indices_solid, &mut indices_edge,
+                    self.paper_draw_face(face, i_face, mx, selected, &mut vertices, &mut indices_solid, &mut indices_edge,
                         &mut indices_face_sel, &mut indices_edge_sel,
                         &mut vertex_map);
                     ControlFlow::Continue(())
@@ -1015,9 +1008,13 @@ impl MyContext {
         if let Some(gl_objs) = &mut self.gl_objs {
             let mut indices_edges = Vec::new();
             for (i_edge, edge) in self.model.edges() {
-                if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Cut {
-                    indices_edges.push(edge.v0());
-                    indices_edges.push(edge.v1());
+                match self.papercraft.edge_status(i_edge) {
+                    paper::EdgeStatus::Cut => {
+                        indices_edges.push(edge.v0());
+                        indices_edges.push(edge.v1());
+                    }
+                    paper::EdgeStatus::Joined |
+                    paper::EdgeStatus::Hidden => (),
                 }
             }
             gl_objs.indices_edges_buf_cut.update(&indices_edges);

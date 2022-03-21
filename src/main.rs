@@ -2,7 +2,7 @@
 
 use cgmath::{
     prelude::*,
-    Deg, Rad,
+    Deg,
 };
 use glium::{
     draw_parameters::PolygonOffset,
@@ -543,9 +543,9 @@ impl MyContext {
         let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
         let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
         let click = Point2::new(x as f32, y as f32);
-        let height = rect.height() as f32;
 
-        let mx_inv = (self.trans_paper.ortho * self.trans_paper.mx).invert().unwrap();
+        let mx = self.trans_paper.ortho * self.trans_paper.mx;
+        let mx_inv = mx.invert().unwrap();
         let click = mx_inv.transform_point(click).to_vec();
 
         let mut edge_sel = None;
@@ -576,8 +576,8 @@ impl MyContext {
                         let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
 
                         let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
-                        let d = d * height;
-                        if d > 10.0 { //too far?
+                        let d = <Matrix3 as Transform<Point2>>::transform_vector(&mx, Vector2::new(d, 0.0)).magnitude();
+                        if d > 0.05 { //too far?
                             continue;
                         }
                         match &edge_sel {
@@ -596,7 +596,7 @@ impl MyContext {
         }
         //Edge selection has priority
         match (edge_sel, face_sel) {
-            (Some((_, i_edge, i_face)), _) => ClickResult::Edge(i_edge, Some(i_face)),
+            (Some((_d, i_edge, i_face)), _) => ClickResult::Edge(i_edge, Some(i_face)),
             (None, Some(i_face)) => ClickResult::Face(i_face),
             (None, None) => ClickResult::None,
         }

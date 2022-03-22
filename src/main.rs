@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use cgmath::{
     prelude::*,
     Deg,
@@ -358,6 +356,7 @@ struct GLObjects {
     prg_line: glium::Program,
     prg_solid_paper: glium::Program,
     prg_line_paper: glium::Program,
+    #[allow(dead_code)]
     prg_quad: glium::Program,
 
     textures: HashMap<String, glium::Texture2d>,
@@ -374,6 +373,7 @@ struct GLObjects {
     paper_indices_face_sel: PersistentIndexBuffer<u32>,
     paper_indices_edge_sel: PersistentIndexBuffer<u32>,
 
+    #[allow(dead_code)]
     quad_vertex_buf: glium::VertexBuffer<MVertexQuad>,
 }
 
@@ -459,6 +459,16 @@ enum ClickResult {
     None,
     Face(paper::FaceIndex),
     Edge(paper::EdgeIndex, Option<paper::FaceIndex>),
+}
+
+#[derive(Default)]
+struct PaperDrawFaceArgs {
+    vertices: Vec<MVertex2D>,
+    indices_solid: Vec<u32>,
+    indices_edge: Vec<u32>,
+    indices_face_sel: Vec<u32>,
+    indices_edge_sel: Vec<u32>,
+    vertex_map: HashMap<(paper::FaceIndex, paper::VertexIndex), u32>
 }
 
 impl MyContext {
@@ -692,7 +702,7 @@ impl MyContext {
                 MVertex3D {
                     pos: v.pos(),
                     normal: v.normal(),
-                    uv: v.uv_inv(),
+                    uv: v.uv(),
                 }
             }).collect();
 
@@ -747,54 +757,49 @@ impl MyContext {
         self.paper_build();
     }
 
-    fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, selected: bool, vertices: &mut Vec<MVertex2D>, indices_solid: &mut Vec<u32>, indices_edge: &mut Vec<u32>, indices_face_sel: &mut Vec<u32>, indices_edge_sel: &mut Vec<u32>, vertex_map: &mut HashMap<(paper::FaceIndex, paper::VertexIndex), u32>) {
+    fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, selected: bool, args: &mut PaperDrawFaceArgs) {
         let tri = face.index_vertices();
         for i_v in tri {
-            let i = vertex_map
+            let i = args.vertex_map
                 .entry((i_face, i_v))
                 .or_insert_with(|| {
                     let v = &self.model[i_v];
                     let p2 = face.normal(&self.model).project(&v.pos());
                     let pos = m.transform_point(Point2::from_vec(p2)).to_vec();
-                    let idx = vertices.len();
-                    vertices.push(MVertex2D {
+                    let idx = args.vertices.len();
+                    args.vertices.push(MVertex2D {
                         pos,
-                        uv: v.uv_inv(),
+                        uv: v.uv(),
                     });
                     idx as u32
                 });
-            indices_solid.push(*i);
+            args.indices_solid.push(*i);
             if selected {
-                indices_face_sel.push(*i);
+                args.indices_face_sel.push(*i);
             }
         }
 
         for (v0, v1, edge) in face.edges_with_vertices() {
-            let v0 = *vertex_map.get(&(i_face, v0)).unwrap();
-            let v1 = *vertex_map.get(&(i_face, v1)).unwrap();
+            let v0 = *args.vertex_map.get(&(i_face, v0)).unwrap();
+            let v1 = *args.vertex_map.get(&(i_face, v1)).unwrap();
             match self.papercraft.edge_status(edge) {
                 paper::EdgeStatus::Hidden => (),
                 paper::EdgeStatus::Joined |
                 paper::EdgeStatus::Cut => {
-                    indices_edge.push(v0);
-                    indices_edge.push(v1);
+                    args.indices_edge.push(v0);
+                    args.indices_edge.push(v1);
                 }
             }
             if self.selected_edge == Some(edge) {
-                indices_edge_sel.push(v0);
-                indices_edge_sel.push(v1);
+                args.indices_edge_sel.push(v0);
+                args.indices_edge_sel.push(v1);
             }
         }
     }
 
     fn paper_build(&mut self) {
         //Maps VertexIndex in the model to index in vertices
-        let mut vertex_map = HashMap::new();
-        let mut vertices = Vec::new();
-        let mut indices_solid = Vec::new();
-        let mut indices_edge = Vec::new();
-        let mut indices_face_sel = Vec::new();
-        let mut indices_edge_sel = Vec::new();
+        let mut args = PaperDrawFaceArgs::default();
 
         for (_, island) in self.papercraft.islands() {
             let selected = if let Some(sel) = self.selected_face {
@@ -804,20 +809,18 @@ impl MyContext {
             };
             self.papercraft.traverse_faces(&self.model, island,
                 |i_face, face, mx| {
-                    self.paper_draw_face(face, i_face, mx, selected, &mut vertices, &mut indices_solid, &mut indices_edge,
-                        &mut indices_face_sel, &mut indices_edge_sel,
-                        &mut vertex_map);
+                    self.paper_draw_face(face, i_face, mx, selected, &mut args);
                     ControlFlow::Continue(())
                 }
             );
         }
 
         if let Some(gl_objs) = &mut self.gl_objs {
-            gl_objs.paper_vertex_buf.update(&vertices);
-            gl_objs.paper_indices_solid_buf.update(&indices_solid);
-            gl_objs.paper_indices_edge_buf.update(&indices_edge);
-            gl_objs.paper_indices_face_sel.update(&indices_face_sel);
-            gl_objs.paper_indices_edge_sel.update(&indices_edge_sel);
+            gl_objs.paper_vertex_buf.update(&args.vertices);
+            gl_objs.paper_indices_solid_buf.update(&args.indices_solid);
+            gl_objs.paper_indices_edge_buf.update(&args.indices_edge);
+            gl_objs.paper_indices_face_sel.update(&args.indices_face_sel);
+            gl_objs.paper_indices_edge_sel.update(&args.indices_edge_sel);
         }
     }
 
@@ -884,7 +887,7 @@ impl MyContext {
         //dp.color_mask = (true, true, true, true);
         //dp.polygon_offset = PolygonOffset::default();
         u.color = [0.0, 0.0, 0.0, 1.0]; //black
-        dp.line_width = Some(3.0);
+        dp.line_width = Some(1.0);
         dp.smooth = Some(glium::Smooth::Nicest);
         frm.draw(&gl_objs.vertex_buf, &gl_objs.indices_edges_buf_cut, &gl_objs.prg_line, &u, &dp).unwrap();
 
@@ -892,7 +895,7 @@ impl MyContext {
         u.color = [0.5, 0.5, 1.0, 1.0]; //blue
         dp.depth.test = glium::DepthTest::Overwrite;
         if self.selected_edge.is_some() {
-            dp.line_width = Some(1.0);
+            dp.line_width = Some(3.0);
             frm.draw(&gl_objs.vertex_buf, &gl_objs.indices_edge_sel, &gl_objs.prg_line, &u, &dp).unwrap();
         }
 

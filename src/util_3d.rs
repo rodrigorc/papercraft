@@ -1,5 +1,5 @@
 use std::f32::consts::PI;
-use cgmath::{Zero, InnerSpace, Transform, One, Rad};
+use cgmath::{Zero, InnerSpace, Rad};
 
 pub type Vector2 = cgmath::Vector2<f32>;
 pub type Vector3 = cgmath::Vector3<f32>;
@@ -285,46 +285,4 @@ pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
         0.0, 2.0 / (top - bottom), 0.0,
         0.0, 0.0, 1.0
     )
-}
-
-//Computes a 2D matrix that converts from `a` to [(1,0), (0,0), (0,1)]
-pub fn basis_2d_matrix(a: [Vector2; 3]) -> Matrix3 {
-
-    let mt = Matrix3::from_translation(-a[1]);
-    let angle = (a[0] - a[1]).angle(Vector2::new(1.0, 0.0));
-    let mr = Matrix2::from_angle(angle);
-    let len = (a[0] - a[1]).magnitude();
-    let ms = Matrix3::from_scale(1.0 / len);
-
-    let m = ms * Matrix3::from(mr) * mt;
-
-    let a2 = m.transform_point(cgmath::Point2::new(a[2].x, a[2].y));
-    let ms2 = Matrix3::from_nonuniform_scale(1.0, 1.0 / a2.y);
-
-    let mut shear = Matrix3::one();
-    shear[1][0] = -a2.x;
-
-    shear * ms2 * m
-}
-
-#[cfg(test)]
-mod tests {
-    use cgmath::SquareMatrix;
-
-    use super::*;
-    #[test]
-    fn test1() {
-        let a = [Vector2::new(3.2, 4.1), Vector2::new(8.0, 2.4), Vector2::new(5.1, 4.0)];
-        let b = [Vector2::new(4.2, 1.1), Vector2::new(2.0, 3.4), Vector2::new(4.1, -2.0)];
-        let ma = basis_2d_matrix(a);
-        let mb = basis_2d_matrix(b);
-
-        let mm = mb.invert().unwrap() * ma;
-
-        for (va, vb) in a.iter().zip(b.iter()) {
-            let pa = mm.transform_point(cgmath::Point2::new(va.x, va.y));
-            dbg!(pa - vb);
-        }
-
-    }
 }

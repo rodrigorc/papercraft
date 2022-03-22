@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::io::BufRead;
 use anyhow::{anyhow, Result};
 
@@ -17,6 +15,7 @@ pub struct Face {
 
 #[derive(Clone, Debug)]
 pub struct Model {
+    #[allow(dead_code)]
     name: String,
     material: Option<String>,
     vs0: Vec<[f32; 3]>,
@@ -141,6 +140,7 @@ impl Model {
 
         Ok((material_libs, objs))
     }
+    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         &self.name
     }

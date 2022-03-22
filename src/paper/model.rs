@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::{HashSet, HashMap};
 
 use cgmath::InnerSpace;
@@ -96,10 +94,13 @@ impl Model {
         let vertices: Vec<Vertex> =
             all_vertices
                 .iter()
-                .map(|fv| Vertex {
-                    pos: Vector3::from(*obj.vertex_by_index(fv.v())),
-                    normal: Vector3::from(*obj.normal_by_index(fv.n())),
-                    uv: Vector2::from(*obj.texcoord_by_index(fv.t())),
+                .map(|fv| {
+                    let uv = Vector2::from(*obj.texcoord_by_index(fv.t()));
+                    Vertex {
+                        pos: Vector3::from(*obj.vertex_by_index(fv.v())),
+                        normal: Vector3::from(*obj.normal_by_index(fv.n())),
+                        uv: Vector2::new(uv.x, 1.0 - uv.y),
+                    }
                 })
                 .collect();
 
@@ -203,11 +204,6 @@ impl Model {
         let mabt1 = Matrix3::from_translation(a0);
         mabt1 * mabr * mabt0
     }
-
-    pub fn bounding_box(&self, face: &Face) -> (Vector2, Vector2) {
-        let normal = face.normal(self);
-        util_3d::bounding_box_2d(face.index_vertices().map(|v| normal.project(&self[v].pos())))
-    }
 }
 
 impl std::ops::Index<VertexIndex> for Model {
@@ -265,17 +261,11 @@ impl Vertex {
     pub fn pos(&self) -> Vector3 {
         self.pos
     }
-    pub fn pos_mut(&mut self) -> &mut Vector3 {
-        &mut self.pos
-    }
     pub fn normal(&self) -> Vector3 {
         self.normal
     }
     pub fn uv(&self) -> Vector2 {
         self.uv
-    }
-    pub fn uv_inv(&self) -> Vector2 {
-        Vector2::new(self.uv.x, 1.0 - self.uv.y)
     }
 }
 

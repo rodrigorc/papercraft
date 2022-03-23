@@ -312,7 +312,7 @@ fn main() {
         }
     });
     wpaper.connect_scroll_event({
-        let ctx = ctx;
+        let ctx = ctx.clone();
         move |_w, ev|  {
             let mut ctx = ctx.borrow_mut();
             let dz = match ev.direction() {
@@ -333,6 +333,9 @@ fn main() {
 
     w.show_all();
     gtk::main();
+
+    let ctx = ctx.borrow();
+    println!("{}", serde_json::to_string_pretty(&ctx.papercraft).unwrap());
 }
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut MyContext) {

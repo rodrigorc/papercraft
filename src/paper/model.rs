@@ -51,6 +51,12 @@ impl From<usize> for EdgeIndex {
 #[repr(transparent)]
 pub struct FaceIndex(u32);
 
+impl From<FaceIndex> for usize {
+    fn from(idx: FaceIndex) -> usize {
+        idx.0 as usize
+    }
+}
+
 #[derive(Debug)]
 pub struct Face {
     vertices: [VertexIndex; 3],

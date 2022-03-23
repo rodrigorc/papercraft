@@ -2,6 +2,8 @@ use std::{collections::{HashSet, HashMap}, ops::ControlFlow};
 
 use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad};
 use slotmap::{SlotMap, new_key_type};
+use serde::{Serialize, ser::{SerializeMap, SerializeSeq}};
+
 
 use crate::{paper::*, util_3d::*};
 
@@ -261,6 +263,7 @@ impl Papercraft {
     }
 }
 
+#[derive(Debug)]
 pub struct Island {
     mx: Matrix3,
     root: FaceIndex,
@@ -278,5 +281,56 @@ impl Island {
     }
     pub fn rotate(&mut self, angle: impl Into<Rad<f32>>) {
         self.mx = self.mx * Matrix3::from(cgmath::Matrix2::from_angle(angle));
+    }
+}
+
+struct MySerde<T>(T);
+
+impl Serialize for EdgeStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let is = match self {
+            EdgeStatus::Hidden => 0,
+            EdgeStatus::Joined => 1,
+            EdgeStatus::Cut => 2,
+        };
+        serializer.serialize_i32(is)
+    }
+}
+
+impl Serialize for Papercraft {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let mut map = serializer.serialize_map(Some(2))?;
+        map.serialize_entry("edges", &self.edges)?;
+        map.serialize_entry("islands", &MySerde(&self.islands))?;
+        map.end()
+    }
+}
+
+impl Serialize for MySerde<&SlotMap<IslandKey, Island>> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for (_, i) in self.0 {
+            seq.serialize_element(i)?;
+        }
+        seq.end()
+    }
+}
+
+impl Serialize for Island {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer
+    {
+        let mut map = serializer.serialize_map(Some(3))?;
+        map.serialize_entry("root", &(usize::from(self.root) as u32))?;
+        map.serialize_entry("x", &self.mx[2][0])?;
+        map.serialize_entry("y", &self.mx[2][1])?;
+        map.end()
     }
 }

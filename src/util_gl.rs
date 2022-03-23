@@ -159,6 +159,7 @@ pub struct Uniforms2D<'a> {
     pub m: Matrix3,
     pub texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
     pub color: [f32; 4],
+    pub frac_dash: f32,
 }
 
 impl glium::uniforms::Uniforms for Uniforms2D<'_> {
@@ -168,6 +169,7 @@ impl glium::uniforms::Uniforms for Uniforms2D<'_> {
         visit("m", Mat3(array3x3(self.m)));
         visit("tex", self.texture.as_uniform_value());
         visit("color", Vec4(self.color));
+        visit("frac_dash", Float(self.frac_dash));
     }
 }
 
@@ -226,4 +228,16 @@ impl glium::Vertex for MVertexQuad {
             ]
         )
     }
+}
+
+
+pub fn program_from_source<F: ?Sized>(facade: &F, shaders: &str) -> glium::Program
+    where F: glium::backend::Facade
+{
+    let split = shaders.find("###").unwrap();
+    let vertex = &shaders[.. split];
+    let frag = &shaders[split ..];
+    let split_2 = frag.find('\n').unwrap();
+    let frag = &frag[split_2 ..];
+    glium::Program::from_source(facade, vertex, frag, None).unwrap()
 }

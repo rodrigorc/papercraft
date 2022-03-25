@@ -58,6 +58,7 @@ impl<V: glium::Vertex> DynamicVertexBuffer<V> {
                 slice.write(data);
             }
         } else {
+            dbg!("realloc!!!");
             // If the buffer is not big enough, remake it
             let ctx = self.buffer.get_context();
             self.length = data.len();
@@ -194,6 +195,7 @@ impl glium::Vertex for MVertex3D {
 pub struct MVertex3DLine {
     pub pos: Vector3,
     pub color: [f32; 4],
+    pub top: u8,
 }
 
 impl glium::Vertex for MVertex3DLine {
@@ -202,6 +204,7 @@ impl glium::Vertex for MVertex3DLine {
             &[
                 (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32F32, false),
                 (Borrowed("color"), 4*3, glium::vertex::AttributeType::F32F32F32F32, false),
+                (Borrowed("top"), 4*7, glium::vertex::AttributeType::I8, false),
             ]
         )
     }

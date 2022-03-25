@@ -151,7 +151,7 @@ fn main() {
                 if let ClickResult::Edge(i_edge, priority_face) = selection {
                     ctx.papercraft.edge_toggle(i_edge, priority_face);
                     ctx.paper_build();
-                    ctx.solid_edge_build();
+                    ctx.scene_edge_build();
                     ctx.wscene.queue_render();
                     ctx.wpaper.queue_render();
                 }
@@ -288,7 +288,7 @@ fn main() {
                     if let ClickResult::Edge(i_edge, priority_face) = selection {
                         ctx.papercraft.edge_toggle(i_edge, priority_face);
                         ctx.paper_build();
-                        ctx.solid_edge_build();
+                        ctx.scene_edge_build();
                         ctx.wscene.queue_render();
                         ctx.wpaper.queue_render();
                     }
@@ -628,33 +628,30 @@ impl MyContext {
     fn set_selection(&mut self, selection: ClickResult) {
         match selection {
             ClickResult::None => {
-                let changed = self.selected_edge.is_some() || self.selected_face.is_some();
+                let is_same = self.selected_edge.is_none() && self.selected_face.is_none();
+                if is_same {
+                    return;
+                }
                 self.selected_edge = None;
                 self.selected_face = None;
-                if changed {
-                    if let Some(gl_objs) = &mut self.gl_objs {
-                        let mut vertex_buf_sel = gl_objs.vertex_buf_sel.as_mut_slice().map_write();
-                        let n = vertex_buf_sel.len();
-                        for i in 0..n {
-                            vertex_buf_sel.set(i, MSTATUS_UNSEL);
-                        }
-                    }
-                    self.paper_build();
-                    self.solid_edge_build();
-                }
+
+                self.clear_scene_face_selection();
             }
             ClickResult::Face(i_face) => {
+                let is_same = self.selected_edge.is_none() && self.selected_face == Some(i_face);
+                if is_same {
+                    return;
+                }
+                self.selected_edge = None;
+                self.selected_face = Some(i_face);
+
+                self.clear_scene_face_selection();
                 if let Some(gl_objs) = &mut self.gl_objs {
                     //let mut idxs = Vec::new();
                     let island = self.papercraft.island_by_face(i_face);
                     let island = self.papercraft.island_by_key(island).unwrap();
 
                     let mut vertex_buf_sel = gl_objs.vertex_buf_sel.as_mut_slice().map_write();
-                    let n = vertex_buf_sel.len();
-                    for i in 0..n {
-                        vertex_buf_sel.set(i, MSTATUS_UNSEL);
-                    }
-
                     self.papercraft.traverse_faces(island, |i_face_2, _, _,| {
                         let pos = 3 * usize::from(i_face_2);
                         for i in pos .. pos + 3 {
@@ -670,19 +667,31 @@ impl MyContext {
                         ControlFlow::Continue(())
                     });
                 }
-                self.selected_face = Some(i_face);
-                self.selected_edge = None;
-                self.paper_build();
             }
             ClickResult::Edge(i_edge, _) => {
+                let is_same = self.selected_edge == Some(i_edge) && self.selected_face.is_none();
+                if is_same {
+                    return;
+                }
                 self.selected_edge = Some(i_edge);
                 self.selected_face = None;
-                self.paper_build();
-                self.solid_edge_build();
+                self.clear_scene_face_selection();
             }
         }
+        self.paper_build();
+        self.scene_edge_build();
         self.wscene.queue_render();
         self.wpaper.queue_render();
+    }
+
+    fn clear_scene_face_selection(&mut self) -> Option<()> {
+        let gl_objs = &mut self.gl_objs.as_mut()?;
+        let mut vertex_buf_sel = gl_objs.vertex_buf_sel.as_mut_slice().map_write();
+        let n = vertex_buf_sel.len();
+        for i in 0..n {
+            vertex_buf_sel.set(i, MSTATUS_UNSEL);
+        }
+        Some(())
     }
     fn build_gl_objects(&mut self, gl: &Rc<glium::backend::Context>) {
         if self.gl_objs.is_some() {
@@ -739,11 +748,11 @@ impl MyContext {
 
         let vertex_buf = glium::VertexBuffer::immutable(gl, &vertices).unwrap();
         let vertex_buf_sel = glium::VertexBuffer::persistent(gl, &vec![MSTATUS_UNSEL; vertices.len()]).unwrap();
-        let vertex_edges_buf = DynamicVertexBuffer::new(gl, 0);
+        let vertex_edges_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2);
 
-        let paper_vertex_buf = DynamicVertexBuffer::new(gl, 0);
-        let paper_vertex_edge_buf = DynamicVertexBuffer::new(gl, 0);
-        let paper_vertex_edge_sel_buf = DynamicVertexBuffer::new(gl, 0);
+        let paper_vertex_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_faces() * 3);
+        let paper_vertex_edge_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2 * 2);
+        let paper_vertex_edge_sel_buf = DynamicVertexBuffer::new(gl, 6);
 
         let quad_vertex_buf = glium::VertexBuffer::immutable(gl,
             &[
@@ -770,7 +779,7 @@ impl MyContext {
 
         self.gl_objs = Some(gl_objs);
 
-        self.solid_edge_build();
+        self.scene_edge_build();
         self.paper_build();
     }
 
@@ -854,6 +863,18 @@ impl MyContext {
                     ControlFlow::Continue(())
                 }
             );
+        }
+
+        if args.vertices_edge_sel.len() == 4 {
+            for i in 0 .. 2 {
+                let v0 = &args.vertices_edge_sel[2*i];
+                let v1 = &args.vertices_edge_sel[2*i+1];
+                let vm = MVertex2D {
+                    pos: (v0.pos + v1.pos) / 2.0,
+                    .. *v0
+                };
+                args.vertices_edge_sel.push(vm);
+            }
         }
 
         if let Some(gl_objs) = &mut self.gl_objs {
@@ -1015,18 +1036,26 @@ impl MyContext {
         }
     }
 
-    fn solid_edge_build(&mut self) {
+    fn scene_edge_build(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let mut edges = Vec::new();
             for (i_edge, edge) in self.papercraft.model().edges() {
                 let selected = self.selected_edge == Some(i_edge);
-                let color = if selected { [0.5, 0.5, 1.0, 1.0] } else { [0.0, 0.0, 0.0, 1.0] };
-                if selected || self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Cut {
-                    let p0 = self.papercraft.model()[edge.v0()].pos();
-                    let p1 = self.papercraft.model()[edge.v1()].pos();
-                    edges.push(MVertex3DLine { pos: p0, color });
-                    edges.push(MVertex3DLine { pos: p1, color });
+                let status = self.papercraft.edge_status(i_edge);
+                if status == paper::EdgeStatus::Hidden {
+                    continue;
                 }
+                let cut = self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Cut;
+                let color = match (selected, cut) {
+                    (true, false) => [0.0, 0.0, 1.0, 1.0],
+                    (true, true) => [0.5, 0.5, 1.0, 1.0],
+                    (false, false) => [0.0, 0.0, 0.0, 1.0],
+                    (false, true) => [1.0, 1.0, 1.0, 1.0],
+                };
+                let p0 = self.papercraft.model()[edge.v0()].pos();
+                let p1 = self.papercraft.model()[edge.v1()].pos();
+                edges.push(MVertex3DLine { pos: p0, color, top: selected as u8 });
+                edges.push(MVertex3DLine { pos: p1, color, top: selected as u8 });
             }
             gl_objs.vertex_edges_buf.update(&edges);
         }

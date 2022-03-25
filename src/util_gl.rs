@@ -1,4 +1,4 @@
-use std::{rc::Rc, cell::Cell};
+use std::{rc::Rc, cell::Cell, borrow::Cow::Borrowed};
 use cgmath::conv::{array4x4, array3x3, array3};
 use glium::uniforms::AsUniformValue;
 use gtk::gdk;
@@ -38,15 +38,15 @@ unsafe impl glium::backend::Backend for GdkGliumBackend {
     }
 }
 
-pub struct PersistentVertexBuffer<V: glium::Vertex> {
+pub struct DynamicVertexBuffer<V: glium::Vertex> {
     buffer: glium::VertexBuffer<V>,
     length: usize,
 }
 
-impl<V: glium::Vertex> PersistentVertexBuffer<V> {
-    pub fn new(ctx: &impl glium::backend::Facade, initial_size: usize) -> PersistentVertexBuffer<V> {
-        let buffer = glium::VertexBuffer::empty_persistent(ctx, initial_size).unwrap();
-        PersistentVertexBuffer {
+impl<V: glium::Vertex> DynamicVertexBuffer<V> {
+    pub fn new(ctx: &impl glium::backend::Facade, initial_size: usize) -> DynamicVertexBuffer<V> {
+        let buffer = glium::VertexBuffer::empty_dynamic(ctx, initial_size).unwrap();
+        DynamicVertexBuffer {
             buffer,
             length: 0,
         }
@@ -60,27 +60,27 @@ impl<V: glium::Vertex> PersistentVertexBuffer<V> {
         } else {
             // If the buffer is not big enough, remake it
             let ctx = self.buffer.get_context();
-            self.buffer = glium::VertexBuffer::persistent(ctx, data).unwrap();
             self.length = data.len();
+            self.buffer = glium::VertexBuffer::dynamic(ctx, data).unwrap();
         }
     }
 }
 
-impl<'a, V: glium::Vertex> From<&'a PersistentVertexBuffer<V>> for glium::vertex::VerticesSource<'a> {
-    fn from(buf: &'a PersistentVertexBuffer<V>) -> Self {
+impl<'a, V: glium::Vertex> From<&'a DynamicVertexBuffer<V>> for glium::vertex::VerticesSource<'a> {
+    fn from(buf: &'a DynamicVertexBuffer<V>) -> Self {
         buf.buffer.slice(0 .. buf.length).unwrap().into()
     }
 }
 
-pub struct PersistentIndexBuffer<V: glium::index::Index> {
+pub struct DynamicIndexBuffer<V: glium::index::Index> {
     buffer: glium::IndexBuffer<V>,
     length: usize,
 }
 
-impl<V: glium::index::Index> PersistentIndexBuffer<V> {
-    pub fn new(ctx: &impl glium::backend::Facade, prim: glium::index::PrimitiveType, initial_size: usize) -> PersistentIndexBuffer<V> {
-        let buffer = glium::IndexBuffer::empty_persistent(ctx, prim, initial_size).unwrap();
-        PersistentIndexBuffer {
+impl<V: glium::index::Index> DynamicIndexBuffer<V> {
+    pub fn new(ctx: &impl glium::backend::Facade, prim: glium::index::PrimitiveType, initial_size: usize) -> DynamicIndexBuffer<V> {
+        let buffer = glium::IndexBuffer::empty_dynamic(ctx, prim, initial_size).unwrap();
+        DynamicIndexBuffer {
             buffer,
             length: 0,
         }
@@ -94,14 +94,14 @@ impl<V: glium::index::Index> PersistentIndexBuffer<V> {
         } else {
             // If the buffer is not big enough, remake it
             let ctx = self.buffer.get_context();
-            self.buffer = glium::IndexBuffer::persistent(ctx, self.buffer.get_primitives_type(), data).unwrap();
+            self.buffer = glium::IndexBuffer::dynamic(ctx, self.buffer.get_primitives_type(), data).unwrap();
             self.length = data.len();
         }
     }
 }
 
-impl<'a, V: glium::index::Index> From<&'a PersistentIndexBuffer<V>> for glium::index::IndicesSource<'a> {
-    fn from(buf: &'a PersistentIndexBuffer<V>) -> Self {
+impl<'a, V: glium::index::Index> From<&'a DynamicIndexBuffer<V>> for glium::index::IndicesSource<'a> {
+    fn from(buf: &'a DynamicIndexBuffer<V>) -> Self {
         buf.buffer.slice(0 .. buf.length).unwrap().into()
     }
 }
@@ -139,7 +139,6 @@ pub struct Uniforms3D<'a> {
     pub mnormal: Matrix3,
     pub lights: [Vector3; 2],
     pub texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
-    pub color: [f32; 4],
 }
 
 impl glium::uniforms::Uniforms for Uniforms3D<'_> {
@@ -151,14 +150,12 @@ impl glium::uniforms::Uniforms for Uniforms3D<'_> {
         visit("lights[0]", Vec3(array3(self.lights[0])));
         visit("lights[1]", Vec3(array3(self.lights[1])));
         visit("tex", self.texture.as_uniform_value());
-        visit("color", Vec4(self.color));
     }
 }
 
 pub struct Uniforms2D<'a> {
     pub m: Matrix3,
     pub texture: glium::uniforms::Sampler<'a, glium::Texture2d>,
-    pub color: [f32; 4],
     pub frac_dash: f32,
 }
 
@@ -168,7 +165,6 @@ impl glium::uniforms::Uniforms for Uniforms2D<'_> {
 
         visit("m", Mat3(array3x3(self.m)));
         visit("tex", self.texture.as_uniform_value());
-        visit("color", Vec4(self.color));
         visit("frac_dash", Float(self.frac_dash));
     }
 }
@@ -183,7 +179,6 @@ pub struct MVertex3D {
 
 impl glium::Vertex for MVertex3D {
     fn build_bindings() -> glium::VertexFormat {
-        use std::borrow::Cow::Borrowed;
         Borrowed(
             &[
                 (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32F32, false),
@@ -196,18 +191,37 @@ impl glium::Vertex for MVertex3D {
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
+pub struct MVertex3DLine {
+    pub pos: Vector3,
+    pub color: [f32; 4],
+}
+
+impl glium::Vertex for MVertex3DLine {
+    fn build_bindings() -> glium::VertexFormat {
+        Borrowed(
+            &[
+                (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32F32, false),
+                (Borrowed("color"), 4*3, glium::vertex::AttributeType::F32F32F32F32, false),
+            ]
+        )
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
 pub struct MVertex2D {
     pub pos: Vector2,
     pub uv: Vector2,
+    pub color: [f32; 4],
 }
 
 impl glium::Vertex for MVertex2D {
     fn build_bindings() -> glium::VertexFormat {
-        use std::borrow::Cow::Borrowed;
         Borrowed(
             &[
                 (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32, false),
                 (Borrowed("uv"), 4*2, glium::vertex::AttributeType::F32F32, false),
+                (Borrowed("color"), 4*4, glium::vertex::AttributeType::F32F32F32F32, false),
             ]
         )
     }
@@ -221,10 +235,29 @@ pub struct MVertexQuad {
 
 impl glium::Vertex for MVertexQuad {
     fn build_bindings() -> glium::VertexFormat {
-        use std::borrow::Cow::Borrowed;
         Borrowed(
             &[
                 (Borrowed("pos"), 0, glium::vertex::AttributeType::F32F32, false),
+            ]
+        )
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct MStatus {
+    pub status: [f32; 4],
+}
+
+pub const MSTATUS_UNSEL: MStatus = MStatus { status: [0.0, 0.0, 0.0, 0.0]};
+pub const MSTATUS_SEL: MStatus = MStatus { status: [0.0, 0.0, 1.0, 0.5]};
+pub const MSTATUS_HI: MStatus = MStatus { status: [1.0, 0.0, 0.0, 0.75]};
+
+impl glium::Vertex for MStatus {
+    fn build_bindings() -> glium::VertexFormat {
+        Borrowed(
+            &[
+                (Borrowed("status"), 0, glium::vertex::AttributeType::F32F32F32F32, false),
             ]
         )
     }

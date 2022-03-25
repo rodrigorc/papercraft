@@ -44,6 +44,9 @@ impl Plane {
             base_y: v0.cross(normal).normalize(),
         }
     }
+    pub fn normal(&self) -> Vector3 {
+        self.base_x.cross(self.base_y)
+    }
 }
 
 // Each returned tuple is a triangle of indices into the original vector
@@ -267,9 +270,9 @@ pub fn point_line_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
 pub fn point_segment_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
     let (o, d) = point_line_distance(p, line);
     if o < 0.0 {
-        (0.0, 10000.0)//(0.0, (p - line.0).magnitude())
+        (0.0, (p - line.0).magnitude())
     } else if o > 1.0 {
-        (1.0, 10000.0)//(1.0, (p - line.1).magnitude())
+        (1.0, (p - line.1).magnitude())
     } else {
         (o, d)
     }

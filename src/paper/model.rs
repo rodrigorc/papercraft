@@ -1,6 +1,7 @@
 use std::collections::{HashSet, HashMap};
 
-use cgmath::InnerSpace;
+use cgmath::{InnerSpace, Rad, Angle};
+use serde::{Serialize, Deserialize};
 
 use crate::waveobj;
 use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3};
@@ -8,15 +9,19 @@ use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3};
 // We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
 // 32-bit indices should be enough for everybody ;-)
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Model {
+    #[serde(rename="vs")]
     vertices: Vec<Vertex>,
+    #[serde(rename="es")]
     edges: Vec<Edge>,
+    #[serde(rename="fs")]
     faces: Vec<Face>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
+#[serde(transparent)]
 pub struct VertexIndex(u32);
 
 //unsafe: VertexIndex is a transparent u32
@@ -32,8 +37,9 @@ impl From<VertexIndex> for usize {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
+#[serde(transparent)]
 pub struct EdgeIndex(u32);
 
 impl From<EdgeIndex> for usize {
@@ -47,8 +53,9 @@ impl From<usize> for EdgeIndex {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
+#[serde(transparent)]
 pub struct FaceIndex(u32);
 
 impl From<FaceIndex> for usize {
@@ -57,23 +64,29 @@ impl From<FaceIndex> for usize {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Face {
+    #[serde(rename="vs")]
     vertices: [VertexIndex; 3],
+    #[serde(rename="es")]
     edges: [EdgeIndex; 3],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Edge {
     v0: VertexIndex,
     v1: VertexIndex,
+    #[serde(rename="fs")]
     faces: Vec<(FaceIndex, bool)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Vertex {
+    #[serde(rename="p", with="super::ser::vector3")]
     pos: Vector3,
+    #[serde(rename="n", with="super::ser::vector3")]
     normal: Vector3,
+    #[serde(rename="t", with="super::ser::vector2")]
     uv: Vector2,
 }
 
@@ -196,11 +209,14 @@ impl Model {
     pub fn num_edges(&self) -> usize {
         self.edges.len()
     }
+    pub fn num_faces(&self) -> usize {
+        self.faces.len()
+    }
     pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
         let v0 = self[edge.v0()].pos();
         let v1 = self[edge.v1()].pos();
-        let plane_a = face_a.normal(self);
-        let plane_b = face_b.normal(self);
+        let plane_a = face_a.plane(self);
+        let plane_b = face_b.plane(self);
         let a0 = plane_a.project(&v0);
         let b0 = plane_b.project(&v0);
         let a1 = plane_a.project(&v1);
@@ -209,6 +225,27 @@ impl Model {
         let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
         let mabt1 = Matrix3::from_translation(a0);
         mabt1 * mabr * mabt0
+    }
+    pub fn edge_angle(&self, i_edge: EdgeIndex) -> Rad<f32> {
+        let edge = &self[i_edge];
+        let face: Vec<FaceIndex> = edge.faces().collect();
+        match &face[..] {
+            &[fa, fb] => {
+                let fa = &self[fa];
+                let fb = &self[fb];
+                let na = fa.plane(self).normal();
+                let nb = fb.plane(self).normal();
+
+                let i_va = fa.opposite_edge(i_edge);
+                let pos_va = &self[i_va].pos();
+                let i_vb = fb.opposite_edge(i_edge);
+                let pos_vb = &self[i_vb].pos();
+
+                let sign = na.dot(pos_vb - pos_va).signum();
+                Rad(sign * nb.angle(na).0)
+            }
+            _ => Rad::full_turn() / 2.0, //180 degrees
+        }
     }
 }
 
@@ -243,14 +280,14 @@ impl Face {
     pub fn index_edges(&self) -> [EdgeIndex; 3] {
         self.edges
     }
-    pub fn normal(&self, model: &Model) -> util_3d::Plane {
+    pub fn plane(&self, model: &Model) -> util_3d::Plane {
         util_3d::Plane::from_tri([
             model[self.vertices[0]].pos(),
             model[self.vertices[1]].pos(),
             model[self.vertices[2]].pos(),
         ])
     }
-    pub fn edges_with_vertices(&self) -> impl Iterator<Item = (VertexIndex, VertexIndex, EdgeIndex)> + '_ {
+    pub fn vertices_with_edges(&self) -> impl Iterator<Item = (VertexIndex, VertexIndex, EdgeIndex)> + '_ {
         self.edges
             .iter()
             .copied()
@@ -260,6 +297,10 @@ impl Face {
                 let v1 = self.vertices[(i + 1) % self.vertices.len()];
                 (v0, v1, e)
             })
+    }
+    pub fn opposite_edge(&self, i_edge: EdgeIndex) -> VertexIndex {
+        let i = self.edges.iter().position(|e| *e == i_edge).unwrap();
+        self.vertices[(i + 2) % 3]
     }
 }
 

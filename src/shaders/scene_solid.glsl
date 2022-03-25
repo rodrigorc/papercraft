@@ -7,9 +7,11 @@ uniform vec3 lights[2];
 in vec3 pos;
 in vec3 normal;
 in vec2 uv;
+in vec4 status;
 
 out vec2 v_uv;
 out float v_light;
+out vec4 v_status;
 
 void main(void) {
     gl_Position = m * vec4(pos, 1.0);
@@ -22,6 +24,10 @@ void main(void) {
     }
     v_light = light;
     v_uv = uv;
+    v_status = status;
+    if (status.a != 0.0) {
+        gl_Position.z = 0.0;
+    }
 }
 
 ###
@@ -33,6 +39,7 @@ uniform vec4 color;
 
 in vec2 v_uv;
 in float v_light;
+in vec4 v_status;
 out vec4 out_frag_color;
 
 void main(void) {
@@ -40,13 +47,11 @@ void main(void) {
 
     if (gl_FrontFacing)
     {
-        base = mix(texture2D(tex, v_uv), color, color.a);
+        base = mix(texture2D(tex, v_uv), vec4(v_status.rgb, 1.0), v_status.a);
     }
     else
     {
         base = vec4(0.8, 0.3, 0.3, 1.0);
     }
-
-
     out_frag_color = vec4(v_light * base.rgb, base.a);
 }

@@ -63,6 +63,11 @@ impl From<FaceIndex> for usize {
         idx.0 as usize
     }
 }
+impl From<usize> for FaceIndex {
+    fn from(idx: usize) -> FaceIndex {
+        FaceIndex(idx as u32)
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Face {

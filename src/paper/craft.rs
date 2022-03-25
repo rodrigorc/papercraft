@@ -74,10 +74,13 @@ impl Papercraft {
                 pos_x = 0.0;
             }
 
-            let island = Island {
+            let mut island = Island {
                 root,
-                mx: Matrix3::from_translation(pos),
+                loc: pos,
+                rot: Rad::zero(),
+                mx: Matrix3::one(),
             };
+            island.recompute_matrix();
             islands.insert(island);
         }
 
@@ -149,8 +152,11 @@ impl Papercraft {
 
                 let mut new_island = Island {
                     root: new_root,
-                    mx,
+                    loc: dbg!(Vector2::new(mx[2][0], mx[2][1])),
+                    rot: Rad(mx[0][1].atan2(mx[0][0])),
+                    mx: Matrix3::one(),
                 };
+                new_island.recompute_matrix();
 
                 //Compute the offset
                 let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
@@ -164,12 +170,10 @@ impl Papercraft {
 
                 //priority_face makes no sense when doing a split, so pass None here unconditionally
                 if self.compare_islands(&self.islands[i_island], &new_island, None) {
-                    let offs = Matrix3::from_translation(-sign * Vector2::new(-v.y, v.x));
                     let island = &mut self.islands[i_island];
-                    island.mx = offs * island.mx;
+                    island.translate(-sign * Vector2::new(-v.y, v.x));
                 } else {
-                    let offs = Matrix3::from_translation(sign * Vector2::new(-v.y, v.x));
-                    new_island.mx = offs * new_island.mx;
+                    new_island.translate(sign * Vector2::new(-v.y, v.x));
                 }
                 self.islands.insert(new_island);
             }
@@ -296,10 +300,12 @@ impl Papercraft {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Island {
     root: FaceIndex,
-    #[serde(with="super::ser::matrix3", flatten)]
+
+    rot: Rad<f32>,
+    loc: Vector2,
     mx: Matrix3,
 }
 
@@ -311,10 +317,17 @@ impl Island {
         self.mx
     }
     pub fn translate(&mut self, delta: Vector2) {
-        self.mx = Matrix3::from_translation(delta) * self.mx;
+        self.loc += delta;
+        self.recompute_matrix();
     }
     pub fn rotate(&mut self, angle: impl Into<Rad<f32>>) {
-        self.mx = self.mx * Matrix3::from(cgmath::Matrix2::from_angle(angle));
+        self.rot = (self.rot + angle.into()).normalize();
+        self.recompute_matrix();
+    }
+    fn recompute_matrix(&mut self) {
+        let r = Matrix3::from(cgmath::Matrix2::from_angle(self.rot));
+        let t = Matrix3::from_translation(self.loc);
+        self.mx = t * r;
     }
 }
 
@@ -343,4 +356,35 @@ impl<'de> Deserialize<'de> for EdgeStatus {
         };
         Ok(res)
     }
+}
+
+impl Serialize for Island {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let mut map = serializer.serialize_struct("Island", 4)?;
+        map.serialize_field("root", &usize::from(self.root))?;
+        map.serialize_field("x", &self.loc.x)?;
+        map.serialize_field("y", &self.loc.y)?;
+        map.serialize_field("r", &self.rot.0)?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Island {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: serde::Deserializer<'de>
+    {
+        #[derive(Deserialize)]
+        struct Def { root: usize, x: f32, y: f32, r: f32 }
+        let d = Def::deserialize(deserializer)?;
+        let mut island = Island {
+            root: FaceIndex::from(d.root),
+            loc: Vector2::new(d.x, d.y),
+            rot: Rad(d.r),
+            mx: Matrix3::one(),
+        };
+        island.recompute_matrix();
+        Ok(island)
+}
 }

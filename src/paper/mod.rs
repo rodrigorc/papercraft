@@ -71,30 +71,4 @@ mod ser {
             Ok(map)
         }
     }
-    pub mod matrix3 {
-        use cgmath::Rad;
-
-        use super::*;
-        pub fn serialize<S>(data: &Matrix3, serializer: S) -> Result<S::Ok, S::Error>
-            where S: serde::Serializer
-        {
-            let mut map = serializer.serialize_struct("Island", 3)?;
-            let r = data[0][1].atan2(data[0][0]);
-            map.serialize_field("x", &data[2][0])?;
-            map.serialize_field("y", &data[2][1])?;
-            map.serialize_field("r", &r)?;
-            map.end()
-        }
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<Matrix3, D::Error>
-            where D: serde::Deserializer<'de>
-        {
-            #[derive(Deserialize)]
-            struct Def { x: f32, y: f32, r: f32 }
-            let d = Def::deserialize(deserializer)?;
-            let r = Matrix3::from(Matrix2::from_angle(Rad(d.r)));
-            let t = Matrix3::from_translation(Vector2::new(d.x, d.y));
-            Ok(t * r)
-        }
-    }
-
 }

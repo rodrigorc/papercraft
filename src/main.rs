@@ -1,5 +1,3 @@
-//#![allow(unused_variables, unreachable_code, unused_imports, dead_code)]
-
 use cgmath::{
     prelude::*,
     Deg, Rad,
@@ -25,6 +23,8 @@ use paper::Papercraft;
 
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3};
 use util_gl::{GdkGliumBackend, Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, DynamicVertexBuffer, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine};
+
+use crate::util_3d::Matrix2;
 
 fn main() {
     std::env::set_var("GTK_CSD", "0");
@@ -393,6 +393,8 @@ struct GLObjects {
     paper_vertex_buf: DynamicVertexBuffer<MVertex2D>,
     paper_vertex_edge_buf: DynamicVertexBuffer<MVertex2D>,
     paper_vertex_edge_sel_buf: DynamicVertexBuffer<MVertex2D>,
+    paper_vertex_tab_buf: DynamicVertexBuffer<MVertex2D>,
+    paper_vertex_tab_edge_buf: DynamicVertexBuffer<MVertex2D>,
 
     #[allow(dead_code)]
     quad_vertex_buf: glium::VertexBuffer<MVertexQuad>,
@@ -486,6 +488,8 @@ struct PaperDrawFaceArgs {
     vertices: Vec<MVertex2D>,
     vertices_edge: Vec<MVertex2D>,
     vertices_edge_sel: Vec<MVertex2D>,
+    vertices_tab_buf: Vec<MVertex2D>,
+    vertices_tab_edge_buf: Vec<MVertex2D>,
 }
 
 impl MyContext {
@@ -746,13 +750,15 @@ impl MyContext {
             }
         }
 
-        let vertex_buf = glium::VertexBuffer::immutable(gl, &vertices).unwrap();
-        let vertex_buf_sel = glium::VertexBuffer::persistent(gl, &vec![MSTATUS_UNSEL; vertices.len()]).unwrap();
-        let vertex_edges_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2);
+        let vertex_buf = glium::VertexBuffer::immutable(gl, &vertices).unwrap(); // 1 value per vertex
+        let vertex_buf_sel = glium::VertexBuffer::persistent(gl, &vec![MSTATUS_UNSEL; vertices.len()]).unwrap(); // 1 value per vertex
+        let vertex_edges_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2); // one line per edge
 
-        let paper_vertex_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_faces() * 3);
-        let paper_vertex_edge_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2 * 2);
-        let paper_vertex_edge_sel_buf = DynamicVertexBuffer::new(gl, 6);
+        let paper_vertex_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_faces() * 3); // 1 tri per face
+        let paper_vertex_edge_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2 * 2); // 2 lines per cut edge
+        let paper_vertex_edge_sel_buf = DynamicVertexBuffer::new(gl, 6); // 3 lines
+        let paper_vertex_tab_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2 * 3); // 2 tris per edge
+        let paper_vertex_tab_edge_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 3 * 2); // 3 lines per edge
 
         let quad_vertex_buf = glium::VertexBuffer::immutable(gl,
             &[
@@ -774,6 +780,9 @@ impl MyContext {
             paper_vertex_buf,
             paper_vertex_edge_buf,
             paper_vertex_edge_sel_buf,
+            paper_vertex_tab_buf,
+            paper_vertex_tab_edge_buf,
+
             quad_vertex_buf,
         };
 
@@ -797,23 +806,24 @@ impl MyContext {
 
         for (v0, v1, i_edge) in face.vertices_with_edges() {
             let edge = &self.papercraft.model()[i_edge];
-            let draw = match self.papercraft.edge_status(i_edge) {
+            let edge_status = self.papercraft.edge_status(i_edge);
+            let draw = match edge_status {
                 paper::EdgeStatus::Hidden => false,
                 paper::EdgeStatus::Cut => true,
                 paper::EdgeStatus::Joined => edge.face_sign(i_face),
             };
+            let plane = face.plane(self.papercraft.model());
             let selected_edge = self.selected_edge == Some(i_edge);
-            let draw = draw || selected_edge;
-            if draw {
-                let v0 = &self.papercraft.model()[v0];
-                let p0 = face.plane(self.papercraft.model()).project(&v0.pos());
-                let pos0 = m.transform_point(Point2::from_vec(p0)).to_vec();
+            let v0 = &self.papercraft.model()[v0];
+            let p0 = plane.project(&v0.pos());
+            let pos0 = m.transform_point(Point2::from_vec(p0)).to_vec();
 
-                let v1 = &self.papercraft.model()[v1];
-                let p1 = face.plane(self.papercraft.model()).project(&v1.pos());
-                let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
+            let v1 = &self.papercraft.model()[v1];
+            let p1 = plane.project(&v1.pos());
+            let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
 
-                let angle = self.papercraft.model().edge_angle(i_edge);
+            if draw || selected_edge {
+                let angle_3d = self.papercraft.model().edge_angle(i_edge);
 
                 args.vertices_edge.push(MVertex2D {
                     pos: pos0,
@@ -822,22 +832,97 @@ impl MyContext {
                 });
                 args.vertices_edge.push(MVertex2D {
                     pos: pos1,
-                    uv: Vector2::new(if angle < Rad(0.0) { (pos1 - pos0).magnitude() * 100.0 } else { 0.0 }, 0.0),
+                    uv: Vector2::new(if angle_3d < Rad(0.0) { (pos1 - pos0).magnitude() * 100.0 } else { 0.0 }, 0.0),
                     color: [0.0, 0.0, 0.0, 1.0],
                 });
 
                 if selected_edge {
                     args.vertices_edge_sel.push(MVertex2D {
                         pos: pos0,
-                        uv: Vector2::new(0.0, 0.0),
+                        uv: Vector2::zero(),
                         color: [0.5, 0.5, 1.0, 1.0],
                     });
                     args.vertices_edge_sel.push(MVertex2D {
                         pos: pos1,
-                        uv: Vector2::new(0.0, 0.0),
+                        uv: Vector2::zero(),
                         color: [0.5, 0.5, 1.0, 1.0],
                     });
                     }
+            }
+
+            if edge_status == paper::EdgeStatus::Cut && edge.face_sign(i_face) {
+                const TAB: f32 = 0.02;
+                let v = pos1 - pos0;
+
+                let v_len = v.magnitude();
+                let short_len = v_len - 2.0 * TAB;
+                let tab = if short_len < 0.0 {
+                    v_len / 2.0
+                } else {
+                    TAB
+                };
+                let v = v * (tab / v_len);
+                let n = Vector2::new(-v.y, v.x);
+                let mut p = [
+
+                    MVertex2D {
+                        pos: pos0,
+                        uv: Vector2::zero(),
+                        color: [0.0, 0.0, 0.0, 1.0],
+                    },
+                    MVertex2D {
+                        pos: pos0 + n + v,
+                        uv: Vector2::zero(),
+                        color: [0.0, 0.0, 0.0, 1.0],
+                    },
+                    MVertex2D {
+                        pos: pos1 + n - v,
+                        uv: Vector2::zero(),
+                        color: [0.0, 0.0, 0.0, 1.0],
+                    },
+                    MVertex2D {
+                        pos: pos1,
+                        uv: Vector2::zero(),
+                        color: [0.0, 0.0, 0.0, 1.0],
+                    },
+                ];
+                args.vertices_tab_edge_buf.extend([p[0], p[1], p[1], p[2], p[2], p[3]]);
+
+                //Now we have to compute the texture coordinates of `p` in the adjacent face
+                let i_face_b = edge.faces().filter(|f| *f != i_face).next().unwrap();
+                let face_b = &self.papercraft.model()[i_face_b];
+                let plane_b = face_b.plane(self.papercraft.model());
+                let vs_b = face_b.index_vertices().map(|v| {
+                    let v = &self.papercraft.model()[v];
+                    let p = plane_b.project(&v.pos());
+                    (v, p)
+                });
+                let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(edge, face, face_b);
+                let mx_b_inv = mx_b.invert().unwrap();
+                let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
+
+                // mx_b_inv converts from paper to local face_b coordinates
+                // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
+                // mxx do both convertions at once
+                let mxx = Matrix3::from(mx_basis) * mx_b_inv;
+                let uv_b = p.map(|px| {
+                    //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
+                    let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
+                    let uv0 = vs_b[0].0.uv();
+                    let uv1 = vs_b[1].0.uv();
+                    let uv2 = vs_b[2].0.uv();
+                    uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
+                });
+
+                p[0].uv = uv_b[0];
+                p[0].color = [1.0, 1.0, 1.0, 0.0];
+                p[1].uv = uv_b[1];
+                p[1].color = [1.0, 1.0, 1.0, 1.0];
+                p[2].uv = uv_b[2];
+                p[2].color = [1.0, 1.0, 1.0, 1.0];
+                p[3].uv = uv_b[3];
+                p[3].color = [1.0, 1.0, 1.0, 0.0];
+                args.vertices_tab_buf.extend([p[0], p[2], p[1], p[0], p[3], p[2]]);
             }
         }
     }
@@ -881,6 +966,8 @@ impl MyContext {
             gl_objs.paper_vertex_buf.update(&args.vertices);
             gl_objs.paper_vertex_edge_buf.update(&args.vertices_edge);
             gl_objs.paper_vertex_edge_sel_buf.update(&args.vertices_edge_sel);
+            gl_objs.paper_vertex_tab_buf.update(&args.vertices_tab_buf);
+            gl_objs.paper_vertex_tab_edge_buf.update(&args.vertices_tab_edge_buf);
         }
     }
 
@@ -969,12 +1056,19 @@ impl MyContext {
         // Textured faces
         frm.draw(&gl_objs.paper_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_paper_solid, &u, &dp).unwrap();
 
-        // Lines
+        // Solid Tabs
+        frm.draw(&gl_objs.paper_vertex_tab_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_paper_solid, &u, &dp).unwrap();
+
+        // Line Tabs
         dp.line_width = Some(1.0);
         dp.smooth = Some(glium::Smooth::Nicest);
+        frm.draw(&gl_objs.paper_vertex_tab_edge_buf, &glium::index::NoIndices(glium::index::PrimitiveType::LinesList), &gl_objs.prg_paper_line, &u, &dp).unwrap();
+
+        // Creases
         dp.stencil.depth_pass_operation_counter_clockwise = glium::StencilOperation::Keep;
         frm.draw(&gl_objs.paper_vertex_edge_buf, &glium::index::NoIndices(glium::index::PrimitiveType::LinesList), &gl_objs.prg_paper_line, &u, &dp).unwrap();
 
+        // - Selected edge
         if self.selected_edge.is_some() {
             dp.line_width = Some(5.0);
             u.frac_dash = 0.5;

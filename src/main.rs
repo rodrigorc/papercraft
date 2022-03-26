@@ -656,20 +656,19 @@ impl MyContext {
                     let island = self.papercraft.island_by_key(island).unwrap();
 
                     let mut vertex_buf_sel = gl_objs.vertex_buf_sel.as_mut_slice().map_write();
-                    self.papercraft.traverse_faces(island, |i_face_2, _, _,| {
+                    self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
                         let pos = 3 * usize::from(i_face_2);
                         for i in pos .. pos + 3 {
                             vertex_buf_sel.set(i, MSTATUS_SEL);
                         }
                         ControlFlow::Continue(())
                     });
-                    self.papercraft.traverse_faces_flat(i_face, |i_face_2, _, _,| {
+                    for i_face_2 in self.papercraft.get_flat_faces(i_face) {
                         let pos = 3 * usize::from(i_face_2);
                         for i in pos .. pos + 3 {
                             vertex_buf_sel.set(i, MSTATUS_HI);
                         }
-                        ControlFlow::Continue(())
-                    });
+                    }
                 }
             }
             ClickResult::Edge(i_edge, _) => {
@@ -932,18 +931,17 @@ impl MyContext {
         let mut args = PaperDrawFaceArgs::default();
 
         for (_, island) in self.papercraft.islands() {
-            let selected = if let Some(sel) = self.selected_face {
-                self.papercraft.contains_face(island, sel)
+            let (selected, flat_sel) = if let Some(sel) = self.selected_face {
+                (
+                    self.papercraft.contains_face(island, sel),
+                    self.papercraft.get_flat_faces(sel),
+                )
             } else {
-                false
+                (false, Default::default())
             };
             self.papercraft.traverse_faces(island,
                 |i_face, face, mx| {
-                    let hi = if let Some(sel) = self.selected_face {
-                        self.papercraft.are_flat_faces(i_face, sel)
-                    } else {
-                        false
-                    };
+                    let hi = flat_sel.contains(&i_face);
                     self.paper_draw_face(face, i_face, mx, selected, hi, &mut args);
                     ControlFlow::Continue(())
                 }

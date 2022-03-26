@@ -50,18 +50,19 @@ impl Papercraft {
         let mut islands = SlotMap::with_key();
         while let Some(root) = pending_faces.iter().copied().next() {
             pending_faces.remove(&root);
+
+            //Compute the bounding box of the flat face, since Self is not yet build, we have to use the traverse_faces_ex() version directly
             let mut vx = Vec::new();
-            Self::traverse_faces_ex(&model, root, Matrix3::one(), |i_face, face, mx| {
-                pending_faces.remove(&i_face);
-                let normal = face.plane(&model);
-                vx.extend(face.index_vertices().map(|v| {
-                    mx.transform_point(Point2::from_vec(normal.project(&model[v].pos()))).to_vec()
-                }));
-                ControlFlow::Continue(())
-            },
-            |i_edge| {
-                edges[usize::from(i_edge)] != EdgeStatus::Cut
-            });
+            traverse_faces_ex(&model, root, Matrix3::one(), NormalTraverseFace(&model, &edges),
+                |i_face, face, mx| {
+                    pending_faces.remove(&i_face);
+                    let normal = face.plane(&model);
+                    vx.extend(face.index_vertices().map(|v| {
+                        mx.transform_point(Point2::from_vec(normal.project(&model[v].pos()))).to_vec()
+                    }));
+                    ControlFlow::Continue(())
+                }
+            );
 
             let bbox = bounding_box_2d(vx);
             let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
@@ -208,15 +209,15 @@ impl Papercraft {
             }
         }
         let (mut weight_a, mut weight_b) = (0, 0);
-        self.traverse_faces(a, |_,_,_| { weight_a += 1; ControlFlow::Continue(()) });
-        self.traverse_faces(b, |_,_,_| { weight_b += 1; ControlFlow::Continue(()) });
+        self.traverse_faces_no_matrix(a, |_| { weight_a += 1; ControlFlow::Continue(()) });
+        self.traverse_faces_no_matrix(b, |_| { weight_b += 1; ControlFlow::Continue(()) });
         weight_b > weight_a
     }
 
     pub fn contains_face(&self, island: &Island, face: FaceIndex) -> bool {
         let mut found = false;
-        self.traverse_faces(island,
-            |i_face, _, _|
+        self.traverse_faces_no_matrix(island,
+            |i_face|
                 if i_face == face {
                     found = true;
                     ControlFlow::Break(())
@@ -227,76 +228,114 @@ impl Papercraft {
         found
     }
 
-    pub fn are_flat_faces(&self, i_face_a: FaceIndex, i_face_b: FaceIndex) -> bool {
-        let mut found = false;
-        self.traverse_faces_flat(i_face_a,
-            |i_face, _, _|
-                if i_face == i_face_b {
-                    found = true;
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                }
-            );
-        found
-    }
-
-    fn traverse_faces_ex<F, E>(model: &Model, root: FaceIndex, mx_root: Matrix3, mut visit_face: F, mut cross_edge: E) -> ControlFlow<()>
-        where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>,
-              E: FnMut(EdgeIndex) -> bool,
-    {
-        let mut visited_faces = HashSet::new();
-        let mut stack = vec![(root, mx_root)];
-        visited_faces.insert(root);
-
-        while let Some((i_face, m)) = stack.pop() {
-            let face = &model[i_face];
-            visit_face(i_face, face, &m)?;
-            for i_edge in face.index_edges() {
-                if !cross_edge(i_edge) {
-                    continue;
-                }
-                let edge = &model[i_edge];
-                for i_next_face in edge.faces() {
-                    if visited_faces.contains(&i_next_face) {
-                        continue;
-                    }
-
-                    let next_face = &model[i_next_face];
-                    let medge = model.face_to_face_edge_matrix(edge, face, next_face);
-
-                    stack.push((i_next_face, m * medge));
-                    visited_faces.insert(i_next_face);
-                }
+    pub fn get_flat_faces(&self, i_face: FaceIndex) -> HashSet<FaceIndex> {
+        let mut res = HashSet::new();
+        traverse_faces_ex(&self.model, i_face, (), FlatTraverseFace(self),
+            |i_next_face, _, _| {
+                res.insert(i_next_face);
+                ControlFlow::Continue(())
             }
-        };
-        ControlFlow::Continue(())
+        );
+        res
     }
+
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
     {
-        Self::traverse_faces_ex(&self.model, island.root_face(), island.matrix(),
-            visit_face,
-            |i_edge| {
-                match self.edge_status(i_edge) {
-                    EdgeStatus::Cut => false,
-                    EdgeStatus::Joined |
-                    EdgeStatus::Hidden => true,
-                }
-            })
+        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self.model, &self.edges), visit_face)
     }
-    pub fn traverse_faces_flat<F>(&self, i_face: FaceIndex, visit_face: F) -> ControlFlow<()>
-        where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
+    pub fn traverse_faces_no_matrix<F>(&self, island: &Island, mut visit_face: F) -> ControlFlow<()>
+        where F: FnMut(FaceIndex) -> ControlFlow<()>
     {
-        Self::traverse_faces_ex(&self.model, i_face, Matrix3::one(),
-            visit_face,
-            |i_edge| {
-                match self.edge_status(i_edge) {
-                    EdgeStatus::Joined |
-                    EdgeStatus::Cut => false,
-                    EdgeStatus::Hidden => true,
+        traverse_faces_ex(&self.model, island.root_face(), (), NoMatrixTraverseFace(&self.model, &self.edges), |i, _, ()| visit_face(i))
+    }
+}
+
+fn traverse_faces_ex<F, TP>(model: &Model, root: FaceIndex, initial_state: TP::State, policy: TP, mut visit_face: F) -> ControlFlow<()>
+where F: FnMut(FaceIndex, &Face, &TP::State) -> ControlFlow<()>,
+      TP: TraverseFacePolicy,
+{
+    let mut visited_faces = HashSet::new();
+    let mut stack = vec![(root, initial_state)];
+    visited_faces.insert(root);
+
+    while let Some((i_face, m)) = stack.pop() {
+        let face = &model[i_face];
+        visit_face(i_face, face, &m)?;
+        for i_edge in face.index_edges() {
+            if !policy.cross_edge(i_edge) {
+                continue;
+            }
+            let edge = &model[i_edge];
+            for i_next_face in edge.faces() {
+                if visited_faces.contains(&i_next_face) {
+                    continue;
                 }
-            })
+                let next_state = policy.next_state(&m, edge, face, i_next_face);
+                stack.push((i_next_face, next_state));
+                visited_faces.insert(i_next_face);
+            }
+        }
+    };
+    ControlFlow::Continue(())
+}
+
+trait TraverseFacePolicy {
+    type State;
+    fn cross_edge(&self, i_edge: EdgeIndex) -> bool;
+    fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State;
+}
+struct NormalTraverseFace<'a>(&'a Model, &'a [EdgeStatus]);
+
+impl TraverseFacePolicy for NormalTraverseFace<'_> {
+    type State = Matrix3;
+
+    fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
+        match self.1[usize::from(i_edge)] {
+            EdgeStatus::Cut => false,
+            EdgeStatus::Joined |
+            EdgeStatus::Hidden => true,
+        }
+    }
+
+    fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
+        let next_face = &self.0[i_next_face];
+        let medge = self.0.face_to_face_edge_matrix(edge, face, next_face);
+        st * medge
+    }
+}
+
+struct NoMatrixTraverseFace<'a>(&'a Model, &'a [EdgeStatus]);
+
+impl TraverseFacePolicy for NoMatrixTraverseFace<'_> {
+    type State = ();
+
+    fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
+        match self.1[usize::from(i_edge)] {
+            EdgeStatus::Cut => false,
+            EdgeStatus::Joined |
+            EdgeStatus::Hidden => true,
+        }
+    }
+
+    fn next_state(&self, _st: &Self::State, _edge: &Edge, _face: &Face, _i_next_face: FaceIndex) -> Self::State {
+    }
+}
+
+struct FlatTraverseFace<'a>(&'a Papercraft);
+
+impl TraverseFacePolicy for FlatTraverseFace<'_> {
+    type State = ();
+
+    fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
+        match self.0.edge_status(i_edge) {
+            EdgeStatus::Joined |
+            EdgeStatus::Cut => false,
+            EdgeStatus::Hidden => true,
+        }
+    }
+
+    fn next_state(&self, _st: &Self::State, _edge: &Edge, _face: &Face, _i_next_face: FaceIndex) -> Self::State {
     }
 }
 

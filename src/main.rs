@@ -149,7 +149,7 @@ fn main() {
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
                 let selection = ctx.analyze_click(ev.position());
                 if let ClickResult::Edge(i_edge, priority_face) = selection {
-                    ctx.papercraft.edge_toggle(i_edge, priority_face);
+                    ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
                     ctx.paper_build();
                     ctx.scene_edge_build();
                     ctx.wscene.queue_render();
@@ -285,8 +285,9 @@ fn main() {
                     ctx.grabbed_island = Some(i_island);
                 } else {
                     ctx.grabbed_island = None;
-                    if let ClickResult::Edge(i_edge, priority_face) = selection {
-                        ctx.papercraft.edge_toggle(i_edge, priority_face);
+                    if let ClickResult::Edge(i_edge, _priority_face) = selection {
+                        //ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
+                        ctx.papercraft.edge_toggle_tab(i_edge);
                         ctx.paper_build();
                         ctx.scene_edge_build();
                         ctx.wscene.queue_render();
@@ -808,7 +809,7 @@ impl MyContext {
             let edge_status = self.papercraft.edge_status(i_edge);
             let draw = match edge_status {
                 paper::EdgeStatus::Hidden => false,
-                paper::EdgeStatus::Cut => true,
+                paper::EdgeStatus::Cut(_) => true,
                 paper::EdgeStatus::Joined => edge.face_sign(i_face),
             };
             let plane = face.plane(self.papercraft.model());
@@ -821,9 +822,16 @@ impl MyContext {
             let p1 = plane.project(&v1.pos());
             let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
 
-            if draw || selected_edge {
-                let angle_3d = self.papercraft.model().edge_angle(i_edge);
-
+            if draw {
+                //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
+                //cut with a label
+                let dotted = if edge_status == paper::EdgeStatus::Joined ||
+                                edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) {
+                    let angle_3d = self.papercraft.model().edge_angle(i_edge);
+                    angle_3d < Rad(0.0)
+                } else {
+                    false
+                };
                 args.vertices_edge.push(MVertex2D {
                     pos: pos0,
                     uv: Vector2::zero(),
@@ -831,25 +839,25 @@ impl MyContext {
                 });
                 args.vertices_edge.push(MVertex2D {
                     pos: pos1,
-                    uv: Vector2::new(if angle_3d < Rad(0.0) { (pos1 - pos0).magnitude() * 100.0 } else { 0.0 }, 0.0),
+                    uv: Vector2::new(if dotted { (pos1 - pos0).magnitude() * 100.0 } else { 0.0 }, 0.0),
                     color: [0.0, 0.0, 0.0, 1.0],
                 });
-
-                if selected_edge {
-                    args.vertices_edge_sel.push(MVertex2D {
-                        pos: pos0,
-                        uv: Vector2::zero(),
-                        color: [0.5, 0.5, 1.0, 1.0],
-                    });
-                    args.vertices_edge_sel.push(MVertex2D {
-                        pos: pos1,
-                        uv: Vector2::zero(),
-                        color: [0.5, 0.5, 1.0, 1.0],
-                    });
-                    }
             }
 
-            if edge_status == paper::EdgeStatus::Cut && edge.face_sign(i_face) {
+            if selected_edge {
+                args.vertices_edge_sel.push(MVertex2D {
+                    pos: pos0,
+                    uv: Vector2::zero(),
+                    color: [0.5, 0.5, 1.0, 1.0],
+                });
+                args.vertices_edge_sel.push(MVertex2D {
+                    pos: pos1,
+                    uv: Vector2::zero(),
+                    color: [0.5, 0.5, 1.0, 1.0],
+                });
+            }
+
+            if edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) {
                 let i_face_b = edge.faces().filter(|f| *f != i_face).next().unwrap();
                 let face_b = &self.papercraft.model()[i_face_b];
                 //swap the angles because this is from the POV of the other face
@@ -1160,7 +1168,7 @@ impl MyContext {
                 if status == paper::EdgeStatus::Hidden {
                     continue;
                 }
-                let cut = self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Cut;
+                let cut = matches!(self.papercraft.edge_status(i_edge), paper::EdgeStatus::Cut(_));
                 let color = match (selected, cut) {
                     (true, false) => [0.0, 0.0, 1.0, 1.0],
                     (true, true) => [0.5, 0.5, 1.0, 1.0],

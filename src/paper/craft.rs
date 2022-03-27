@@ -9,9 +9,9 @@ use super::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EdgeStatus {
-    Joined,
-    Cut,
     Hidden,
+    Joined,
+    Cut(bool), //the tab will be drawn on the side with the same sign as this bool
 }
 new_key_type! {
     pub struct IslandKey;
@@ -27,7 +27,7 @@ pub struct Papercraft {
 
 impl Papercraft {
     pub fn new(model: Model, facemap: &HashMap<FaceIndex, u32>) -> Papercraft {
-        let mut edges = vec![EdgeStatus::Cut; model.num_edges()];
+        let mut edges = vec![EdgeStatus::Cut(false); model.num_edges()];
 
         for (i_edge, edge_status) in edges.iter_mut().enumerate() {
             let i_edge = EdgeIndex::from(i_edge);
@@ -117,7 +117,19 @@ impl Papercraft {
         self.edges[usize::from(edge)]
     }
 
-    pub fn edge_toggle(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) {
+    pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex) {
+        let n_faces = self.model()[i_edge].faces().count();
+        // brim edges cannot have a tab
+        if n_faces < 2 {
+            return;
+        }
+        match self.edges[usize::from(i_edge)]{
+            EdgeStatus::Cut(ref mut x) => *x = !*x,
+            _ => (),
+        }
+    }
+
+    pub fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) {
         let edge = &self.model[i_edge];
         let faces: Vec<_> = edge.faces().collect();
 
@@ -133,7 +145,7 @@ impl Papercraft {
                 //one of the edge faces will be the root of the new island, but we do not know which one, yet
                 let i_island = self.island_by_face(i_face_a);
 
-                self.edges[usize::from(i_edge)] = EdgeStatus::Cut;
+                self.edges[usize::from(i_edge)] = EdgeStatus::Cut(false);
 
                 let mut data_found = None;
                 self.traverse_faces(&self.islands[i_island],
@@ -178,7 +190,7 @@ impl Papercraft {
                 }
                 self.islands.insert(new_island);
             }
-            EdgeStatus::Cut => {
+            EdgeStatus::Cut(_) => {
                 let i_island_b = self.island_by_face(i_face_b);
                 if self.contains_face(&self.islands[i_island_b], i_face_a) {
                     // Same island on both sides, nothing to do
@@ -340,7 +352,7 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.1[usize::from(i_edge)] {
-            EdgeStatus::Cut => false,
+            EdgeStatus::Cut(_) => false,
             EdgeStatus::Joined |
             EdgeStatus::Hidden => true,
         }
@@ -360,7 +372,7 @@ impl TraverseFacePolicy for NoMatrixTraverseFace<'_> {
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.1[usize::from(i_edge)] {
-            EdgeStatus::Cut => false,
+            EdgeStatus::Cut(_) => false,
             EdgeStatus::Joined |
             EdgeStatus::Hidden => true,
         }
@@ -378,7 +390,7 @@ impl TraverseFacePolicy for FlatTraverseFace<'_> {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edge_status(i_edge) {
             EdgeStatus::Joined |
-            EdgeStatus::Cut => false,
+            EdgeStatus::Cut(_) => false,
             EdgeStatus::Hidden => true,
         }
     }
@@ -396,7 +408,7 @@ impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edge_status(i_edge) {
             EdgeStatus::Joined |
-            EdgeStatus::Cut => false,
+            EdgeStatus::Cut(_) => false,
             EdgeStatus::Hidden => true,
         }
     }
@@ -447,7 +459,8 @@ impl Serialize for EdgeStatus {
         let is = match self {
             EdgeStatus::Hidden => 0,
             EdgeStatus::Joined => 1,
-            EdgeStatus::Cut => 2,
+            EdgeStatus::Cut(false) => 2,
+            EdgeStatus::Cut(true) => 3,
         };
         serializer.serialize_i32(is)
     }
@@ -460,7 +473,8 @@ impl<'de> Deserialize<'de> for EdgeStatus {
         let res = match d {
             0 => EdgeStatus::Hidden,
             1 => EdgeStatus::Joined,
-            2 => EdgeStatus::Cut,
+            2 => EdgeStatus::Cut(false),
+            3 => EdgeStatus::Cut(true),
             _ => return Err(serde::de::Error::missing_field("invalid edge status")),
         };
         Ok(res)

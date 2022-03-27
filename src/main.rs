@@ -832,16 +832,29 @@ impl MyContext {
                 } else {
                     false
                 };
-                args.vertices_edge.push(MVertex2D {
+                let v = pos1 - pos0;
+                let mut v0 = MVertex2D {
                     pos: pos0,
                     uv: Vector2::zero(),
                     color: [0.0, 0.0, 0.0, 1.0],
-                });
-                args.vertices_edge.push(MVertex2D {
+                };
+                let mut v1 = MVertex2D {
                     pos: pos1,
-                    uv: Vector2::new(if dotted { (pos1 - pos0).magnitude() * 100.0 } else { 0.0 }, 0.0),
+                    uv: Vector2::zero(),
                     color: [0.0, 0.0, 0.0, 1.0],
-                });
+                };
+                if false && edge_status == paper::EdgeStatus::Joined {
+                    let vn = v.normalize_to(0.01);
+                    v0.pos -= vn;
+                    v1.pos += vn;
+                    let x = (0.015 / 2.0) / v.magnitude();
+                    v0.uv.x = 0.5 - x;
+                    v1.uv.x = 1.0 + x;
+                } else if dotted {
+                    v1.uv.x = v.magnitude() * 100.0;
+                }
+                args.vertices_edge.push(v0);
+                args.vertices_edge.push(v1);
             }
 
             if selected_edge {

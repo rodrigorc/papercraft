@@ -803,7 +803,7 @@ impl MyContext {
             });
         }
 
-        for (v0, v1, i_edge) in face.vertices_with_edges() {
+        for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
             let edge = &self.papercraft.model()[i_edge];
             let edge_status = self.papercraft.edge_status(i_edge);
             let draw = match edge_status {
@@ -813,11 +813,11 @@ impl MyContext {
             };
             let plane = face.plane(self.papercraft.model());
             let selected_edge = self.selected_edge == Some(i_edge);
-            let v0 = &self.papercraft.model()[v0];
+            let v0 = &self.papercraft.model()[i_v0];
             let p0 = plane.project(&v0.pos());
             let pos0 = m.transform_point(Point2::from_vec(p0)).to_vec();
 
-            let v1 = &self.papercraft.model()[v1];
+            let v1 = &self.papercraft.model()[i_v1];
             let p1 = plane.project(&v1.pos());
             let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
 
@@ -850,32 +850,84 @@ impl MyContext {
             }
 
             if edge_status == paper::EdgeStatus::Cut && edge.face_sign(i_face) {
+                let i_face_b = edge.faces().filter(|f| *f != i_face).next().unwrap();
+                let face_b = &self.papercraft.model()[i_face_b];
+                let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(edge, face, face_b);
+
+                let (angle_0, angle_1) = {
+                    let flat_face = self.papercraft.get_flat_faces_with_matrix(i_face_b, mx_b);
+                    let flat_contour: Vec<_> = flat_face
+                        .iter()
+                        .flat_map(|(&f, _m)| self.papercraft.model()[f].vertices_with_edges().map(move |(v0,v1,e)| (f, v0, v1, e)))
+                        .filter(|&(_f, _v0, _v1, e)| self.papercraft.edge_status(e) != paper::EdgeStatus::Hidden)
+                        .collect();
+                    let (_f, i_v0_b, i_v1_b, _edge_b) = flat_contour
+                        .iter()
+                        .copied()
+                        .filter(|&(_f, _v0, _v1, e)| e == i_edge)
+                        .next().unwrap();
+                    //dbg!(i_edge, i_v0_b, i_v1_b, i_face, i_face_b);
+                    let x0 = flat_contour
+                        .iter()
+                        .copied()
+                        .filter(|&(_f, _v0, v1, _e)| i_v0_b == v1)
+                        .next().unwrap();
+                    let x1 = flat_contour
+                        .iter()
+                        .copied()
+                        .filter(|&(_f, v0, _v1, _e)| i_v1_b == v0)
+                        .next().unwrap();
+                    //dbg!(x0, x1);
+
+                    let pps = [(x0.0, x0.1), (x0.0, x0.2), (x1.0, x1.1), (x1.0, x1.2)]
+                        .map(|(f, v)| {
+                            let face = &self.papercraft.model()[f];
+                            let lpos = face.plane(self.papercraft.model()).project(&self.papercraft.model()[v].pos());
+                            flat_face[&f].transform_point(Point2::from_vec(lpos)).to_vec()
+                        });
+                    let e0 = pps[1] - pps[0];
+                    let e1 = pps[2] - pps[1];
+                    let e2 = pps[3] - pps[2];
+                    let a0: Deg<f32> = e1.angle(e0).into();
+                    let a1: Deg<f32> = e2.angle(e1).into();
+                    let a0 = Deg(180.0) - a0;
+                    let a1 = Deg(180.0) - a1;
+                    (a1, a0)
+                };
+
+                let angle_0 = Deg(angle_0.0.min(45.0));
+                let angle_1 = Deg(angle_1.0.min(45.0));
+
                 const TAB: f32 = 0.02;
                 let v = pos1 - pos0;
-
+                let tan_0 = angle_0.cot();
+                let tan_1 = angle_1.cot();
                 let v_len = v.magnitude();
-                let short_len = v_len - 2.0 * TAB;
-                let tab = if short_len < 0.0 {
-                    v_len / 2.0
-                } else {
-                    TAB
-                };
-                let v = v * (tab / v_len);
-                let n = Vector2::new(-v.y, v.x);
-                let mut p = [
 
+                let mut tab_h_0 = tan_0 * TAB;
+                let mut tab_h_1 = tan_1 * TAB;
+                let just_one_tri = v_len - tab_h_0 - tab_h_1 <= 0.0;
+                if just_one_tri {
+                    let sum = tab_h_0 + tab_h_1;
+                    tab_h_0 = tab_h_0 * v_len / sum;
+                    tab_h_1 = tab_h_1 * v_len / sum;
+                }
+                let v_0 = v * (tab_h_0 / v_len);
+                let v_1 = v * (tab_h_1 / v_len);
+                let n = Vector2::new(-v_0.y, v_0.x) / tan_0;
+                let mut p = [
                     MVertex2D {
                         pos: pos0,
                         uv: Vector2::zero(),
                         color: [0.0, 0.0, 0.0, 1.0],
                     },
                     MVertex2D {
-                        pos: pos0 + n + v,
+                        pos: pos0 + n + v_0,
                         uv: Vector2::zero(),
                         color: [0.0, 0.0, 0.0, 1.0],
                     },
                     MVertex2D {
-                        pos: pos1 + n - v,
+                        pos: pos1 + n - v_1,
                         uv: Vector2::zero(),
                         color: [0.0, 0.0, 0.0, 1.0],
                     },
@@ -885,18 +937,22 @@ impl MyContext {
                         color: [0.0, 0.0, 0.0, 1.0],
                     },
                 ];
-                args.vertices_tab_edge_buf.extend([p[0], p[1], p[1], p[2], p[2], p[3]]);
+                let p = if just_one_tri {
+                    p[2] = p[3];
+                    args.vertices_tab_edge_buf.extend([p[0], p[1], p[1], p[2]]);
+                    &mut p[..3]
+                } else {
+                    args.vertices_tab_edge_buf.extend([p[0], p[1], p[1], p[2], p[2], p[3]]);
+                    &mut p[..]
+                };
 
                 //Now we have to compute the texture coordinates of `p` in the adjacent face
-                let i_face_b = edge.faces().filter(|f| *f != i_face).next().unwrap();
-                let face_b = &self.papercraft.model()[i_face_b];
                 let plane_b = face_b.plane(self.papercraft.model());
                 let vs_b = face_b.index_vertices().map(|v| {
                     let v = &self.papercraft.model()[v];
                     let p = plane_b.project(&v.pos());
                     (v, p)
                 });
-                let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(edge, face, face_b);
                 let mx_b_inv = mx_b.invert().unwrap();
                 let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 
@@ -904,24 +960,28 @@ impl MyContext {
                 // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
                 // mxx do both convertions at once
                 let mxx = Matrix3::from(mx_basis) * mx_b_inv;
-                let uv_b = p.map(|px| {
+
+                for px in p.iter_mut() {
                     //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
                     let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
                     let uv0 = vs_b[0].0.uv();
                     let uv1 = vs_b[1].0.uv();
                     let uv2 = vs_b[2].0.uv();
-                    uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
-                });
+                    px.uv = uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0);
+                }
 
-                p[0].uv = uv_b[0];
-                p[0].color = [1.0, 1.0, 1.0, 0.0];
-                p[1].uv = uv_b[1];
-                p[1].color = [1.0, 1.0, 1.0, 1.0];
-                p[2].uv = uv_b[2];
-                p[2].color = [1.0, 1.0, 1.0, 1.0];
-                p[3].uv = uv_b[3];
-                p[3].color = [1.0, 1.0, 1.0, 0.0];
-                args.vertices_tab_buf.extend([p[0], p[2], p[1], p[0], p[3], p[2]]);
+                if just_one_tri {
+                    p[0].color = [1.0, 1.0, 1.0, 0.0];
+                    p[1].color = [1.0, 1.0, 1.0, 1.0];
+                    p[2].color = [1.0, 1.0, 1.0, 0.0];
+                    args.vertices_tab_buf.extend([p[0], p[2], p[1]]);
+                } else {
+                    p[0].color = [1.0, 1.0, 1.0, 0.0];
+                    p[1].color = [1.0, 1.0, 1.0, 1.0];
+                    p[2].color = [1.0, 1.0, 1.0, 1.0];
+                    p[3].color = [1.0, 1.0, 1.0, 0.0];
+                    args.vertices_tab_buf.extend([p[0], p[2], p[1], p[0], p[3], p[2]]);
+                }
             }
         }
     }

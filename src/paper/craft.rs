@@ -238,6 +238,16 @@ impl Papercraft {
         );
         res
     }
+    pub fn get_flat_faces_with_matrix(&self, i_face: FaceIndex, mx: Matrix3) -> HashMap<FaceIndex, Matrix3> {
+        let mut res = HashMap::new();
+        traverse_faces_ex(&self.model, i_face, mx, FlatTraverseFaceWithMatrix(self),
+            |i_next_face, _, mx| {
+                res.insert(i_next_face, *mx);
+                ControlFlow::Continue(())
+            }
+        );
+        res
+    }
 
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
@@ -338,6 +348,28 @@ impl TraverseFacePolicy for FlatTraverseFace<'_> {
     fn next_state(&self, _st: &Self::State, _edge: &Edge, _face: &Face, _i_next_face: FaceIndex) -> Self::State {
     }
 }
+
+struct FlatTraverseFaceWithMatrix<'a>(&'a Papercraft);
+
+
+impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
+    type State = Matrix3;
+
+    fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
+        match self.0.edge_status(i_edge) {
+            EdgeStatus::Joined |
+            EdgeStatus::Cut => false,
+            EdgeStatus::Hidden => true,
+        }
+    }
+
+    fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
+        let next_face = &self.0.model[i_next_face];
+        let medge = self.0.model.face_to_face_edge_matrix(edge, face, next_face);
+        st * medge
+    }
+}
+
 
 #[derive(Debug)]
 pub struct Island {

@@ -248,6 +248,44 @@ impl Papercraft {
         );
         res
     }
+    pub fn flat_face_angles(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> (Rad<f32>, Rad<f32>) {
+        let flat_face = self.get_flat_faces_with_matrix(i_face_b, Matrix3::one());
+        let flat_contour: Vec<_> = flat_face
+            .iter()
+            .flat_map(|(&f, _m)| self.model()[f].vertices_with_edges().map(move |(v0,v1,e)| (f, v0, v1, e)))
+            .filter(|&(_f, _v0, _v1, e)| self.edge_status(e) != EdgeStatus::Hidden)
+            .collect();
+        let (_f, i_v0_b, i_v1_b, _edge_b) = flat_contour
+            .iter()
+            .copied()
+            .filter(|&(_f, _v0, _v1, e)| e == i_edge)
+            .next().unwrap();
+        let x0 = flat_contour
+            .iter()
+            .copied()
+            .filter(|&(_f, _v0, v1, _e)| i_v0_b == v1)
+            .next().unwrap();
+        let x1 = flat_contour
+            .iter()
+            .copied()
+            .filter(|&(_f, v0, _v1, _e)| i_v1_b == v0)
+            .next().unwrap();
+
+        let pps = [(x0.0, x0.1), (x0.0, x0.2), (x1.0, x1.1), (x1.0, x1.2)]
+            .map(|(f, v)| {
+                let face = &self.model()[f];
+                let lpos = face.plane(self.model()).project(&self.model()[v].pos());
+                flat_face[&f].transform_point(Point2::from_vec(lpos)).to_vec()
+            });
+        let e0 = pps[1] - pps[0];
+        let e1 = pps[2] - pps[1];
+        let e2 = pps[3] - pps[2];
+        let a0 = e1.angle(e0);
+        let a1 = e2.angle(e1);
+        let a0 = Rad::turn_div_2() - a0;
+        let a1 = Rad::turn_div_2() - a1;
+        (a0, a1)
+    }
 
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>

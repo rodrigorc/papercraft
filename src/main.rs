@@ -852,51 +852,11 @@ impl MyContext {
             if edge_status == paper::EdgeStatus::Cut && edge.face_sign(i_face) {
                 let i_face_b = edge.faces().filter(|f| *f != i_face).next().unwrap();
                 let face_b = &self.papercraft.model()[i_face_b];
-                let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(edge, face, face_b);
+                //swap the angles because this is from the POV of the other face
+                let (angle_1, angle_0) = self.papercraft.flat_face_angles(i_face_b, i_edge);
 
-                let (angle_0, angle_1) = {
-                    let flat_face = self.papercraft.get_flat_faces_with_matrix(i_face_b, mx_b);
-                    let flat_contour: Vec<_> = flat_face
-                        .iter()
-                        .flat_map(|(&f, _m)| self.papercraft.model()[f].vertices_with_edges().map(move |(v0,v1,e)| (f, v0, v1, e)))
-                        .filter(|&(_f, _v0, _v1, e)| self.papercraft.edge_status(e) != paper::EdgeStatus::Hidden)
-                        .collect();
-                    let (_f, i_v0_b, i_v1_b, _edge_b) = flat_contour
-                        .iter()
-                        .copied()
-                        .filter(|&(_f, _v0, _v1, e)| e == i_edge)
-                        .next().unwrap();
-                    //dbg!(i_edge, i_v0_b, i_v1_b, i_face, i_face_b);
-                    let x0 = flat_contour
-                        .iter()
-                        .copied()
-                        .filter(|&(_f, _v0, v1, _e)| i_v0_b == v1)
-                        .next().unwrap();
-                    let x1 = flat_contour
-                        .iter()
-                        .copied()
-                        .filter(|&(_f, v0, _v1, _e)| i_v1_b == v0)
-                        .next().unwrap();
-                    //dbg!(x0, x1);
-
-                    let pps = [(x0.0, x0.1), (x0.0, x0.2), (x1.0, x1.1), (x1.0, x1.2)]
-                        .map(|(f, v)| {
-                            let face = &self.papercraft.model()[f];
-                            let lpos = face.plane(self.papercraft.model()).project(&self.papercraft.model()[v].pos());
-                            flat_face[&f].transform_point(Point2::from_vec(lpos)).to_vec()
-                        });
-                    let e0 = pps[1] - pps[0];
-                    let e1 = pps[2] - pps[1];
-                    let e2 = pps[3] - pps[2];
-                    let a0: Deg<f32> = e1.angle(e0).into();
-                    let a1: Deg<f32> = e2.angle(e1).into();
-                    let a0 = Deg(180.0) - a0;
-                    let a1 = Deg(180.0) - a1;
-                    (a1, a0)
-                };
-
-                let angle_0 = Deg(angle_0.0.min(45.0));
-                let angle_1 = Deg(angle_1.0.min(45.0));
+                let angle_0 = Rad(angle_0.0.min(Rad::from(Deg(45.0)).0));
+                let angle_1 = Rad(angle_1.0.min(Rad::from(Deg(45.0)).0));
 
                 const TAB: f32 = 0.02;
                 let v = pos1 - pos0;
@@ -910,6 +870,7 @@ impl MyContext {
                 if just_one_tri {
                     let sum = tab_h_0 + tab_h_1;
                     tab_h_0 = tab_h_0 * v_len / sum;
+                    //this will not be used, eventually
                     tab_h_1 = tab_h_1 * v_len / sum;
                 }
                 let v_0 = v * (tab_h_0 / v_len);
@@ -938,6 +899,7 @@ impl MyContext {
                     },
                 ];
                 let p = if just_one_tri {
+                    //The unneeded vertex is actually [2], so remove that copying the [3] over
                     p[2] = p[3];
                     args.vertices_tab_edge_buf.extend([p[0], p[1], p[1], p[2]]);
                     &mut p[..3]
@@ -953,6 +915,7 @@ impl MyContext {
                     let p = plane_b.project(&v.pos());
                     (v, p)
                 });
+                let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(edge, face, face_b);
                 let mx_b_inv = mx_b.invert().unwrap();
                 let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 

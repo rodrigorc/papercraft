@@ -217,11 +217,11 @@ impl Model {
     pub fn num_faces(&self) -> usize {
         self.faces.len()
     }
-    pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
+    pub fn face_to_face_edge_matrix(&self, scale: f32, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
         let v0 = self[edge.v0()].pos();
         let v1 = self[edge.v1()].pos();
-        let plane_a = face_a.plane(self);
-        let plane_b = face_b.plane(self);
+        let plane_a = face_a.plane(self, scale);
+        let plane_b = face_b.plane(self, scale);
         let a0 = plane_a.project(&v0);
         let b0 = plane_b.project(&v0);
         let a1 = plane_a.project(&v1);
@@ -238,8 +238,8 @@ impl Model {
             &[fa, fb] => {
                 let fa = &self[fa];
                 let fb = &self[fb];
-                let na = fa.plane(self).normal();
-                let nb = fb.plane(self).normal();
+                let na = fa.plane(self, 1.0).normal();
+                let nb = fb.plane(self, 1.0).normal();
 
                 let i_va = fa.opposite_edge(i_edge);
                 let pos_va = &self[i_va].pos();
@@ -285,12 +285,12 @@ impl Face {
     pub fn index_edges(&self) -> [EdgeIndex; 3] {
         self.edges
     }
-    pub fn plane(&self, model: &Model) -> util_3d::Plane {
+    pub fn plane(&self, model: &Model, scale: f32) -> util_3d::Plane {
         util_3d::Plane::from_tri([
             model[self.vertices[0]].pos(),
             model[self.vertices[1]].pos(),
             model[self.vertices[2]].pos(),
-        ])
+        ], scale)
     }
     pub fn vertices_with_edges(&self) -> impl Iterator<Item = (VertexIndex, VertexIndex, EdgeIndex)> + '_ {
         self.edges

@@ -86,8 +86,8 @@ fn main() {
          persp
     );
     let trans_paper = {
-        let mt = Matrix3::from_translation(Vector2::new(-1.0, -1.5));
-        let ms = Matrix3::from_scale(200.0);
+        let mt = Matrix3::from_translation(Vector2::new(-210.0/2.0, -297.0/2.0));
+        let ms = Matrix3::from_scale(1.0);
         TransformationPaper {
             ortho: util_3d::ortho2d(1.0, 1.0),
             //mx: mt * ms * mr,
@@ -397,6 +397,8 @@ struct GLObjects {
     paper_vertex_tab_buf: DynamicVertexBuffer<MVertex2D>,
     paper_vertex_tab_edge_buf: DynamicVertexBuffer<MVertex2D>,
 
+    paper_vertex_page_buf: glium::VertexBuffer<MVertex2D>,
+
     #[allow(dead_code)]
     quad_vertex_buf: glium::VertexBuffer<MVertexQuad>,
 }
@@ -581,7 +583,7 @@ impl MyContext {
         for (_i_island, island) in self.papercraft.islands() {
             self.papercraft.traverse_faces(island,
                 |i_face, face, fmx| {
-                    let normal = face.plane(self.papercraft.model());
+                    let normal = self.papercraft.face_plane(face);
                     let tri = face.index_vertices();
                     let tri = tri.map(|v| {
                         let v3 = self.papercraft.model()[v].pos();
@@ -760,6 +762,28 @@ impl MyContext {
         let paper_vertex_tab_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2 * 3); // 2 tris per edge
         let paper_vertex_tab_edge_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 3 * 2); // 3 lines per edge
 
+        let page_0 = MVertex2D {
+            pos: Vector2::new(0.0, 0.0),
+            uv: Vector2::zero(),
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        let page_2 = MVertex2D {
+            pos: Vector2::new(210.0, 297.0),
+            uv: Vector2::zero(),
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        let page_1 = MVertex2D {
+            pos: Vector2::new(page_2.pos.x, 0.0),
+            uv: Vector2::zero(),
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        let page_3 = MVertex2D {
+            pos: Vector2::new(0.0, page_2.pos.y),
+            uv: Vector2::zero(),
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        let paper_vertex_page_buf = glium::VertexBuffer::dynamic(gl, &[page_0, page_2, page_1, page_0, page_3, page_2]).unwrap();
+
         let quad_vertex_buf = glium::VertexBuffer::immutable(gl,
             &[
                 MVertexQuad { pos: [-1.0, -1.0] },
@@ -782,6 +806,7 @@ impl MyContext {
             paper_vertex_edge_sel_buf,
             paper_vertex_tab_buf,
             paper_vertex_tab_edge_buf,
+            paper_vertex_page_buf,
 
             quad_vertex_buf,
         };
@@ -795,7 +820,7 @@ impl MyContext {
     fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, selected: bool, hi: bool, args: &mut PaperDrawFaceArgs) {
         for i_v in face.index_vertices() {
             let v = &self.papercraft.model()[i_v];
-            let p = face.plane(self.papercraft.model()).project(&v.pos());
+            let p = self.papercraft.face_plane(face).project(&v.pos());
             let pos = m.transform_point(Point2::from_vec(p)).to_vec();
             args.vertices.push(MVertex2D {
                 pos,
@@ -812,7 +837,7 @@ impl MyContext {
                 paper::EdgeStatus::Cut(_) => true,
                 paper::EdgeStatus::Joined => edge.face_sign(i_face),
             };
-            let plane = face.plane(self.papercraft.model());
+            let plane = self.papercraft.face_plane(face);
             let selected_edge = self.selected_edge == Some(i_edge);
             let v0 = &self.papercraft.model()[i_v0];
             let p0 = plane.project(&v0.pos());
@@ -879,7 +904,7 @@ impl MyContext {
                 let angle_0 = Rad(angle_0.0.min(Rad::from(Deg(45.0)).0));
                 let angle_1 = Rad(angle_1.0.min(Rad::from(Deg(45.0)).0));
 
-                const TAB: f32 = 0.02;
+                const TAB: f32 = 3.0;
                 let v = pos1 - pos0;
                 let tan_0 = angle_0.cot();
                 let tan_1 = angle_1.cot();
@@ -930,13 +955,13 @@ impl MyContext {
                 };
 
                 //Now we have to compute the texture coordinates of `p` in the adjacent face
-                let plane_b = face_b.plane(self.papercraft.model());
+                let plane_b = self.papercraft.face_plane(face_b);
                 let vs_b = face_b.index_vertices().map(|v| {
                     let v = &self.papercraft.model()[v];
                     let p = plane_b.project(&v.pos());
                     (v, p)
                 });
-                let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(edge, face, face_b);
+                let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.scale(), edge, face, face_b);
                 let mx_b_inv = mx_b.invert().unwrap();
                 let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 
@@ -1094,6 +1119,8 @@ impl MyContext {
             },
             .. Default::default()
         };
+
+        frm.draw(&gl_objs.paper_vertex_page_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_paper_solid, &u, &dp).unwrap();
 
         // Textured faces
         frm.draw(&gl_objs.paper_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_paper_solid, &u, &dp).unwrap();

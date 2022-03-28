@@ -20,6 +20,7 @@ new_key_type! {
 #[derive(Serialize, Deserialize)]
 pub struct Papercraft {
     model: Model,
+    scale: f32,
     edges: Vec<EdgeStatus>, //parallel to EdgeIndex
     #[serde(with="super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
@@ -46,6 +47,7 @@ impl Papercraft {
         let mut pos_y = 0.0;
 
         let mut pending_faces: HashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
+        let scale = 100.0;
 
         let mut islands = SlotMap::with_key();
         while let Some(root) = pending_faces.iter().copied().next() {
@@ -53,10 +55,10 @@ impl Papercraft {
 
             //Compute the bounding box of the flat face, since Self is not yet build, we have to use the traverse_faces_ex() version directly
             let mut vx = Vec::new();
-            traverse_faces_ex(&model, root, Matrix3::one(), NormalTraverseFace(&model, &edges),
+            traverse_faces_ex(&model, root, Matrix3::one(), NormalTraverseFace(&model, &edges, scale),
                 |i_face, face, mx| {
                     pending_faces.remove(&i_face);
-                    let normal = face.plane(&model);
+                    let normal = face.plane(&model, scale);
                     vx.extend(face.index_vertices().map(|v| {
                         mx.transform_point(Point2::from_vec(normal.project(&model[v].pos()))).to_vec()
                     }));
@@ -87,12 +89,19 @@ impl Papercraft {
 
         Papercraft {
             model,
+            scale,
             edges,
             islands,
         }
     }
     pub fn model(&self) -> &Model {
         &self.model
+    }
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+    pub fn face_plane(&self, face: &Face) -> Plane {
+        face.plane(&self.model, self.scale)
     }
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
@@ -160,7 +169,7 @@ impl Papercraft {
                 );
                 let (face_mx, new_root, i_face_old) = data_found.unwrap();
 
-                let medge = self.model.face_to_face_edge_matrix(edge, &self.model[i_face_old], &self.model[new_root]);
+                let medge = self.model.face_to_face_edge_matrix(self.scale, edge, &self.model[i_face_old], &self.model[new_root]);
                 let mx = face_mx * medge;
 
                 let mut new_island = Island {
@@ -174,7 +183,7 @@ impl Papercraft {
                 //Compute the offset
                 let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
                 let new_root = &self.model[new_root];
-                let new_root_plane = new_root.plane(&self.model);
+                let new_root_plane = self.face_plane(new_root);
                 let v0 = new_root_plane.project(&self.model[edge.v0()].pos());
                 let v1 = new_root_plane.project(&self.model[edge.v1()].pos());
                 let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
@@ -286,7 +295,7 @@ impl Papercraft {
         let pps = [(x0.0, x0.1), (x0.0, x0.2), (x1.0, x1.1), (x1.0, x1.2)]
             .map(|(f, v)| {
                 let face = &self.model()[f];
-                let lpos = face.plane(self.model()).project(&self.model()[v].pos());
+                let lpos = self.face_plane(face).project(&self.model()[v].pos());
                 flat_face[&f].transform_point(Point2::from_vec(lpos)).to_vec()
             });
         let e0 = pps[1] - pps[0];
@@ -302,7 +311,7 @@ impl Papercraft {
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
     {
-        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self.model, &self.edges), visit_face)
+        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self.model, &self.edges, self.scale), visit_face)
     }
     pub fn traverse_faces_no_matrix<F>(&self, island: &Island, mut visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex) -> ControlFlow<()>
@@ -345,7 +354,7 @@ trait TraverseFacePolicy {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool;
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State;
 }
-struct NormalTraverseFace<'a>(&'a Model, &'a [EdgeStatus]);
+struct NormalTraverseFace<'a>(&'a Model, &'a [EdgeStatus], f32);
 
 impl TraverseFacePolicy for NormalTraverseFace<'_> {
     type State = Matrix3;
@@ -360,7 +369,7 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
 
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
         let next_face = &self.0[i_next_face];
-        let medge = self.0.face_to_face_edge_matrix(edge, face, next_face);
+        let medge = self.0.face_to_face_edge_matrix(self.2, edge, face, next_face);
         st * medge
     }
 }
@@ -415,7 +424,7 @@ impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
 
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
         let next_face = &self.0.model[i_next_face];
-        let medge = self.0.model.face_to_face_edge_matrix(edge, face, next_face);
+        let medge = self.0.model.face_to_face_edge_matrix(self.0.scale, edge, face, next_face);
         st * medge
     }
 }

@@ -10,7 +10,7 @@ use gtk::{
     gdk::{self, EventMask},
 };
 
-use std::{collections::HashMap, cell::Cell, ops::ControlFlow};
+use std::{collections::HashMap, cell::Cell, ops::ControlFlow, time::Duration};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -119,6 +119,7 @@ fn main() {
         selected_face: None,
         selected_edge: None,
         grabbed_island: None,
+        scroll_timer: None,
 
         last_cursor_pos: (0.0, 0.0),
 
@@ -144,10 +145,12 @@ fn main() {
             w.grab_focus();
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
-            ctx.last_cursor_pos = ev.position();
+            let pos = ev.position();
+            let pos = (pos.0 as f32, pos.1 as f32);
+            ctx.last_cursor_pos = pos;
 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.analyze_click(ev.position());
+                let selection = ctx.analyze_click(pos);
                 if let ClickResult::Edge(i_edge, priority_face) = selection {
                     ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
                     ctx.paper_build();
@@ -181,6 +184,8 @@ fn main() {
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
             let pos = ev.position();
+            let pos = (pos.0 as f32, pos.1 as f32);
+
             let dx = (pos.0 - ctx.last_cursor_pos.0)  as f32;
             let dy = (pos.1 - ctx.last_cursor_pos.1) as f32;
             ctx.last_cursor_pos = pos;
@@ -207,7 +212,7 @@ fn main() {
                 ctx.trans_scene.recompute_obj();
                 ctx.wscene.queue_render();
             } else {
-                let selection = ctx.analyze_click(ev.position());
+                let selection = ctx.analyze_click(pos);
                 ctx.set_selection(selection);
             }
             Inhibit(true)
@@ -242,7 +247,7 @@ fn main() {
     });
 
 
-    wpaper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
+    wpaper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_RELEASE_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wpaper.set_has_stencil_buffer(true);
     wpaper.connect_realize({
         let ctx = ctx.clone();
@@ -277,9 +282,11 @@ fn main() {
             w.grab_focus();
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
-            ctx.last_cursor_pos = ev.position();
+            let pos = ev.position();
+            let pos = (pos.0 as f32, pos.1 as f32);
+            ctx.last_cursor_pos = pos;
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.analyze_click_paper(ev.position());
+                let selection = ctx.analyze_click_paper(pos);
                 if let ClickResult::Face(i_face) = selection {
                     let i_island = ctx.papercraft.island_by_face(i_face);
                     ctx.grabbed_island = Some(i_island);
@@ -298,35 +305,63 @@ fn main() {
             Inhibit(true)
         }
     });
+    wpaper.connect_button_release_event({
+        let ctx = ctx.clone();
+        move |_w, _ev|  {
+            let mut ctx = ctx.borrow_mut();
+            ctx.grabbed_island = None;
+            ctx.set_scroll_timer(None);
+            Inhibit(true)
+        }
+    });
     wpaper.connect_motion_notify_event({
         let ctx = ctx.clone();
-        move |_w, ev| {
-            let mut ctx = ctx.borrow_mut();
+        move |w, ev| {
+            let rect = w.allocation();
             let pos = ev.position();
-            let delta = Vector2::new((pos.0 - ctx.last_cursor_pos.0)  as f32,(pos.1 - ctx.last_cursor_pos.1) as f32);
-            ctx.last_cursor_pos = pos;
-            if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
-                ctx.trans_paper.mx = Matrix3::from_translation(delta) * ctx.trans_paper.mx;
-                ctx.wpaper.queue_render();
-            } else if ev.state().contains(gdk::ModifierType::BUTTON1_MASK) {
-                if let Some(i_island) = ctx.grabbed_island {
-                    let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&ctx.trans_paper.mx, delta).unwrap();
-                    if let Some(island) = ctx.papercraft.island_by_key_mut(i_island) {
-                        if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                            // Rotate island
-                            island.rotate(Deg(delta.y));
-                        } else {
-                            // Move island
-                            island.translate(delta_scaled);
+            let pos = (pos.0 as f32, pos.1 as f32);
+            let state = ev.state();
+
+            let grabbed = {
+                let mut ctx = ctx.borrow_mut();
+                ctx.paper_motion_notify_event(pos, state);
+                ctx.grabbed_island.is_some()
+            };
+
+            if grabbed {
+                let delta = if pos.0 < 5.0 {
+                    Some(Vector2::new((-pos.0).max(5.0).min(25.0), 0.0))
+                } else if pos.0 > rect.width() as f32 - 5.0 {
+                    Some(Vector2::new(-(pos.0 - rect.width() as f32).max(5.0).min(25.0), 0.0))
+                } else if pos.1 < 5.0 {
+                    Some(Vector2::new(0.0, (-pos.1).max(5.0).min(25.0)))
+                } else if pos.1 > rect.height() as f32 - 5.0 {
+                    Some(Vector2::new(0.0, -(pos.1 - rect.height() as f32).max(5.0).min(25.0)))
+                } else {
+                    None
+                };
+                if let Some(delta) = delta {
+                    let f = {
+                        let ctx = ctx.clone();
+                        move || {
+                            let mut ctx = ctx.borrow_mut();
+                            ctx.last_cursor_pos.0 += delta.x;
+                            ctx.last_cursor_pos.1 += delta.y;
+                            ctx.trans_paper.mx = Matrix3::from_translation(delta) * ctx.trans_paper.mx;
+                            ctx.paper_motion_notify_event(pos, state);
+                            ctx.wpaper.queue_render();
+                            glib::Continue(true)
                         }
-                        ctx.paper_build();
-                        ctx.wpaper.queue_render();
-                    }
+                    };
+                    // do not wait for the timer for the first call
+                    f();
+                    let timer = glib::timeout_add_local(Duration::from_millis(50), f);
+                    ctx.borrow_mut().set_scroll_timer(Some(timer));
+                } else {
+                    ctx.borrow_mut().set_scroll_timer(None);
                 }
-            } else {
-                let selection = ctx.analyze_click_paper(ev.position());
-                ctx.set_selection(selection);
             }
+
             Inhibit(true)
         }
     });
@@ -422,8 +457,9 @@ struct MyContext {
     selected_face: Option<paper::FaceIndex>,
     selected_edge: Option<paper::EdgeIndex>,
     grabbed_island: Option<paper::IslandKey>,
+    scroll_timer: Option<glib::SourceId>,
 
-    last_cursor_pos: (f64, f64),
+    last_cursor_pos: (f32, f32),
 
 
     trans_scene: Transformation3D,
@@ -496,7 +532,41 @@ struct PaperDrawFaceArgs {
 }
 
 impl MyContext {
-    fn analyze_click(&self, (x, y): (f64, f64)) -> ClickResult {
+    fn paper_motion_notify_event(&mut self, pos: (f32, f32), ev_state: gdk::ModifierType) {
+        let delta = Vector2::new((pos.0 - self.last_cursor_pos.0)  as f32,(pos.1 - self.last_cursor_pos.1) as f32);
+        self.last_cursor_pos = pos;
+        if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
+            self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
+            self.wpaper.queue_render();
+        } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) {
+            if let Some(i_island) = self.grabbed_island {
+                let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
+                if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
+                    if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
+                        // Rotate island
+                        island.rotate(Deg(delta.y));
+                    } else {
+                        // Move island
+                        island.translate(delta_scaled);
+                    }
+                    self.paper_build();
+                    self.wpaper.queue_render();
+                }
+            }
+        } else {
+            let selection = self.analyze_click_paper(pos);
+            self.set_selection(selection);
+        }
+    }
+
+    fn set_scroll_timer(&mut self, tmr: Option<glib::SourceId>) {
+        if let Some(t) = self.scroll_timer.take() {
+            t.remove();
+        }
+        self.scroll_timer = tmr;
+    }
+
+    fn analyze_click(&self, (x, y): (f32, f32)) -> ClickResult {
         let rect = self.wscene.allocation();
         let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
         let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);
@@ -567,7 +637,7 @@ impl MyContext {
         }
     }
 
-    fn analyze_click_paper(&self, (x, y): (f64, f64)) -> ClickResult {
+    fn analyze_click_paper(&self, (x, y): (f32, f32)) -> ClickResult {
         let rect = self.wpaper.allocation();
         let x = (x as f32 / rect.width() as f32) * 2.0 - 1.0;
         let y = -((y as f32 / rect.height() as f32) * 2.0 - 1.0);

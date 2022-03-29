@@ -51,7 +51,7 @@ void main(void) {
     }
     else
     {
-        base = vec4(0.8, 0.3, 0.3, 1.0);
+        base = mix(vec4(0.8, 0.3, 0.3, 1.0), vec4(v_status.rgb, 1.0), v_status.a / 2.0);
     }
     out_frag_color = vec4(v_light * base.rgb, base.a);
 }

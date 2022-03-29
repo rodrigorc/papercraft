@@ -36,9 +36,10 @@ impl Papercraft {
             let mut faces = edge.faces();
             let first = faces.next().unwrap();
             let original = facemap[&first];
-            let flat = faces.all(|f| facemap[&f] == original);
-            if flat {
-                *edge_status = EdgeStatus::Hidden;
+            if let Some(next) = faces.next() {
+                if facemap[&next] == original {
+                    *edge_status = EdgeStatus::Hidden;
+                }
             }
         }
 
@@ -68,11 +69,11 @@ impl Papercraft {
 
             let bbox = bounding_box_2d(vx);
             let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
-            pos_x += bbox.1.x - bbox.0.x + 0.05;
+            pos_x += bbox.1.x - bbox.0.x + 5.0;
             row_height = row_height.max(bbox.1.y - bbox.0.y);
 
-            if pos_x > 2.0 {
-                pos_y += row_height + 0.05;
+            if pos_x > 210.0 {
+                pos_y += row_height + 5.0;
                 row_height = 0.0;
                 pos_x = 0.0;
             }
@@ -138,17 +139,18 @@ impl Papercraft {
         }
     }
 
-    pub fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) {
+    //Returns renames of IslandKeys
+    pub fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> HashMap<IslandKey, IslandKey> {
         let edge = &self.model[i_edge];
         let faces: Vec<_> = edge.faces().collect();
+        let mut renames = HashMap::new();
 
         let (i_face_a, i_face_b) = match &faces[..] {
             &[a, b] => (a, b),
-            _ => return,
+            _ => return renames,
         };
 
         let edge_status = self.edges[usize::from(i_edge)];
-
         match edge_status {
             EdgeStatus::Joined => {
                 //one of the edge faces will be the root of the new island, but we do not know which one, yet
@@ -188,7 +190,7 @@ impl Papercraft {
                 let v1 = new_root_plane.project(&self.model[edge.v1()].pos());
                 let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
                 let v1 = mx.transform_point(Point2::from_vec(v1)).to_vec();
-                let v = (v1 - v0).normalize_to(0.05);
+                let v = (v1 - v0).normalize_to(5.0);
 
                 //priority_face makes no sense when doing a split, so pass None here unconditionally
                 if self.compare_islands(&self.islands[i_island], &new_island, None) {
@@ -212,12 +214,13 @@ impl Papercraft {
                     if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
                         std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
                     }
-
+                    renames.insert (i_island_b, i_island_a);
                     self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
                 }
             }
             EdgeStatus::Hidden => {}
         };
+        return renames;
     }
 
     fn compare_islands(&self, a: &Island, b: &Island, priority_face: Option<FaceIndex>) -> bool {

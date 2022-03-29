@@ -978,8 +978,12 @@ impl MyContext {
             }
 
             if edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) {
-
-                if let Some(i_face_b) = edge.faces().filter(|f| *f != i_face).next() {
+                let i_face_b = match edge.faces() {
+                    (fa, Some(fb)) if i_face == fb => Some(fa),
+                    (fa, Some(fb)) if i_face == fa => Some(fb),
+                    _ => None
+                };
+                if let Some(i_face_b) = i_face_b {
                     let face_b = &self.papercraft.model()[i_face_b];
 
                     //swap the angles because this is from the POV of the other face

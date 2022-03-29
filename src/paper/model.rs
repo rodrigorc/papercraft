@@ -81,8 +81,8 @@ pub struct Face {
 pub struct Edge {
     v0: VertexIndex,
     v1: VertexIndex,
-    #[serde(rename="fs")]
-    faces: Vec<(FaceIndex, bool)>,
+    f0: FaceIndex,
+    f1: Option<FaceIndex>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,12 +128,13 @@ impl Model {
                 })
                 .collect();
 
-        let mut faces: Vec<Face> = Vec::new();
-        let mut edges: Vec<Edge> = Vec::new();
+        let mut faces: Vec<Face> = Vec::with_capacity(obj.faces().len());
+        let mut edges: Vec<Edge> = Vec::with_capacity(obj.faces().len() * 3 / 2);
         //TODO: index idx_edges?
-        let mut idx_edges = Vec::new();
-        let mut facemap: HashMap<FaceIndex, u32> = HashMap::new();
+        let mut idx_edges = Vec::with_capacity(obj.faces().len() * 3 / 2);
+        let mut facemap: HashMap<FaceIndex, u32> = HashMap::with_capacity(obj.faces().len());
 
+        'faces:
         for (index, face) in obj.faces().iter().enumerate() {
             let face_verts: Vec<_> = face
                 .vertices()
@@ -154,31 +155,72 @@ impl Model {
 
             for tri in tris {
                 let i_face = FaceIndex(faces.len() as u32);
-                facemap.insert(i_face, index as u32);
 
+                // Some faces may be degenerate and have to be skipped, so we must not modify the any model structure until we are sure we will accept it.
+                enum EdgeCreation {
+                    Existing(usize),
+                    New(Edge, (u32, u32)),
+                }
+                let mut face_edges = [EdgeCreation::Existing(0), EdgeCreation::Existing(0), EdgeCreation::Existing(0)];
                 let mut face_vertices = [VertexIndex(0); 3];
-                let mut face_edges = [EdgeIndex(0); 3];
 
-                for i in 0 .. 3 {
-                    face_vertices[i] = face_verts[tri[i]];
+                for ((i, face_edge), face_vertex) in (0 .. 3).zip(&mut face_edges).zip(&mut face_vertices) {
+                    *face_vertex = face_verts[tri[i]];
                     let v0 = face_verts_orig[tri[i]];
                     let v1 = face_verts_orig[tri[(i + 1) % 3]];
-                    if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0 == v0 && p1 == v1) || (p0 == v1 && p1 == v0)) {
-                        face_edges[i] = EdgeIndex(i_edge as u32);
-                        edges[i_edge].faces.push((i_face, true)); //TODO sign?
+                    if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0, p1) == (v0, v1) || (p0, p1) == (v1, v0)) {
+                        // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird. This is mostly harmless, though.
+                        if idx_edges[i_edge] != (v1, v0) {
+                            dbg!(idx_edges[i_edge], (v1, v0));
+                        }
+                        // Maximum 2 faces per edge, additional faces are wholly discarded
+                        if edges[i_edge].f1.is_some() {
+                            dbg!(i_edge);
+                            continue 'faces;
+                        }
+                        *face_edge = EdgeCreation::Existing(i_edge);
                     } else {
-                        face_edges[i] = EdgeIndex(idx_edges.len() as u32);
-                        idx_edges.push((v0, v1));
-                        edges.push(Edge {
+                        *face_edge = EdgeCreation::New(Edge {
                             v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
                             v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
-                            faces: vec![(i_face, false)],
-                        })
+                            f0: i_face,
+                            f1: None,
+                        }, (v0, v1));
                     }
                 }
+
+                // If the face uses the same egde twice, it is invalid
+                match face_edges {
+                    [EdgeCreation::Existing(a), EdgeCreation::Existing(b), _] |
+                    [EdgeCreation::Existing(a), _, EdgeCreation::Existing(b)] |
+                    [_, EdgeCreation::Existing(a), EdgeCreation::Existing(b)]
+                        if a == b =>
+                    {
+                        continue 'faces;
+                    }
+                    _ => {}
+                }
+
+                let edges = face_edges.map(|face_edge| {
+                    let e = match face_edge {
+                        EdgeCreation::New(edge, idxs) => {
+                            idx_edges.push(idxs);
+                            let e = edges.len();
+                            edges.push(edge);
+                            e
+                        }
+                        EdgeCreation::Existing(e) => {
+                            edges[e].f1 = Some(i_face);
+                            e
+                        }
+                    };
+                    EdgeIndex::from(e)
+                });
+
+                facemap.insert(i_face, index as u32);
                 faces.push(Face {
                     vertices: face_vertices,
-                    edges: face_edges,
+                    edges,
                 });
             }
         }
@@ -233,9 +275,8 @@ impl Model {
     }
     pub fn edge_angle(&self, i_edge: EdgeIndex) -> Rad<f32> {
         let edge = &self[i_edge];
-        let face: Vec<FaceIndex> = edge.faces().collect();
-        match &face[..] {
-            &[fa, fb] => {
+        match edge.faces() {
+            (fa, Some(fb)) => {
                 let fa = &self[fa];
                 let fb = &self[fb];
                 let na = fa.plane(self, 1.0).normal();
@@ -328,11 +369,17 @@ impl Edge {
     pub fn v1(&self) -> VertexIndex {
         self.v1
     }
-    pub fn faces(&self) -> impl Iterator<Item = FaceIndex> + '_ {
-        self.faces.iter().map(|(f, _)| *f)
+    pub fn faces(&self) -> (FaceIndex, Option<FaceIndex>) {
+        (self.f0, self.f1)
     }
     pub fn face_sign(&self, face: FaceIndex) -> bool {
-        self.faces.iter().find(|(f, _)| *f == face).unwrap().1
+        if self.f0 == face {
+            false
+        } else if self.f1 == Some(face) {
+            true
+        } else {
+            panic!();
+        }
     }
 }
 

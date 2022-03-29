@@ -33,13 +33,11 @@ impl Papercraft {
         for (i_edge, edge_status) in edges.iter_mut().enumerate() {
             let i_edge = EdgeIndex::from(i_edge);
             let edge = &model[i_edge];
-            let mut faces = edge.faces();
-            let first = faces.next().unwrap();
-            let original = facemap[&first];
-            if let Some(next) = faces.next() {
-                if facemap[&next] == original {
+            match edge.faces() {
+                (fa, Some(fb)) if facemap[&fa] == facemap[&fb] => {
                     *edge_status = EdgeStatus::Hidden;
                 }
+                _ => {}
             }
         }
 
@@ -128,9 +126,8 @@ impl Papercraft {
     }
 
     pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex) {
-        let n_faces = self.model()[i_edge].faces().count();
         // brim edges cannot have a tab
-        if n_faces < 2 {
+        if let (_, None) = self.model()[i_edge].faces() {
             return;
         }
         match self.edges[usize::from(i_edge)]{
@@ -142,11 +139,10 @@ impl Papercraft {
     //Returns renames of IslandKeys
     pub fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> HashMap<IslandKey, IslandKey> {
         let edge = &self.model[i_edge];
-        let faces: Vec<_> = edge.faces().collect();
         let mut renames = HashMap::new();
 
-        let (i_face_a, i_face_b) = match &faces[..] {
-            &[a, b] => (a, b),
+        let (i_face_a, i_face_b) = match edge.faces() {
+            (fa, Some(fb)) => (fa, fb),
             _ => return renames,
         };
 
@@ -339,7 +335,8 @@ where F: FnMut(FaceIndex, &Face, &TP::State) -> ControlFlow<()>,
                 continue;
             }
             let edge = &model[i_edge];
-            for i_next_face in edge.faces() {
+            let (fa, fb) = edge.faces();
+            for i_next_face in std::iter::once(fa).chain(fb) {
                 if visited_faces.contains(&i_next_face) {
                     continue;
                 }

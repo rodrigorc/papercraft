@@ -333,6 +333,14 @@ impl Papercraft {
             if !matches!(self.edge_status(i_edge), EdgeStatus::Cut(_)) {
                 continue;
             }
+
+            // Compute the number of faces before joining them
+            let n_faces_a = self.island_face_count(&self.island_by_key(self.island_by_face(i_face_a)).unwrap());
+            let n_faces_b = self.island_face_count(&self.island_by_key(self.island_by_face(i_face_b)).unwrap());
+            if n_faces_a != 2 && n_faces_b != 2 {
+                continue;
+            }
+
             let r = self.edge_toggle_cut(i_edge, None);
             if r.is_empty() {
                 continue;
@@ -340,22 +348,20 @@ impl Papercraft {
             renames.extend(r);
 
             // Move to the opposite edge of both faces
-            for i_face in [i_face_a, i_face_b] {
+            for (i_face, n_faces) in [(i_face_a, n_faces_a), (i_face_b, n_faces_b)] {
+                // face strips must be made by isolated quads: 4 flat edges and 2 faces
                 let edges: Vec<_> = self.get_flat_faces(i_face)
                     .into_iter()
                     .flat_map(|f| self.model[f].index_edges())
                     .filter(|&e| self.edge_status(e) != EdgeStatus::Hidden)
                     .collect();
 
-                // face strips must be made by isolated quads: 4 flat edges and 2 faces
-                if edges.len() != 4 {
-                    continue;
-                }
-                let n_faces = self.island_face_count(&self.island_by_key(self.island_by_face(i_face)).unwrap());
                 if n_faces != 2 {
                     continue;
                 }
-
+                if edges.len() != 4 {
+                    continue;
+                }
                 // Get the opposite edge, if any
                 let opposite = edges.iter().copied().filter(|&i_e| {
                     if i_e == i_edge {

@@ -27,9 +27,6 @@ use util_gl::{GdkGliumBackend, Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVe
 use crate::util_3d::Matrix2;
 
 fn main() {
-    std::env::set_var("GTK_CSD", "0");
-    gtk::init().expect("gtk::init");
-
     let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
@@ -95,12 +92,16 @@ fn main() {
         }
     };
 
-    let _papercraft = Papercraft::new(model, &facemap);
-    let papercraft: Papercraft = {
+    let papercraft = Papercraft::new(model, &facemap);
+    /*let papercraft: Papercraft = {
         let f = std::fs::File::open("a.json").unwrap();
         let f = std::io::BufReader::new(f);
         serde_json::from_reader(f).unwrap()
-    };
+    };*/
+
+    std::env::set_var("GTK_CSD", "0");
+    gtk::init().expect("gtk::init");
+
 
     let wscene = gtk::GLArea::new();
     let wpaper = gtk::GLArea::new();
@@ -157,11 +158,10 @@ fn main() {
                         ctx.set_selection(selection, true);
                     }
                     ClickResult::Edge(i_edge, priority_face) => {
-                        let renames = ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
-                        if let Some(x) = ctx.selected_island {
-                            if let Some(n) = renames.get(&x) {
-                                ctx.selected_island = Some(*n);
-                            }
+                        if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
+                            ctx.try_join_strip(i_edge);
+                        } else {
+                            ctx.edge_toggle_cut(i_edge, priority_face);
                         }
                         ctx.paper_build();
                         ctx.scene_edge_build();
@@ -230,7 +230,6 @@ fn main() {
         }
     });
 
-
     wpaper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_RELEASE_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wpaper.set_has_stencil_buffer(true);
     wpaper.connect_realize({
@@ -276,12 +275,13 @@ fn main() {
                         ctx.set_selection(selection, true);
                         ctx.grabbed_island = true;
                     }
-                    ClickResult::Edge(i_edge, _) => {
+                    ClickResult::Edge(i_edge, i_face) => {
                         //ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
                         ctx.grabbed_island = false;
-                        ctx.papercraft.edge_toggle_tab(i_edge);
+                        ctx.edge_toggle_cut(i_edge, i_face);
                         ctx.paper_build();
                         ctx.scene_edge_build();
+                        ctx.update_scene_face_selection();
                         ctx.wscene.queue_render();
                         ctx.wpaper.queue_render();
                     }
@@ -376,14 +376,15 @@ fn main() {
 
     w.show_all();
     gtk::main();
-
-    let ctx = ctx.borrow();
-    //#[cfg(xxx)]
+    #[cfg(xxx)]
     {
-        let f = std::fs::File::create("a.json").unwrap();
-        let f = std::io::BufWriter::new(f);
-        serde_json::to_writer(f, &ctx.papercraft).unwrap()
-    };
+        let ctx = ctx.borrow();
+        {
+            let f = std::fs::File::create("a.json").unwrap();
+            let f = std::io::BufWriter::new(f);
+            serde_json::to_writer(f, &ctx.papercraft).unwrap();
+        }
+    }
 }
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
@@ -762,14 +763,15 @@ impl MyContext {
                 vertex_buf_sel.set(i, MSTATUS_UNSEL);
             }
             if let Some(sel_island) = self.selected_island {
-                let island = self.papercraft.island_by_key(sel_island).unwrap();
-                self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
-                    let pos = 3 * usize::from(i_face_2);
-                    for i in pos .. pos + 3 {
-                        vertex_buf_sel.set(i, MSTATUS_SEL);
-                    }
-                    ControlFlow::Continue(())
-                });
+                if let Some(island) = self.papercraft.island_by_key(sel_island) {
+                    self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
+                        let pos = 3 * usize::from(i_face_2);
+                        for i in pos .. pos + 3 {
+                            vertex_buf_sel.set(i, MSTATUS_SEL);
+                        }
+                        ControlFlow::Continue(())
+                    });
+                }
             }
             if let Some(i_sel_face) = self.selected_face {
                 for i_face_2 in self.papercraft.get_flat_faces(i_sel_face) {
@@ -1306,6 +1308,23 @@ impl MyContext {
                 edges.push(MVertex3DLine { pos: p1, color, top: selected as u8 });
             }
             gl_objs.vertex_edges_buf.update(&edges);
+        }
+    }
+
+    fn edge_toggle_cut(&mut self, i_edge: paper::EdgeIndex, priority_face: Option<paper::FaceIndex>) {
+        let renames = self.papercraft.edge_toggle_cut(i_edge, priority_face);
+        self.islands_renamed(&renames);
+    }
+    fn try_join_strip(&mut self, i_edge: paper::EdgeIndex) {
+        let renames = self.papercraft.try_join_strip(i_edge);
+        self.islands_renamed(&renames);
+    }
+    fn islands_renamed(&mut self, renames: &HashMap<paper::IslandKey, paper::IslandKey>) {
+        if let Some(mut x) = self.selected_island {
+            while let Some(n) = renames.get(&x) {
+                x = *n;
+            }
+            self.selected_island = Some(x);
         }
     }
 }

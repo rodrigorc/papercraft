@@ -114,6 +114,7 @@ impl Papercraft {
         }
         panic!("Island not found");
     }
+    // Islands come and go, so this kay may not exist.
     pub fn island_by_key(&self, key: IslandKey) -> Option<&Island> {
         self.islands.get(key)
     }
@@ -125,6 +126,7 @@ impl Papercraft {
         self.edges[usize::from(edge)]
     }
 
+    #[allow(dead_code)]
     pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex) {
         // brim edges cannot have a tab
         if let (_, None) = self.model()[i_edge].faces() {
@@ -172,7 +174,7 @@ impl Papercraft {
 
                 let mut new_island = Island {
                     root: new_root,
-                    loc: dbg!(Vector2::new(mx[2][0], mx[2][1])),
+                    loc: Vector2::new(mx[2][0], mx[2][1]),
                     rot: Rad(mx[0][1].atan2(mx[0][0])),
                     mx: Matrix3::one(),
                 };
@@ -228,12 +230,10 @@ impl Papercraft {
                 return true;
             }
         }
-        let (mut weight_a, mut weight_b) = (0, 0);
-        self.traverse_faces_no_matrix(a, |_| { weight_a += 1; ControlFlow::Continue(()) });
-        self.traverse_faces_no_matrix(b, |_| { weight_b += 1; ControlFlow::Continue(()) });
+        let weight_a = self.island_face_count(a);
+        let weight_b = self.island_face_count(b);
         weight_b > weight_a
     }
-
     pub fn contains_face(&self, island: &Island, face: FaceIndex) -> bool {
         let mut found = false;
         self.traverse_faces_no_matrix(island,
@@ -247,7 +247,11 @@ impl Papercraft {
             );
         found
     }
-
+    pub fn island_face_count(&self, island: &Island) -> u32 {
+        let mut count = 0;
+        self.traverse_faces_no_matrix(island, |_| { count += 1; ControlFlow::Continue(()) });
+        count
+    }
     pub fn get_flat_faces(&self, i_face: FaceIndex) -> HashSet<FaceIndex> {
         let mut res = HashSet::new();
         traverse_faces_ex(&self.model, i_face, (), FlatTraverseFace(self),
@@ -316,6 +320,58 @@ impl Papercraft {
         where F: FnMut(FaceIndex) -> ControlFlow<()>
     {
         traverse_faces_ex(&self.model, island.root_face(), (), NoMatrixTraverseFace(&self.model, &self.edges), |i, _, ()| visit_face(i))
+    }
+    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> HashMap<IslandKey, IslandKey> {
+        let mut renames = HashMap::new();
+        let mut i_edges = vec![i_edge];
+        while let Some(i_edge) = i_edges.pop() {
+            // First try to join the edge, if it fails skip.
+            let (i_face_a, i_face_b) = match self.model[i_edge].faces() {
+                (a, Some(b)) => (a, b),
+                _ => continue,
+            };
+            if !matches!(self.edge_status(i_edge), EdgeStatus::Cut(_)) {
+                continue;
+            }
+            let r = self.edge_toggle_cut(i_edge, None);
+            if r.is_empty() {
+                continue;
+            }
+            renames.extend(r);
+
+            // Move to the opposite edge of both faces
+            for i_face in [i_face_a, i_face_b] {
+                let edges: Vec<_> = self.get_flat_faces(i_face)
+                    .into_iter()
+                    .flat_map(|f| self.model[f].index_edges())
+                    .filter(|&e| self.edge_status(e) != EdgeStatus::Hidden)
+                    .collect();
+
+                // face strips must be made by isolated quads: 4 flat edges and 2 faces
+                if edges.len() != 4 {
+                    continue;
+                }
+                let n_faces = self.island_face_count(&self.island_by_key(self.island_by_face(i_face)).unwrap());
+                if n_faces != 2 {
+                    continue;
+                }
+
+                // Get the opposite edge, if any
+                let opposite = edges.iter().copied().filter(|&i_e| {
+                    if i_e == i_edge {
+                        return false;
+                    }
+                    let edge = &self.model[i_edge];
+                    let e = &self.model[i_e];
+                    if e.v0() == edge.v0() || e.v0() == edge.v1() || e.v1() == edge.v0() || e.v1() == edge.v1() {
+                        return false;
+                    }
+                    true
+                }).next();
+                i_edges.extend(opposite);
+            }
+        }
+        renames
     }
 }
 

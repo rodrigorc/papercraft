@@ -24,13 +24,6 @@ pub struct Model {
 #[serde(transparent)]
 pub struct VertexIndex(u32);
 
-//unsafe: VertexIndex is a transparent u32
-unsafe impl glium::index::Index for VertexIndex {
-    fn get_type() -> glium::index::IndexType {
-        glium::index::IndexType::U32
-    }
-}
-
 impl From<VertexIndex> for usize {
     fn from(idx: VertexIndex) -> usize {
         idx.0 as usize

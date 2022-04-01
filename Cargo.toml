@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 gtk = { version = "*", features = ["v3_22"] }
 glib = "*"
-glium = { version = "*", default_features = false }
 gl_loader = "*"
 cgmath = "*"
 anyhow = "*"
@@ -16,6 +15,4 @@ gdk-pixbuf = "*"
 slotmap = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
-
-[patch.crates-io]
-glium = { path = "./glium-0.31.0" }
+gl ="*"

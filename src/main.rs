@@ -2,15 +2,12 @@ use cgmath::{
     prelude::*,
     Deg, Rad,
 };
-use glium::{
-    draw_parameters::PolygonOffset,
-};
 use gtk::{
     prelude::*,
     gdk::{self, EventMask},
 };
 
-use std::{collections::HashMap, cell::Cell, ops::ControlFlow, time::Duration};
+use std::{collections::HashMap, ops::ControlFlow, time::Duration};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -18,11 +15,12 @@ mod waveobj;
 mod paper;
 mod util_3d;
 mod util_gl;
+mod glr;
 
 use paper::Papercraft;
 
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3};
-use util_gl::{GdkGliumBackend, Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, DynamicVertexBuffer, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine};
+use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine};
 
 use crate::util_3d::Matrix2;
 
@@ -109,9 +107,6 @@ fn main() {
     let ctx = MyContext {
         wscene: wscene.clone(),
         wpaper: wpaper.clone(),
-        gl_scene: None,
-        gl_paper: None,
-        gl_paper_size: Rc::new(Cell::new((1,1))),
         gl_objs: None,
 
         papercraft,
@@ -137,6 +132,7 @@ fn main() {
         gtk::main_quit();
     });
     gl_loader::init_gl();
+    gl::load_with(|s| gl_loader::get_proc_address(s) as _);
 
     wscene.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wscene.set_has_depth_buffer(true);
@@ -206,12 +202,6 @@ fn main() {
         let ctx = ctx.clone();
         move |w| scene_realize(w, &mut *ctx.borrow_mut())
     });
-    wscene.connect_unrealize({
-        let ctx = ctx.clone();
-        move |_w| {
-            ctx.borrow_mut().gl_scene = None;
-        }
-    });
     wscene.connect_render({
         let ctx = ctx.clone();
         move |_w, _gl| {
@@ -235,12 +225,6 @@ fn main() {
     wpaper.connect_realize({
         let ctx = ctx.clone();
         move |w| paper_realize(w, &mut *ctx.borrow_mut())
-    });
-    wscene.connect_unrealize({
-        let ctx = ctx.clone();
-        move |_w| {
-            ctx.borrow_mut().gl_paper = None;
-        }
     });
     wpaper.connect_render({
         let ctx = ctx.clone();
@@ -392,44 +376,38 @@ fn main() {
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
     w.attach_buffers();
-    let backend = GdkGliumBackend::new(w.context().unwrap(), Rc::new(Cell::new((1,1))));
-    let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
-    ctx.build_gl_objects(&glctx);
-    ctx.gl_scene = Some(glctx);
+    ctx.build_gl_objects();
 }
 
 fn paper_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
     w.attach_buffers();
-    let backend = GdkGliumBackend::new(w.context().unwrap(), Rc::clone(&ctx.gl_paper_size));
-    let glctx = unsafe { glium::backend::Context::new(backend, false, glium::debug::DebugCallbackBehavior::Ignore).unwrap() };
-    ctx.build_gl_objects(&glctx);
-    ctx.gl_paper = Some(glctx);
+    ctx.build_gl_objects();
 }
 
 struct GLObjects {
-    prg_scene_solid: glium::Program,
-    prg_scene_line: glium::Program,
-    prg_paper_solid: glium::Program,
-    prg_paper_line: glium::Program,
+    prg_scene_solid: glr::Program,
+    prg_scene_line: glr::Program,
+    prg_paper_solid: glr::Program,
+    prg_paper_line: glr::Program,
     #[allow(dead_code)]
-    prg_quad: glium::Program,
+    prg_quad: glr::Program,
 
-    textures: HashMap<String, glium::Texture2d>,
+    textures: HashMap<String, glr::Texture>,
 
-    vertex_buf: glium::VertexBuffer<MVertex3D>,
-    vertex_buf_sel: glium::VertexBuffer<MStatus>,
-    vertex_edges_buf: DynamicVertexBuffer<MVertex3DLine>,
+    vertices: glr::DynamicVertexArray<MVertex3D>,
+    vertices_sel: glr::DynamicVertexArray<MStatus>,
+    vertices_edges: glr::DynamicVertexArray<MVertex3DLine>,
 
-    paper_vertex_buf: DynamicVertexBuffer<MVertex2D>,
-    paper_vertex_edge_buf: DynamicVertexBuffer<MVertex2D>,
-    paper_vertex_edge_sel_buf: DynamicVertexBuffer<MVertex2D>,
-    paper_vertex_tab_buf: DynamicVertexBuffer<MVertex2D>,
-    paper_vertex_tab_edge_buf: DynamicVertexBuffer<MVertex2D>,
+    paper_vertices: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices_edge: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices_tab: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2D>,
 
-    paper_vertex_page_buf: glium::VertexBuffer<MVertex2D>,
+    paper_vertices_page: glr::DynamicVertexArray<MVertex2D>,
 
     #[allow(dead_code)]
-    quad_vertex_buf: glium::VertexBuffer<MVertexQuad>,
+    quad_vertices: glr::DynamicVertexArray<MVertexQuad>,
 }
 
 // This contains GL objects that are object specific
@@ -437,9 +415,6 @@ struct MyContext {
     wscene: gtk::GLArea,
     wpaper: gtk::GLArea,
 
-    gl_scene: Option<Rc<glium::backend::Context>>,
-    gl_paper: Option<Rc<glium::backend::Context>>,
-    gl_paper_size: Rc<Cell<(u32, u32)>>,
     gl_objs: Option<GLObjects>,
 
     // The model
@@ -766,17 +741,16 @@ impl MyContext {
 
     fn update_scene_face_selection(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
-            let mut vertex_buf_sel = gl_objs.vertex_buf_sel.as_mut_slice().map_write();
-            let n = vertex_buf_sel.len();
+            let n = gl_objs.vertices_sel.len();
             for i in 0..n {
-                vertex_buf_sel.set(i, MSTATUS_UNSEL);
+                gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
             }
             for &sel_island in &self.selected_islands {
                 if let Some(island) = self.papercraft.island_by_key(sel_island) {
                     self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
                         let pos = 3 * usize::from(i_face_2);
                         for i in pos .. pos + 3 {
-                            vertex_buf_sel.set(i, MSTATUS_SEL);
+                            gl_objs.vertices_sel[i] = MSTATUS_SEL;
                         }
                         ControlFlow::Continue(())
                     });
@@ -786,13 +760,13 @@ impl MyContext {
                 for i_face_2 in self.papercraft.get_flat_faces(i_sel_face) {
                     let pos = 3 * usize::from(i_face_2);
                     for i in pos .. pos + 3 {
-                        vertex_buf_sel.set(i, MSTATUS_HI);
+                        gl_objs.vertices_sel[i] = MSTATUS_HI;
                     }
                 }
             }
         }
     }
-    fn build_gl_objects(&mut self, gl: &Rc<glium::backend::Context>) {
+    fn build_gl_objects(&mut self) {
         if self.gl_objs.is_some() {
             return;
         }
@@ -802,36 +776,46 @@ impl MyContext {
                 let texture = match pixbuf {
                     None => {
                         // Empty texture is just a single white texel
-                        let empty = glium::Texture2d::empty(gl, 1, 1).unwrap();
-                        empty.write(glium::Rect{ left: 0, bottom: 0, width: 1, height: 1 }, vec![vec![(0xffu8, 0xffu8, 0xffu8, 0xffu8)]]);
+                        let empty = glr::Texture::generate().unwrap();
+                        unsafe {
+                            gl::BindTexture(gl::TEXTURE_2D, empty.id());
+                            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0xffu8, 0xffu8, 0xffu8].as_ptr() as *const _);
+                        }
                         empty
                     }
                     Some(img) => {
                         let bytes = img.read_pixel_bytes().unwrap();
-                        let raw =  glium::texture::RawImage2d {
-                            data: std::borrow::Cow::Borrowed(&bytes),
-                            width: img.width() as u32,
-                            height: img.height() as u32,
-                            format: match img.n_channels() {
-                                4 => glium::texture::ClientFormat::U8U8U8U8,
-                                3 => glium::texture::ClientFormat::U8U8U8,
-                                2 => glium::texture::ClientFormat::U8U8,
-                                _ => glium::texture::ClientFormat::U8,
-                            },
+                        let width = img.width();
+                        let height = img.height();
+                        let format = match img.n_channels() {
+                            4 => gl::RGBA,
+                            3 => gl::RGB,
+                            2 => gl::RG,
+                            _ => gl::RED,
                         };
-                        //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
-                        glium::Texture2d::new(gl,  raw).unwrap()
+
+                        let tex = glr::Texture::generate().unwrap();
+                        unsafe {
+                            gl::BindTexture(gl::TEXTURE_2D, tex.id());
+                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+                            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as i32, width, height, 0, format, gl::UNSIGNED_BYTE, bytes.as_ptr() as *const _);
+                            gl::GenerateMipmap(gl::TEXTURE_2D);
+                        }
+                        tex
                     }
                 };
                 (name.clone(), texture)
             })
             .collect();
 
-        let prg_scene_solid = util_gl::program_from_source(gl, include_str!("shaders/scene_solid.glsl"));
-        let prg_scene_line = util_gl::program_from_source(gl, include_str!("shaders/scene_line.glsl"));
-        let prg_paper_solid = util_gl::program_from_source(gl, include_str!("shaders/paper_solid.glsl"));
-        let prg_paper_line = util_gl::program_from_source(gl, include_str!("shaders/paper_line.glsl"));
-        let prg_quad = util_gl::program_from_source(gl, include_str!("shaders/quad.glsl"));
+        let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
+        let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
+        let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));
+        let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl"));
+        let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl"));
 
         let mut vertices = Vec::with_capacity(self.papercraft.model().num_faces() * 3);
         for (_, face) in self.papercraft.model().faces() {
@@ -844,16 +828,15 @@ impl MyContext {
                 });
             }
         }
+        let vertices = glr::DynamicVertexArray::from(vertices);
+        let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; vertices.len()]);
+        let vertices_edges = glr::DynamicVertexArray::new();
 
-        let vertex_buf = glium::VertexBuffer::immutable(gl, &vertices).unwrap(); // 1 value per vertex
-        let vertex_buf_sel = glium::VertexBuffer::persistent(gl, &vec![MSTATUS_UNSEL; vertices.len()]).unwrap(); // 1 value per vertex
-        let vertex_edges_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2); // one line per edge
-
-        let paper_vertex_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_faces() * 3); // 1 tri per face
-        let paper_vertex_edge_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2 * 2); // 2 lines per cut edge
-        let paper_vertex_edge_sel_buf = DynamicVertexBuffer::new(gl, 6); // 3 lines
-        let paper_vertex_tab_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 2 * 3); // 2 tris per edge
-        let paper_vertex_tab_edge_buf = DynamicVertexBuffer::new(gl, self.papercraft.model().num_edges() * 3 * 2); // 3 lines per edge
+        let paper_vertices = glr::DynamicVertexArray::new();
+        let paper_vertices_edge = glr::DynamicVertexArray::new();
+        let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
+        let paper_vertices_tab = glr::DynamicVertexArray::new();
+        let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
 
         let page_0 = MVertex2D {
             pos: Vector2::new(0.0, 0.0),
@@ -875,14 +858,13 @@ impl MyContext {
             uv: Vector2::zero(),
             color: [1.0, 1.0, 1.0, 1.0],
         };
-        let paper_vertex_page_buf = glium::VertexBuffer::dynamic(gl, &[page_0, page_2, page_1, page_0, page_3, page_2]).unwrap();
+        let paper_vertices_page = glr::DynamicVertexArray::from(vec![page_0, page_2, page_1, page_0, page_3, page_2]);
 
-        let quad_vertex_buf = glium::VertexBuffer::immutable(gl,
-            &[
+        let quad_vertices = glr::DynamicVertexArray::from(vec![
                 MVertexQuad { pos: [-1.0, -1.0] },
                 MVertexQuad { pos: [ 3.0, -1.0] },
                 MVertexQuad { pos: [-1.0,  3.0] },
-            ]).unwrap();
+        ]);
 
         let gl_objs = GLObjects {
             prg_scene_solid,
@@ -891,17 +873,18 @@ impl MyContext {
             prg_paper_line,
             prg_quad,
             textures,
-            vertex_buf,
-            vertex_buf_sel,
-            vertex_edges_buf,
-            paper_vertex_buf,
-            paper_vertex_edge_buf,
-            paper_vertex_edge_sel_buf,
-            paper_vertex_tab_buf,
-            paper_vertex_tab_edge_buf,
-            paper_vertex_page_buf,
+            vertices,
+            vertices_sel,
+            vertices_edges,
 
-            quad_vertex_buf,
+            paper_vertices,
+            paper_vertices_edge,
+            paper_vertices_edge_sel,
+            paper_vertices_tab,
+            paper_vertices_tab_edge,
+            paper_vertices_page,
+
+            quad_vertices,
         };
 
         self.gl_objs = Some(gl_objs);
@@ -969,7 +952,7 @@ impl MyContext {
                     v0.uv.x = 0.5 - x;
                     v1.uv.x = 1.0 + x;
                 } else if dotted {
-                    v1.uv.x = v.magnitude() * 100.0;
+                    v1.uv.x = v.magnitude();
                 }
                 args.vertices_edge.push(v0);
                 args.vertices_edge.push(v1);
@@ -1126,23 +1109,16 @@ impl MyContext {
         }
 
         if let Some(gl_objs) = &mut self.gl_objs {
-            gl_objs.paper_vertex_buf.update(&args.vertices);
-            gl_objs.paper_vertex_edge_buf.update(&args.vertices_edge);
-            gl_objs.paper_vertex_edge_sel_buf.update(&args.vertices_edge_sel);
-            gl_objs.paper_vertex_tab_buf.update(&args.vertices_tab_buf);
-            gl_objs.paper_vertex_tab_edge_buf.update(&args.vertices_tab_edge_buf);
+            gl_objs.paper_vertices.set(args.vertices);
+            gl_objs.paper_vertices_edge.set(args.vertices_edge);
+            gl_objs.paper_vertices_edge_sel.set(args.vertices_edge_sel);
+            gl_objs.paper_vertices_tab.set(args.vertices_tab_buf);
+            gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge_buf);
         }
     }
 
     fn scene_render(&self) {
-        let rect = self.wscene.allocation();
-
-        let mut frm = glium::Frame::new(Rc::clone(self.gl_scene.as_ref().unwrap()), (rect.width() as u32, rect.height() as u32));
         let gl_objs = self.gl_objs.as_ref().unwrap();
-
-        use glium::Surface;
-
-        frm.clear_color_and_depth((0.2, 0.2, 0.4, 1.0), 1.0);
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
@@ -1155,143 +1131,81 @@ impl MyContext {
             m: self.trans_scene.persp * self.trans_scene.obj,
             mnormal: self.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
-            texture: texture.sampled(),
+            texture: 0,
         };
+        let gl_objs = self.gl_objs.as_ref().unwrap();
 
-        let mut dp = glium::DrawParameters {
-            viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
-            blend: glium::Blend::alpha_blending(),
-            depth: glium::Depth {
-                test: glium::DepthTest::IfLessOrEqual,
-                write: true,
-                .. Default::default()
-            },
-            .. Default::default()
-        };
+        unsafe {
+            gl::ClearColor(0.2, 0.2, 0.4, 1.0);
+            gl::ClearDepth(1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-        // Draw the textured polys
-        dp.polygon_offset = PolygonOffset {
-            line: true,
-            fill: true,
-            factor: 1.0,
-            units: 1.0,
-            .. PolygonOffset::default()
-        };
-        frm.draw((&gl_objs.vertex_buf, &gl_objs.vertex_buf_sel), &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_scene_solid, &u, &dp).unwrap();
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, texture.id());
 
-        // Draw the lines:
-        dp.line_width = Some(3.0);
-        dp.smooth = Some(glium::Smooth::Nicest);
-        frm.draw(&gl_objs.vertex_edges_buf, &glium::index::NoIndices(glium::index::PrimitiveType::LinesList), &gl_objs.prg_scene_line, &u, &dp).unwrap();
+            let vao = glr::VertexArray::generate().unwrap();
+            gl::BindVertexArray(vao.id());
 
-        frm.finish().unwrap();
+            gl::LineWidth(3.0);
+            gl::Enable(gl::LINE_SMOOTH);
+            gl::PolygonOffset(1.0, 1.0);
+            gl::Enable(gl::POLYGON_OFFSET_FILL);
+
+            gl_objs.prg_scene_solid.draw(&u, (&gl_objs.vertices, &gl_objs.vertices_sel), gl::TRIANGLES);
+            gl_objs.prg_scene_line.draw(&u, &gl_objs.vertices_edges, gl::LINES);
+        }
     }
 
     fn paper_render(&self) {
-        let rect = self.wpaper.allocation();
-        use glium::Surface;
-
-        let mut frm = glium::Frame::new(Rc::clone(self.gl_paper.as_ref().unwrap()), (rect.width() as u32, rect.height() as u32));
         let gl_objs = self.gl_objs.as_ref().unwrap();
-
-        frm.clear_all((0.7, 0.7, 0.7, 1.0), 1.0, 0);
 
         let mat_name = self.material.as_deref().unwrap_or("");
         let texture = gl_objs.textures.get(mat_name)
             .unwrap_or_else(|| gl_objs.textures.get("").unwrap());
 
-        let mut u = Uniforms2D {
+        let u = Uniforms2D {
             m: self.trans_paper.ortho * self.trans_paper.mx,
-            texture: texture.sampled(),
+            texture: 0,
             frac_dash: 0.5,
         };
 
-        let mut dp = glium::DrawParameters {
-            viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
-            blend: glium::Blend::alpha_blending(),
-            stencil: glium::draw_parameters::Stencil {
-                depth_pass_operation_counter_clockwise: glium::StencilOperation::Increment,
-                .. Default::default()
-            },
-            .. Default::default()
-        };
+        unsafe {
+            gl::ClearColor(0.7, 0.7, 0.7, 1.0);
+            gl::ClearDepth(1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-        frm.draw(&gl_objs.paper_vertex_page_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_paper_solid, &u, &dp).unwrap();
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, texture.id());
 
-        // Textured faces
-        frm.draw(&gl_objs.paper_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_paper_solid, &u, &dp).unwrap();
+            let vao = glr::VertexArray::generate().unwrap();
+            gl::BindVertexArray(vao.id());
 
-        // Solid Tabs
-        frm.draw(&gl_objs.paper_vertex_tab_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_paper_solid, &u, &dp).unwrap();
+            gl_objs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
 
-        // Line Tabs
-        dp.line_width = Some(1.0);
-        dp.smooth = Some(glium::Smooth::Nicest);
-        frm.draw(&gl_objs.paper_vertex_tab_edge_buf, &glium::index::NoIndices(glium::index::PrimitiveType::LinesList), &gl_objs.prg_paper_line, &u, &dp).unwrap();
+            // Textured faces
+            gl_objs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices, gl::TRIANGLES);
 
-        // Creases
-        dp.stencil.depth_pass_operation_counter_clockwise = glium::StencilOperation::Keep;
-        frm.draw(&gl_objs.paper_vertex_edge_buf, &glium::index::NoIndices(glium::index::PrimitiveType::LinesList), &gl_objs.prg_paper_line, &u, &dp).unwrap();
+            // Solid Tabs
+            gl_objs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
 
-        // - Selected edge
-        if self.selected_edge.is_some() {
-            dp.line_width = Some(5.0);
-            u.frac_dash = 0.5;
-            frm.draw(&gl_objs.paper_vertex_edge_sel_buf, &glium::index::NoIndices(glium::index::PrimitiveType::LinesList), &gl_objs.prg_paper_line, &u, &dp).unwrap();
+            // Line Tabs
+            gl::Disable(gl::LINE_SMOOTH);
+            gl::LineWidth(1.0);
+            gl_objs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
 
-        }
-        // Overlaps
-        #[cfg(xxx)]
-        {
-            u.color = [1.0, 1.0, 1.0, 0.75];
-            dp.stencil = glium::draw_parameters::Stencil {
-                test_counter_clockwise: glium::StencilTest::IfEqual { mask: 0xff },
-                reference_value_counter_clockwise: 1,
-                write_mask_counter_clockwise: 0,
-                .. Default::default()
-            };
-            frm.draw(&gl_objs.quad_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_quad, &u, &dp).unwrap();
+            // Creases
+            gl_objs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge, gl::LINES);
 
-            u.color = [1.0, 0.0, 0.0, 0.75];
-            dp.stencil = glium::draw_parameters::Stencil {
-                test_counter_clockwise: glium::StencilTest::IfLess { mask: 0xff },
-                reference_value_counter_clockwise: 1,
-                write_mask_counter_clockwise: 0,
-                .. Default::default()
-            };
-            frm.draw(&gl_objs.quad_vertex_buf, &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList), &gl_objs.prg_quad, &u, &dp).unwrap();
-        }
-
-        frm.finish().unwrap();
-
-        #[cfg(xxx)]
-        {
-            ctx.gl_paper_size.set((rect.width() as u32, rect.height() as u32));
-            let rb = glium::framebuffer::RenderBuffer::new(&gl, glium::texture::UncompressedFloatFormat::U8U8U8U8, rect.width() as u32, rect.height() as u32).unwrap();
-            let mut frm = glium::framebuffer::SimpleFrameBuffer::new(&gl, &rb).unwrap();
-
-            frm.clear_color_and_depth((0.7, 0.7, 0.7, 1.0), 1.0);
-
-            let mat_name = ctx.material.as_deref().unwrap_or("");
-            let (texture, _) = ctx.textures.get(mat_name)
-                .unwrap_or_else(|| ctx.textures.get("").unwrap());
-
-            let u = MyUniforms2D {
-                m: ctx.trans_paper.ortho * ctx.trans_paper.mx,
-                texture: texture.sampled(),
-            };
-
-            // Draw the textured polys
-            let dp = glium::DrawParameters {
-                viewport: Some(glium::Rect { left: 0, bottom: 0, width: rect.width() as u32, height: rect.height() as u32}),
-                blend: glium::Blend::alpha_blending(),
-                .. Default::default()
-            };
-
-            frm.draw(&ctx.paper_vertex_buf, &ctx.paper_indices_solid_buf, &ctx.prg_solid_paper, &u, &dp).unwrap();
-
-            let GdkPixbufDataSink(pb) = gl.read_front_buffer().unwrap();
-            pb.savev("test.png", "png", &[]).unwrap();
+            // - Selected edge
+            if self.selected_edge.is_some() {
+                gl::Enable(gl::LINE_SMOOTH);
+                gl::LineWidth(5.0);
+                gl_objs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
+            }
         }
     }
 
@@ -1316,7 +1230,7 @@ impl MyContext {
                 edges.push(MVertex3DLine { pos: p0, color, top: selected as u8 });
                 edges.push(MVertex3DLine { pos: p1, color, top: selected as u8 });
             }
-            gl_objs.vertex_edges_buf.update(&edges);
+            gl_objs.vertices_edges.set(edges);
         }
     }
 

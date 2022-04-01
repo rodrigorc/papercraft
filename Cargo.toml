@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 gtk = { version = "*", features = ["v3_22"] }
 glib = "*"
+gio = "*"
 gl_loader = "*"
 cgmath = "*"
 anyhow = "*"

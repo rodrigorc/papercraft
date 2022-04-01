@@ -27,6 +27,15 @@ pub struct Papercraft {
 }
 
 impl Papercraft {
+    pub fn empty() -> Papercraft {
+        Papercraft {
+            model: Model::empty(),
+            scale: 1.0,
+            edges: Vec::new(),
+            islands: SlotMap::with_key(),
+        }
+    }
+
     pub fn new(model: Model, facemap: &HashMap<FaceIndex, u32>) -> Papercraft {
         let mut edges = vec![EdgeStatus::Cut(false); model.num_edges()];
 

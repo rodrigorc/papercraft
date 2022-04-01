@@ -297,6 +297,9 @@ impl<A: AttribProvider > DynamicVertexArray<A> {
         self.dirty.set(true);
         self.data = data.into();
     }
+    pub fn data(&self) -> &[A] {
+        &self.data[..]
+    }
     pub fn bind_buffer(&self) {
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.buf.id());

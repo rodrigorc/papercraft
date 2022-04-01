@@ -89,6 +89,14 @@ pub struct Vertex {
 }
 
 impl Model {
+    pub fn empty() -> Model {
+        Model {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            faces: Vec::new(),
+        }
+    }
+
     pub fn from_waveobj(obj: &waveobj::Model) -> (Model, HashMap<FaceIndex, u32>) {
         // Remove duplicated vertices by adding them into a set
         let all_vertices: HashSet<waveobj::FaceVertex> =

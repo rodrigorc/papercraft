@@ -1,0 +1,41 @@
+<interface>
+    <menu id='appmenu'>
+        <section>
+            <submenu>
+                <attribute name='label' translatable='yes'>_File</attribute>
+                    <section>
+                        <item>
+                            <attribute name='label' translatable='yes'>_Open...</attribute>
+                            <attribute name='action'>app.open</attribute>
+                            <attribute name='icon'>document-open</attribute>
+                            <attribute name='accel'>&lt;Ctrl&gt;O</attribute>
+                        </item>
+                        <item>
+                            <attribute name='label' translatable='yes'>_Save</attribute>
+                            <attribute name='action'>app.save</attribute>
+                            <attribute name='icon'>document-save</attribute>
+                            <attribute name='accel'>&lt;Ctrl&gt;S</attribute>
+                        </item>
+                        <item>
+                            <attribute name='label' translatable='yes'>Save _As...</attribute>
+                            <attribute name='action'>app.save_as</attribute>
+                            <attribute name='icon'>document-save-as</attribute>
+                        </item>
+                        <item>
+                            <attribute name='label' translatable='yes'>Import O_BJ...</attribute>
+                            <attribute name='action'>app.import</attribute>
+                            <attribute name='icon'>document-import</attribute>
+                        </item>
+                    </section>
+                    <section>
+                        <item>
+                            <attribute name='label' translatable='yes'>_Quit</attribute>
+                            <attribute name='action'>app.quit</attribute>
+                            <attribute name='icon'>application-exit</attribute>
+                            <attribute name='accel'>&lt;Ctrl&gt;Q</attribute>
+                        </item>
+                    </section>
+            </submenu>
+        </section>
+    </menu>
+</interface>

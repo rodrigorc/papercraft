@@ -2,12 +2,13 @@ use cgmath::{
     prelude::*,
     Deg, Rad,
 };
+use glib::clone;
 use gtk::{
     prelude::*,
     gdk::{self, EventMask},
 };
 
-use std::{collections::HashMap, ops::ControlFlow, time::Duration};
+use std::{collections::HashMap, ops::ControlFlow, time::Duration, path::Path};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -24,7 +25,14 @@ use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus
 
 use crate::util_3d::Matrix2;
 
-fn main() {
+
+fn on_app_startup(app: &gtk::Application) {
+    dbg!("startup");
+    let builder = gtk::Builder::from_string(include_str!("menu.ui"));
+    let menu: gio::MenuModel = builder.object("appmenu").unwrap();
+    app.set_menubar(Some(&menu));
+
+    /*
     let f = std::fs::File::open("pikachu.obj").unwrap();
     let f = std::io::BufReader::new(f);
     let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
@@ -72,7 +80,7 @@ fn main() {
         //only scale and translate, no need to touch normals
         *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
     });
-
+    */
     let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
     let trans_scene = Transformation3D::new(
         Vector3::new(0.0, 0.0, -30.0),
@@ -90,28 +98,32 @@ fn main() {
         }
     };
 
-    let papercraft = Papercraft::new(model, &facemap);
+    //let papercraft = Papercraft::new(model, &facemap);
     /*let papercraft: Papercraft = {
         let f = std::fs::File::open("a.json").unwrap();
         let f = std::io::BufReader::new(f);
         serde_json::from_reader(f).unwrap()
     };*/
 
-    std::env::set_var("GTK_CSD", "0");
-    gtk::init().expect("gtk::init");
-
-
     let wscene = gtk::GLArea::new();
     let wpaper = gtk::GLArea::new();
+    let w = gtk::ApplicationWindow::new(app);
 
-    let ctx = MyContext {
+    let gui = Gui {
+        top_window: w.clone(),
         wscene: wscene.clone(),
         wpaper: wpaper.clone(),
+        gl_fixs: None,
+    };
+    let ctx = MyContext {
+        gui,
+
         gl_objs: None,
 
-        papercraft,
-        texture_images,
-        material,
+        papercraft: Papercraft::empty(),
+        texture_images: { let mut texs = HashMap::default(); texs.insert(String::new(), None); texs },
+
+        material: None,
         selected_face: None,
         selected_edge: None,
         selected_islands: Vec::new(),
@@ -126,19 +138,104 @@ fn main() {
 
     let ctx: Rc<RefCell<MyContext>> = Rc::new(RefCell::new(ctx));
 
-    let w = gtk::Window::new(gtk::WindowType::Toplevel);
+    let aquit = gio::SimpleAction::new("quit", None);
+    aquit.connect_activate(clone!(@weak app => move |_, _| app.quit() ));
+    app.add_action(&aquit);
+
+    let aopen = gio::SimpleAction::new("open", None);
+    aopen.connect_activate(clone!(
+        @strong w as top_window, @strong app =>
+        move |_, _| {
+            let dlg = gtk::FileChooserDialog::with_buttons(
+                Some("Open model"),
+                Some(&top_window),
+                gtk::FileChooserAction::Open,
+                &[
+                    ("Cancel", gtk::ResponseType::Cancel),
+                    ("Open", gtk::ResponseType::Accept)
+                ]
+            );
+            dlg.set_current_folder(".");
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Papercraft models"));
+            filter.add_pattern("*.json");
+            dlg.add_filter(&filter);
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("All files"));
+            filter.add_pattern("*");
+            dlg.add_filter(&filter);
+
+            let res = dlg.run();
+            let name = if res == gtk::ResponseType::Accept {
+                dlg.filename()
+            } else {
+                None
+            };
+            unsafe { dlg.destroy(); }
+
+            if let Some(name) = name {
+                let file = gio::File::for_path(name);
+                app.open(&[file], "");
+            }
+        }
+    ));
+    app.add_action(&aopen);
+
+    let aimport = gio::SimpleAction::new("import", None);
+    aimport.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let top_window = ctx.borrow().gui.top_window.clone();
+            let dlg = gtk::FileChooserDialog::with_buttons(
+                Some("Import OBJ"),
+                Some(&top_window),
+                gtk::FileChooserAction::Open,
+                &[
+                    ("Cancel", gtk::ResponseType::Cancel),
+                    ("Open", gtk::ResponseType::Accept)
+                ]
+            );
+            dlg.set_current_folder(".");
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("WaveObj models"));
+            filter.add_pattern("*.obj");
+            dlg.add_filter(&filter);
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("All files"));
+            filter.add_pattern("*");
+            dlg.add_filter(&filter);
+
+            let res = dlg.run();
+            let name = if res == gtk::ResponseType::Accept {
+                dlg.filename()
+            } else {
+                None
+            };
+            unsafe { dlg.destroy(); }
+
+            if let Some(name) = name {
+                ctx.borrow_mut().import_waveobj(name);
+            }
+        }
+    ));
+    app.add_action(&aimport);
+
+
     w.set_default_size(800, 600);
-    w.connect_destroy(move |_| {
-        gtk::main_quit();
-    });
+    w.connect_destroy(clone!(
+        @strong app =>
+        move |_| {
+            app.quit();
+        }
+    ));
     gl_loader::init_gl();
     gl::load_with(|s| gl_loader::get_proc_address(s) as _);
 
     wscene.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wscene.set_has_depth_buffer(true);
 
-    wscene.connect_button_press_event({
-        let ctx = ctx.clone();
+    wscene.connect_button_press_event(clone!(
+        @strong ctx =>
         move |w, ev| {
             w.grab_focus();
             let mut ctx = ctx.borrow_mut();
@@ -162,16 +259,16 @@ fn main() {
                         ctx.paper_build();
                         ctx.scene_edge_build();
                         ctx.update_scene_face_selection();
-                        ctx.wscene.queue_render();
-                        ctx.wpaper.queue_render();
+                        ctx.gui.wscene.queue_render();
+                        ctx.gui.wpaper.queue_render();
                     }
                 }
             }
             Inhibit(false)
         }
-    });
-    wscene.connect_scroll_event({
-        let ctx = ctx.clone();
+    ));
+    wscene.connect_scroll_event(clone!(
+        @strong ctx =>
         move |_w, ev|  {
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
@@ -182,12 +279,12 @@ fn main() {
             };
             ctx.trans_scene.scale *= dz;
             ctx.trans_scene.recompute_obj();
-            ctx.wscene.queue_render();
+            ctx.gui.wscene.queue_render();
             Inhibit(true)
         }
-    });
-    wscene.connect_motion_notify_event({
-        let ctx = ctx.clone();
+    ));
+    wscene.connect_motion_notify_event(clone!(
+        @strong ctx =>
         move |_w, ev|  {
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
@@ -197,20 +294,22 @@ fn main() {
             ctx.scene_motion_notify_event(pos, ev);
             Inhibit(true)
         }
-    });
-    wscene.connect_realize({
-        let ctx = ctx.clone();
-        move |w| scene_realize(w, &mut *ctx.borrow_mut())
-    });
-    wscene.connect_render({
-        let ctx = ctx.clone();
+    ));
+    wscene.connect_realize(clone!(
+        @strong ctx =>
+        move |w| {
+            scene_realize(w, &mut *ctx.borrow_mut());
+        }
+    ));
+    wscene.connect_render(clone!(
+        @strong ctx =>
         move |_w, _gl| {
-            ctx.borrow().scene_render();
+            ctx.borrow_mut().scene_render();
             gtk::Inhibit(false)
         }
-    });
-    wscene.connect_resize({
-        let ctx = ctx.clone();
+    ));
+    wscene.connect_resize(clone!(
+        @strong ctx =>
         move |_w, width, height| {
             if height <= 0 || width <= 0 {
                 return;
@@ -218,33 +317,34 @@ fn main() {
             let ratio = width as f32 / height as f32;
             ctx.borrow_mut().trans_scene.set_ratio(ratio);
         }
-    });
+    ));
 
     wpaper.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_RELEASE_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wpaper.set_has_stencil_buffer(true);
-    wpaper.connect_realize({
-        let ctx = ctx.clone();
+
+    wpaper.connect_realize(clone!(
+        @strong ctx =>
         move |w| paper_realize(w, &mut *ctx.borrow_mut())
-    });
-    wpaper.connect_render({
-        let ctx = ctx.clone();
+    ));
+    wpaper.connect_render(clone!(
+        @strong ctx =>
         move |_w, _gl| {
-            ctx.borrow().paper_render();
+            ctx.borrow_mut().paper_render();
             Inhibit(true)
         }
-    });
-    wpaper.connect_resize({
-        let ctx = ctx.clone();
+    ));
+    wpaper.connect_resize(clone!(
+        @strong ctx =>
         move |_w, width, height| {
             if height <= 0 || width <= 0 {
                 return;
             }
             ctx.borrow_mut().trans_paper.ortho = util_3d::ortho2d(width as f32, height as f32);
         }
-    });
+    ));
 
-    wpaper.connect_button_press_event({
-        let ctx = ctx.clone();
+    wpaper.connect_button_press_event(clone!(
+        @strong ctx =>
         move |w, ev|  {
             w.grab_focus();
             let mut ctx = ctx.borrow_mut();
@@ -270,8 +370,8 @@ fn main() {
                         ctx.paper_build();
                         ctx.scene_edge_build();
                         ctx.update_scene_face_selection();
-                        ctx.wscene.queue_render();
-                        ctx.wpaper.queue_render();
+                        ctx.gui.wscene.queue_render();
+                        ctx.gui.wpaper.queue_render();
                     }
                     ClickResult::None => {
                         ctx.grabbed_island = false;
@@ -281,18 +381,18 @@ fn main() {
             }
             Inhibit(true)
         }
-    });
-    wpaper.connect_button_release_event({
-        let ctx = ctx.clone();
+    ));
+    wpaper.connect_button_release_event(clone!(
+        @strong ctx =>
         move |_w, _ev|  {
             let mut ctx = ctx.borrow_mut();
             ctx.grabbed_island = false;
             ctx.set_scroll_timer(None);
             Inhibit(true)
         }
-    });
-    wpaper.connect_motion_notify_event({
-        let ctx = ctx.clone();
+    ));
+    wpaper.connect_motion_notify_event(clone!(
+        @strong ctx =>
         move |w, ev| {
             let rect = w.allocation();
             let pos = ev.position();
@@ -318,17 +418,17 @@ fn main() {
                     None
                 };
                 if let Some(delta) = delta {
-                    let f = {
-                        let ctx = ctx.clone();
+                    let f = clone!(
+                        @strong ctx =>
                         move || {
                             let mut ctx = ctx.borrow_mut();
                             ctx.last_cursor_pos += delta;
                             ctx.trans_paper.mx = Matrix3::from_translation(delta) * ctx.trans_paper.mx;
                             ctx.paper_motion_notify_event(pos, state);
-                            ctx.wpaper.queue_render();
+                            ctx.gui.wpaper.queue_render();
                             glib::Continue(true)
                         }
-                    };
+                    );
                     // do not wait for the timer for the first call
                     f();
                     let timer = glib::timeout_add_local(Duration::from_millis(50), f);
@@ -340,9 +440,9 @@ fn main() {
 
             Inhibit(true)
         }
-    });
-    wpaper.connect_scroll_event({
-        let ctx = ctx.clone();
+    ));
+    wpaper.connect_scroll_event(clone!(
+        @strong ctx =>
         move |_w, ev|  {
             let mut ctx = ctx.borrow_mut();
             let dz = match ev.direction() {
@@ -351,17 +451,83 @@ fn main() {
                 _ => 1.0,
             };
             ctx.trans_paper.mx = Matrix3::from_scale(dz) * ctx.trans_paper.mx;
-            ctx.wpaper.queue_render();
+            ctx.gui.wpaper.queue_render();
             Inhibit(true)
         }
-    });
+    ));
 
     let hbin = gtk::Paned::new(gtk::Orientation::Horizontal);
     hbin.pack1(&wscene, true, true);
     hbin.pack2(&wpaper, true, true);
-    w.add(&hbin);
+
+    let toolbar = gtk::Toolbar::new();
+    let btn = gtk::ToolButton::new(gtk::Widget::NONE, None);
+    btn.set_action_name(Some("app.quit"));
+    btn.set_icon_name(Some("application-exit"));
+    toolbar.add(&btn);
+
+    //app.lookup_action("quit").unwrap().downcast::<gio::SimpleAction>().unwrap().set_enabled(false);
+
+    let vbin = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    w.add(&vbin);
+
+    vbin.pack_start(&toolbar, false, true, 0);
+    vbin.pack_start(&hbin, true, true, 0);
+
+	app.connect_activate(clone!(
+        @strong ctx =>
+        move |_app: &gtk::Application| {
+            let w = ctx.borrow().gui.top_window.clone();
+            w.show_all();
+            w.present();
+    	}
+    ));
+	app.connect_open(clone!(
+        @strong ctx =>
+        move |_app: &gtk::Application, files, _hint| {
+            let f = &files[0];
+            let (data, _) = f.load_contents(gio::Cancellable::NONE).unwrap();
+            let papercraft: Papercraft = serde_json::from_reader(&data[..]).unwrap();
+
+            let w = {
+                let mut ctx = ctx.borrow_mut();
+                ctx.papercraft = papercraft;
+
+                // State
+                ctx.material = None;
+                ctx.selected_face = None;
+                ctx.selected_edge = None;
+                ctx.selected_islands = Vec::new();
+                ctx.grabbed_island = false;
+                ctx.scroll_timer = None;
+                ctx.last_cursor_pos = Vector2::zero();
+
+                ctx.gl_objs = None;
+
+                ctx.gui.top_window.clone()
+            };
+            w.show_all();
+            w.present();
+        }
+	));
+}
+
+fn main() {
+    std::env::set_var("GTK_CSD", "0");
+    //gtk::init().expect("gtk::init");
+
+
+    let app = gtk::Application::new(None, gio::ApplicationFlags::HANDLES_OPEN);
+	app.connect_startup(|app: &gtk::Application| {
+        on_app_startup(app);
+	});
+    app.run();
+
+    /*
+    return;
 
     w.show_all();
+    w.present();
     gtk::main();
     #[cfg(xxx)]
     {
@@ -371,20 +537,22 @@ fn main() {
             let f = std::io::BufWriter::new(f);
             serde_json::to_writer(f, &ctx.papercraft).unwrap();
         }
-    }
+    }*/
 }
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
     w.attach_buffers();
+    ctx.gl_objs = None;
     ctx.build_gl_objects();
 }
 
 fn paper_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
     w.attach_buffers();
+    ctx.gl_objs = None;
     ctx.build_gl_objects();
 }
 
-struct GLObjects {
+struct GLFixedObjects {
     prg_scene_solid: glr::Program,
     prg_scene_line: glr::Program,
     prg_paper_solid: glr::Program,
@@ -392,8 +560,14 @@ struct GLObjects {
     #[allow(dead_code)]
     prg_quad: glr::Program,
 
+    #[allow(dead_code)]
+    quad_vertices: glr::DynamicVertexArray<MVertexQuad>,
+}
+
+struct GLObjects {
     textures: HashMap<String, glr::Texture>,
 
+    //GL objects that are rebuild with the model
     vertices: glr::DynamicVertexArray<MVertex3D>,
     vertices_sel: glr::DynamicVertexArray<MStatus>,
     vertices_edges: glr::DynamicVertexArray<MVertex3DLine>,
@@ -405,15 +579,19 @@ struct GLObjects {
     paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2D>,
 
     paper_vertices_page: glr::DynamicVertexArray<MVertex2D>,
-
-    #[allow(dead_code)]
-    quad_vertices: glr::DynamicVertexArray<MVertexQuad>,
 }
 
-// This contains GL objects that are object specific
-struct MyContext {
+//Objects that persist a file open action
+struct Gui {
+    top_window: gtk::ApplicationWindow,
     wscene: gtk::GLArea,
     wpaper: gtk::GLArea,
+
+    gl_fixs: Option<GLFixedObjects>,
+}
+
+struct MyContext {
+    gui: Gui,
 
     gl_objs: Option<GLObjects>,
 
@@ -430,7 +608,6 @@ struct MyContext {
     scroll_timer: Option<glib::SourceId>,
 
     last_cursor_pos: Vector2,
-
 
     trans_scene: Transformation3D,
     trans_paper: TransformationPaper,
@@ -502,6 +679,104 @@ struct PaperDrawFaceArgs {
 }
 
 impl MyContext {
+    fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
+        let f = std::fs::File::open(file_name).unwrap();
+        let f = std::io::BufReader::new(f);
+        let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
+
+        // For now read only the first model from the file
+        let obj = models.get(0).unwrap();
+        let material = obj.material().map(String::from);
+        let mut texture_images = HashMap::new();
+        texture_images.insert(String::new(), None);
+
+        // Other textures are read from the .mtl file
+        for lib in matlibs {
+            let f = std::fs::File::open(lib).unwrap();
+            let f = std::io::BufReader::new(f);
+
+            for lib in waveobj::Material::from_reader(f).unwrap()  {
+                if let Some(map) = lib.map() {
+                    let pbl = gdk_pixbuf::PixbufLoader::new();
+                    let data = std::fs::read(dbg!(map)).unwrap();
+                    pbl.write(&data).ok().unwrap();
+                    pbl.close().ok().unwrap();
+                    let img = pbl.pixbuf().unwrap();
+                    //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
+                    texture_images.insert(lib.name().to_owned(), Some(img));
+                    //textures.insert(name, tex);
+                }
+            }
+        }
+
+        let (mut model, facemap) = paper::Model::from_waveobj(obj);
+
+        // Compute the bounding box, then move to the center and scale to a standard size
+        let (v_min, v_max) = util_3d::bounding_box_3d(
+            model
+                .vertices()
+                .map(|v| v.pos())
+        );
+        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
+        let mscale = Matrix4::from_scale(1.0 / size);
+        let center = (v_min + v_max) / 2.0;
+        let mcenter = Matrix4::from_translation(-center);
+        let m = mscale * mcenter;
+
+        model.transform_vertices(|pos, _normal| {
+            //only scale and translate, no need to touch normals
+            *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
+        });
+
+        let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
+        let mut trans_scene = Transformation3D::new(
+            Vector3::new(0.0, 0.0, -30.0),
+            Quaternion::one(),
+             20.0,
+             persp
+        );
+        let rscene = self.gui.wscene.allocation();
+        let ratio = rscene.width() as f32 / rscene.height() as f32;
+        trans_scene.set_ratio(ratio);
+
+        let trans_paper = {
+            let mt = Matrix3::from_translation(Vector2::new(-210.0/2.0, -297.0/2.0));
+            let ms = Matrix3::from_scale(1.0);
+            let rpaper = self.gui.wpaper.allocation();
+            let ortho = util_3d::ortho2d(rpaper.width() as f32, rpaper.height() as f32);
+            TransformationPaper {
+                ortho,
+                //mx: mt * ms * mr,
+                mx: ms * mt,
+            }
+        };
+
+        let papercraft = Papercraft::new(model, &facemap);
+
+        self.papercraft = papercraft;
+        self.texture_images = texture_images;
+
+        // State
+        self.material = material;
+        self.selected_face = None;
+        self.selected_edge = None;
+        self.selected_islands = Vec::new();
+        self.grabbed_island = false;
+        self.scroll_timer = None;
+        self.last_cursor_pos = Vector2::zero();
+        self.trans_scene = trans_scene;
+        self.trans_paper = trans_paper;
+
+        self.gl_objs = None;
+
+        self.paper_build();
+        self.scene_edge_build();
+        self.update_scene_face_selection();
+
+        self.gui.wscene.queue_render();
+        self.gui.wpaper.queue_render();
+    }
+
     fn scene_motion_notify_event(&mut self, pos: Vector2, ev: &gdk::EventMotion) {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
@@ -517,12 +792,12 @@ impl MyContext {
 
             self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
             self.trans_scene.recompute_obj();
-            self.wscene.queue_render();
+            self.gui.wscene.queue_render();
         } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
             let delta = delta / 50.0;
             self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
             self.trans_scene.recompute_obj();
-            self.wscene.queue_render();
+            self.gui.wscene.queue_render();
         } else {
             let selection = self.analyze_click(pos);
             self.set_selection(selection, false, false);
@@ -534,7 +809,7 @@ impl MyContext {
         self.last_cursor_pos = pos;
         if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
             self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
-            self.wpaper.queue_render();
+            self.gui.wpaper.queue_render();
         } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.grabbed_island {
             if !self.selected_islands.is_empty() {
                 for &i_island in &self.selected_islands {
@@ -550,7 +825,7 @@ impl MyContext {
                     }
                 }
                 self.paper_build();
-                self.wpaper.queue_render();
+                self.gui.wpaper.queue_render();
             }
         } else {
             let selection = self.analyze_click_paper(pos);
@@ -566,7 +841,7 @@ impl MyContext {
     }
 
     fn analyze_click(&self, pos: Vector2) -> ClickResult {
-        let rect = self.wscene.allocation();
+        let rect = self.gui.wscene.allocation();
         let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
         let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
@@ -637,7 +912,7 @@ impl MyContext {
     }
 
     fn analyze_click_paper(&self, pos: Vector2) -> ClickResult {
-        let rect = self.wpaper.allocation();
+        let rect = self.gui.wpaper.allocation();
         let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
         let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
         let click = Point2::new(x, y);
@@ -735,8 +1010,8 @@ impl MyContext {
         self.paper_build();
         self.scene_edge_build();
         self.update_scene_face_selection();
-        self.wscene.queue_render();
-        self.wpaper.queue_render();
+        self.gui.wscene.queue_render();
+        self.gui.wpaper.queue_render();
     }
 
     fn update_scene_face_selection(&mut self) {
@@ -866,12 +1141,17 @@ impl MyContext {
                 MVertexQuad { pos: [-1.0,  3.0] },
         ]);
 
-        let gl_objs = GLObjects {
+        let gl_fixs = GLFixedObjects {
             prg_scene_solid,
             prg_scene_line,
             prg_paper_solid,
             prg_paper_line,
             prg_quad,
+
+            quad_vertices,
+        };
+
+        let gl_objs = GLObjects {
             textures,
             vertices,
             vertices_sel,
@@ -884,13 +1164,14 @@ impl MyContext {
             paper_vertices_tab_edge,
             paper_vertices_page,
 
-            quad_vertices,
         };
 
+        self.gui.gl_fixs = Some(gl_fixs);
         self.gl_objs = Some(gl_objs);
 
         self.scene_edge_build();
         self.paper_build();
+        self.update_scene_face_selection();
     }
 
     fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, selected: bool, hi: bool, args: &mut PaperDrawFaceArgs) {
@@ -1117,8 +1398,10 @@ impl MyContext {
         }
     }
 
-    fn scene_render(&self) {
+    fn scene_render(&mut self) {
+        self.build_gl_objects();
         let gl_objs = self.gl_objs.as_ref().unwrap();
+        let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
@@ -1133,7 +1416,6 @@ impl MyContext {
             lights: [light0, light1],
             texture: 0,
         };
-        let gl_objs = self.gl_objs.as_ref().unwrap();
 
         unsafe {
             gl::ClearColor(0.2, 0.2, 0.4, 1.0);
@@ -1153,13 +1435,15 @@ impl MyContext {
             gl::PolygonOffset(1.0, 1.0);
             gl::Enable(gl::POLYGON_OFFSET_FILL);
 
-            gl_objs.prg_scene_solid.draw(&u, (&gl_objs.vertices, &gl_objs.vertices_sel), gl::TRIANGLES);
-            gl_objs.prg_scene_line.draw(&u, &gl_objs.vertices_edges, gl::LINES);
+            gl_fixs.prg_scene_solid.draw(&u, (&gl_objs.vertices, &gl_objs.vertices_sel), gl::TRIANGLES);
+            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edges, gl::LINES);
         }
     }
 
-    fn paper_render(&self) {
+    fn paper_render(&mut self) {
+        self.build_gl_objects();
         let gl_objs = self.gl_objs.as_ref().unwrap();
+        let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
 
         let mat_name = self.material.as_deref().unwrap_or("");
         let texture = gl_objs.textures.get(mat_name)
@@ -1184,27 +1468,27 @@ impl MyContext {
             let vao = glr::VertexArray::generate().unwrap();
             gl::BindVertexArray(vao.id());
 
-            gl_objs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
 
             // Textured faces
-            gl_objs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices, gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices, gl::TRIANGLES);
 
             // Solid Tabs
-            gl_objs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
 
             // Line Tabs
             gl::Disable(gl::LINE_SMOOTH);
             gl::LineWidth(1.0);
-            gl_objs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
 
             // Creases
-            gl_objs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge, gl::LINES);
 
             // - Selected edge
             if self.selected_edge.is_some() {
                 gl::Enable(gl::LINE_SMOOTH);
                 gl::LineWidth(5.0);
-                gl_objs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
         }
     }

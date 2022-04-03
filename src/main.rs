@@ -20,73 +20,21 @@ mod glr;
 
 use paper::Papercraft;
 
-use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3};
+use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine};
 
-use crate::util_3d::Matrix2;
-
-
-fn on_app_startup(app: &gtk::Application) {
+fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
     app.set_menubar(Some(&menu));
 
-    /*
-    let f = std::fs::File::open("pikachu.obj").unwrap();
-    let f = std::io::BufReader::new(f);
-    let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
-
-    // For now read only the first model from the file
-    let obj = models.get(0).unwrap();
-    let material = obj.material().map(String::from);
-    let mut texture_images = HashMap::new();
-    texture_images.insert(String::new(), None);
-
-    // Other textures are read from the .mtl file
-    for lib in matlibs {
-        let f = std::fs::File::open(lib).unwrap();
-        let f = std::io::BufReader::new(f);
-
-        for lib in waveobj::Material::from_reader(f).unwrap()  {
-            if let Some(map) = lib.map() {
-                let pbl = gdk_pixbuf::PixbufLoader::new();
-                let data = std::fs::read(dbg!(map)).unwrap();
-                pbl.write(&data).ok().unwrap();
-                pbl.close().ok().unwrap();
-                let img = pbl.pixbuf().unwrap();
-                //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
-                texture_images.insert(lib.name().to_owned(), Some(img));
-                //textures.insert(name, tex);
-            }
-        }
-    }
-
-    let (mut model, facemap) = paper::Model::from_waveobj(obj);
-
-    // Compute the bounding box, then move to the center and scale to a standard size
-    let (v_min, v_max) = util_3d::bounding_box_3d(
-        model
-            .vertices()
-            .map(|v| v.pos())
-    );
-    let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
-    let mscale = Matrix4::from_scale(1.0 / size);
-    let center = (v_min + v_max) / 2.0;
-    let mcenter = Matrix4::from_translation(-center);
-    let m = mscale * mcenter;
-
-    model.transform_vertices(|pos, _normal| {
-        //only scale and translate, no need to touch normals
-        *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
-    });
-    */
     let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
     let trans_scene = Transformation3D::new(
         Vector3::new(0.0, 0.0, -30.0),
         Quaternion::one(),
-         20.0,
-         persp
+        20.0,
+        persp
     );
     let trans_paper = {
         let mt = Matrix3::from_translation(Vector2::new(-210.0/2.0, -297.0/2.0));
@@ -97,13 +45,6 @@ fn on_app_startup(app: &gtk::Application) {
             mx: ms * mt,
         }
     };
-
-    //let papercraft = Papercraft::new(model, &facemap);
-    /*let papercraft: Papercraft = {
-        let f = std::fs::File::open("a.json").unwrap();
-        let f = std::io::BufReader::new(f);
-        serde_json::from_reader(f).unwrap()
-    };*/
 
     let wscene = gtk::GLArea::new();
     let wpaper = gtk::GLArea::new();
@@ -476,7 +417,8 @@ fn on_app_startup(app: &gtk::Application) {
 
 	app.connect_activate(clone!(
         @strong ctx =>
-        move |_app: &gtk::Application| {
+        move |_app| {
+            dbg!("activate");
             let w = ctx.borrow().gui.top_window.clone();
             w.show_all();
             w.present();
@@ -484,7 +426,8 @@ fn on_app_startup(app: &gtk::Application) {
     ));
 	app.connect_open(clone!(
         @strong ctx =>
-        move |_app: &gtk::Application, files, _hint| {
+        move |_app, files, _hint| {
+            dbg!("open");
             let f = &files[0];
             let (data, _) = f.load_contents(gio::Cancellable::NONE).unwrap();
             let papercraft: Papercraft = serde_json::from_reader(&data[..]).unwrap();
@@ -510,17 +453,39 @@ fn on_app_startup(app: &gtk::Application) {
             w.present();
         }
 	));
+
+    let args = args.borrow();
+    if let Some(args) = &*args {
+        ctx.borrow_mut().import_waveobj(args);
+    }
 }
 
 fn main() {
     std::env::set_var("GTK_CSD", "0");
     //gtk::init().expect("gtk::init");
 
-
-    let app = gtk::Application::new(None, gio::ApplicationFlags::HANDLES_OPEN);
-	app.connect_startup(|app: &gtk::Application| {
-        on_app_startup(app);
-	});
+    let app = gtk::Application::new(None,
+        gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE
+    );
+    app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::String, "Import a WaveOBJ file", None);
+    let args = Rc::new(RefCell::new(None));
+    app.connect_handle_local_options(clone!(
+        @strong args =>
+        move |_app, dict| {
+            dbg!("local_option");
+            //It should be a OsString but that gets an \0 at the end that breaks everything
+            let s: Option<String> = dict.lookup("import").unwrap();
+            dbg!(&s);
+            *args.borrow_mut() = s;
+            -1
+        }
+    ));
+	app.connect_startup(clone!(
+        @strong args =>
+        move |app: &gtk::Application| {
+            on_app_startup(app, args.clone());
+        }
+    ));
     app.run();
 
     /*

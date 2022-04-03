@@ -46,7 +46,7 @@ impl Model {
         impl ModelData {
             fn build(&mut self) -> Option<Model> {
                 //Build the model even if empty, to always reset all self fields
-                let mut m = Model {
+                let m = Model {
                     name: self.name.take().unwrap_or_default(),
                     materials: std::mem::take(&mut self.materials),
                     vs0: std::mem::take(&mut self.pos),
@@ -57,10 +57,6 @@ impl Model {
                 if m.faces.is_empty() {
                     None
                 } else {
-                    //Ensure that there is at least a blank material
-                    if m.materials.is_empty() {
-                        m.materials.push(String::new());
-                    }
                     Some(m)
                 }
             }
@@ -128,7 +124,7 @@ impl Model {
                 }
                 "usemtl" => {
                     let mtl = words.next().ok_or_else(syn_error)?;
-                    if let Some(p) = data.materials.iter().position(|m| m == "mtl") {
+                    if let Some(p) = data.materials.iter().position(|m| m == mtl) {
                         data.current_material = p;
                     } else {
                         data.current_material = data.materials.len();

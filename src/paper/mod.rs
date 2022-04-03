@@ -6,7 +6,6 @@ pub use craft::*;
 
 use crate::util_3d::*;
 use serde::{Serialize, Deserialize, ser::{SerializeStruct, SerializeSeq}};
-
 mod ser {
     use super::*;
     pub mod vector2 {

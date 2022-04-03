@@ -23,7 +23,7 @@ use paper::Papercraft;
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine};
 
-fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
+fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
@@ -62,8 +62,6 @@ fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
         gl_objs: None,
 
         papercraft: Papercraft::empty(),
-
-        texture_images: Vec::new(),
         selected_face: None,
         selected_edge: None,
         selected_islands: Vec::new(),
@@ -98,7 +96,7 @@ fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
             dlg.set_current_folder(".");
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("Papercraft models"));
-            filter.add_pattern("*.json");
+            filter.add_pattern("*.craft");
             dlg.add_filter(&filter);
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("All files"));
@@ -159,6 +157,49 @@ fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
         }
     ));
     app.add_action(&aimport);
+
+    let asave_as = gio::SimpleAction::new("save_as", None);
+    asave_as.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let top_window = ctx.borrow().gui.top_window.clone();
+            let dlg = gtk::FileChooserDialog::with_buttons(
+                Some("Import OBJ"),
+                Some(&top_window),
+                gtk::FileChooserAction::Save,
+                &[
+                    ("Cancel", gtk::ResponseType::Cancel),
+                    ("Save", gtk::ResponseType::Accept)
+                ]
+            );
+            dlg.set_current_folder(".");
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Craft models"));
+            filter.add_pattern("*.craft");
+            dlg.add_filter(&filter);
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("All files"));
+            filter.add_pattern("*");
+            dlg.add_filter(&filter);
+            dlg.set_do_overwrite_confirmation(true);
+
+            let res = dlg.run();
+            let name = if res == gtk::ResponseType::Accept {
+                dlg.filename()
+            } else {
+                None
+            };
+            unsafe { dlg.destroy(); }
+
+            if let Some(mut name) = name {
+                if name.extension().is_none() {
+                    name.set_extension("craft");
+                }
+                ctx.borrow_mut().save(name);
+            }
+        }
+    ));
+    app.add_action(&asave_as);
 
 
     w.set_default_size(800, 600);
@@ -429,14 +470,14 @@ fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
             dbg!("open");
             let f = &files[0];
             let (data, _) = f.load_contents(gio::Cancellable::NONE).unwrap();
-            let papercraft: Papercraft = serde_json::from_reader(&data[..]).unwrap();
+            let papercraft = Papercraft::load(std::io::Cursor::new(&data[..])).unwrap();
+            //let papercraft: Papercraft = serde_json::from_reader(&data[..]).unwrap();
 
             let w = {
                 let mut ctx = ctx.borrow_mut();
                 ctx.papercraft = papercraft;
 
                 // State
-                ctx.texture_images = Vec::new();
                 ctx.selected_face = None;
                 ctx.selected_edge = None;
                 ctx.selected_islands = Vec::new();
@@ -453,8 +494,8 @@ fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
         }
 	));
 
-    let args = args.borrow();
-    if let Some(args) = &*args {
+    let imports = imports.borrow();
+    if let Some(args) = &*imports {
         ctx.borrow_mut().import_waveobj(args);
     }
 }
@@ -467,22 +508,21 @@ fn main() {
         gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE
     );
     app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::String, "Import a WaveOBJ file", None);
-    let args = Rc::new(RefCell::new(None));
+    let imports = Rc::new(RefCell::new(None));
     app.connect_handle_local_options(clone!(
-        @strong args =>
+        @strong imports =>
         move |_app, dict| {
             dbg!("local_option");
             //It should be a OsString but that gets an \0 at the end that breaks everything
             let s: Option<String> = dict.lookup("import").unwrap();
-            dbg!(&s);
-            *args.borrow_mut() = s;
+            *imports.borrow_mut() = s;
             -1
         }
     ));
 	app.connect_startup(clone!(
-        @strong args =>
+        @strong imports =>
         move |app: &gtk::Application| {
-            on_app_startup(app, args.clone());
+            on_app_startup(app, imports.clone());
         }
     ));
     app.run();
@@ -566,7 +606,6 @@ struct MyContext {
 
     // The model
     papercraft: Papercraft,
-    texture_images: Vec<Option<gdk_pixbuf::Pixbuf>>,
 
     // State
     selected_face: Option<paper::FaceIndex>,
@@ -675,18 +714,17 @@ impl MyContext {
             for lib in waveobj::Material::from_reader(f).unwrap()  {
                 if let Some(map) = lib.map() {
                     let pbl = gdk_pixbuf::PixbufLoader::new();
-                    let data = std::fs::read(dbg!(map)).unwrap();
+                    let data = std::fs::read(map).unwrap();
                     pbl.write(&data).ok().unwrap();
                     pbl.close().ok().unwrap();
                     let img = pbl.pixbuf().unwrap();
                     //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
-                    texture_map.insert(lib.name().to_owned(), img);
+                    let map_name = Path::new(map).file_name().unwrap().to_str().unwrap();
+                    texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
                 }
             }
         }
-        let (mut model, facemap) = paper::Model::from_waveobj(obj);
-
-        let texture_images: Vec<_> = obj.materials().map(|s| texture_map.get(s).cloned()).collect();
+        let (mut model, facemap) = paper::Model::from_waveobj(obj, texture_map);
 
         // Compute the bounding box, then move to the center and scale to a standard size
         let (v_min, v_max) = util_3d::bounding_box_3d(
@@ -728,12 +766,11 @@ impl MyContext {
             }
         };
 
-        let papercraft = Papercraft::new(model, &facemap);
+        let papercraft = Papercraft::from_model(model, &facemap);
 
         self.papercraft = papercraft;
 
         // State
-        self.texture_images = texture_images;
         self.selected_face = None;
         self.selected_edge = None;
         self.selected_islands = Vec::new();
@@ -751,6 +788,12 @@ impl MyContext {
 
         self.gui.wscene.queue_render();
         self.gui.wpaper.queue_render();
+    }
+
+    fn save(&self, filename: impl AsRef<Path>) {
+        let f = std::fs::File::create(filename).unwrap();
+        let f = std::io::BufWriter::new(f);
+        self.papercraft.save(f).unwrap();
     }
 
     fn scene_motion_notify_event(&mut self, pos: Vector2, ev: &gdk::EventMotion) {
@@ -1044,10 +1087,10 @@ impl MyContext {
             });
         }
         if self.gl_objs.is_none() {
-            let textures = self.texture_images
-                .iter()
-                .map(|pixbuf| {
-                    let texture = match pixbuf {
+            let textures = self.papercraft.model()
+                .textures()
+                .map(|tex| {
+                    let texture = match tex.pixbuf() {
                         None => {
                             // Empty texture is just a single white texel
                             let empty = glr::Texture::generate().unwrap();
@@ -1085,7 +1128,7 @@ impl MyContext {
                 })
                 .collect();
 
-            let mut vertices = vec![Vec::new(); self.texture_images.len()];
+            let mut vertices = vec![Vec::new(); self.papercraft.model().num_textures()];
             for (_, face) in self.papercraft.model().faces() {
                 let vs = &mut vertices[usize::from(face.material())];
                 for i_v in face.index_vertices() {
@@ -1102,10 +1145,10 @@ impl MyContext {
             let vertices_edges_joint = glr::DynamicVertexArray::new();
             let vertices_edges_cut = glr::DynamicVertexArray::new();
 
-            let paper_vertices = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.texture_images.len()).collect();
+            let paper_vertices = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.papercraft.model().num_textures()).collect();
             let paper_vertices_edge = glr::DynamicVertexArray::new();
             let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-            let paper_vertices_tab = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.texture_images.len()).collect();
+            let paper_vertices_tab = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.papercraft.model().num_textures()).collect();
             let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
 
             let page_0 = MVertex2D {
@@ -1338,7 +1381,7 @@ impl MyContext {
 
     fn paper_build(&mut self) {
         //Maps VertexIndex in the model to index in vertices
-        let mut args = PaperDrawFaceArgs::new(self.texture_images.len());
+        let mut args = PaperDrawFaceArgs::new(self.papercraft.model().num_textures());
 
         let flat_sel = match self.selected_face {
             None => Default::default(),

@@ -1,6 +1,7 @@
 use std::collections::{HashSet, HashMap};
 
 use cgmath::{InnerSpace, Rad, Angle};
+use gdk_pixbuf::Pixbuf;
 use serde::{Serialize, Deserialize};
 
 use crate::waveobj;
@@ -10,7 +11,24 @@ use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3};
 // 32-bit indices should be enough for everybody ;-)
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Texture {
+    file_name: String,
+    #[serde(skip)]
+    pixbuf: Option<Pixbuf>
+}
+
+impl Texture {
+    pub fn file_name(&self) -> &str {
+        &self.file_name
+    }
+    pub fn pixbuf(&self) -> Option<&Pixbuf> {
+        self.pixbuf.as_ref()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Model {
+    textures: Vec<Texture>,
     #[serde(rename="vs")]
     vertices: Vec<Vertex>,
     #[serde(rename="es")]
@@ -110,13 +128,14 @@ pub struct Vertex {
 impl Model {
     pub fn empty() -> Model {
         Model {
+            textures: Vec::new(),
             vertices: Vec::new(),
             edges: Vec::new(),
             faces: Vec::new(),
         }
     }
 
-    pub fn from_waveobj(obj: &waveobj::Model) -> (Model, HashMap<FaceIndex, u32>) {
+    pub fn from_waveobj(obj: &waveobj::Model, texture_map: HashMap<String, (String, Pixbuf)>) -> (Model, HashMap<FaceIndex, u32>) {
         // Remove duplicated vertices by adding them into a set
         let all_vertices: HashSet<waveobj::FaceVertex> =
             obj.faces()
@@ -246,7 +265,27 @@ impl Model {
             }
         }
 
+        let mut textures: Vec<_> = obj.materials().map(|s| {
+            let pixbuf = texture_map.get(s).cloned();
+            let (file_name, pixbuf) = match pixbuf {
+                Some((n, p)) => (n, Some(p)),
+                None => (String::new(), None)
+            };
+            Texture {
+                file_name,
+                pixbuf,
+            }
+        }).collect();
+        //Ensure that there is at least a blank material
+        if textures.is_empty() {
+            textures.push(Texture {
+                file_name: String::new(),
+                pixbuf: None,
+            });
+        }
+
         let model = Model {
+            textures,
             vertices,
             edges,
             faces,
@@ -279,6 +318,17 @@ impl Model {
     }
     pub fn num_faces(&self) -> usize {
         self.faces.len()
+    }
+    pub fn num_textures(&self) -> usize {
+        self.textures.len()
+    }
+    pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
+        self.textures.iter()
+    }
+    pub fn reload_textures<F: FnMut(&str) -> Option<Pixbuf>>(&mut self, mut f: F) {
+        for tex in &mut self.textures {
+            tex.pixbuf = f(&tex.file_name);
+        }
     }
     pub fn face_to_face_edge_matrix(&self, scale: f32, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
         let v0 = self[edge.v0()].pos();

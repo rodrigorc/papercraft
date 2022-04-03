@@ -17,3 +17,4 @@ slotmap = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 gl ="*"
+smallvec = "*"

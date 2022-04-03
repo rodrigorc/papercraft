@@ -542,17 +542,21 @@ fn main() {
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
     w.attach_buffers();
-    ctx.gl_objs = None;
     ctx.build_gl_objects();
+    ctx.gui.gl_fixs.as_mut().unwrap().vao_scene = Some(glr::VertexArray::generate().unwrap());
 }
 
 fn paper_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
     w.attach_buffers();
-    ctx.gl_objs = None;
     ctx.build_gl_objects();
+    ctx.gui.gl_fixs.as_mut().unwrap().vao_paper = Some(glr::VertexArray::generate().unwrap());
 }
 
 struct GLFixedObjects {
+    //VAOs are not shareable between contexts, so we need two, one for each window
+    vao_scene: Option<glr::VertexArray>,
+    vao_paper: Option<glr::VertexArray>,
+
     prg_scene_solid: glr::Program,
     prg_scene_line: glr::Program,
     prg_paper_solid: glr::Program,
@@ -570,7 +574,8 @@ struct GLObjects {
     //GL objects that are rebuild with the model
     vertices: glr::DynamicVertexArray<MVertex3D>,
     vertices_sel: glr::DynamicVertexArray<MStatus>,
-    vertices_edges: glr::DynamicVertexArray<MVertex3DLine>,
+    vertices_edges_joint: glr::DynamicVertexArray<MVertex3DLine>,
+    vertices_edges_cut: glr::DynamicVertexArray<MVertex3DLine>,
 
     paper_vertices: glr::DynamicVertexArray<MVertex2D>,
     paper_vertices_edge: glr::DynamicVertexArray<MVertex2D>,
@@ -1042,136 +1047,136 @@ impl MyContext {
         }
     }
     fn build_gl_objects(&mut self) {
-        if self.gl_objs.is_some() {
-            return;
-        }
-        let textures = self.texture_images
-            .iter()
-            .map(|(name, pixbuf)| {
-                let texture = match pixbuf {
-                    None => {
-                        // Empty texture is just a single white texel
-                        let empty = glr::Texture::generate().unwrap();
-                        unsafe {
-                            gl::BindTexture(gl::TEXTURE_2D, empty.id());
-                            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0xffu8, 0xffu8, 0xffu8].as_ptr() as *const _);
-                        }
-                        empty
-                    }
-                    Some(img) => {
-                        let bytes = img.read_pixel_bytes().unwrap();
-                        let width = img.width();
-                        let height = img.height();
-                        let format = match img.n_channels() {
-                            4 => gl::RGBA,
-                            3 => gl::RGB,
-                            2 => gl::RG,
-                            _ => gl::RED,
-                        };
+        if self.gui.gl_fixs.is_none() {
+            let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
+            let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
+            let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));
+            let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl"));
+            let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl"));
 
-                        let tex = glr::Texture::generate().unwrap();
-                        unsafe {
-                            gl::BindTexture(gl::TEXTURE_2D, tex.id());
-                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
-                            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
-                            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as i32, width, height, 0, format, gl::UNSIGNED_BYTE, bytes.as_ptr() as *const _);
-                            gl::GenerateMipmap(gl::TEXTURE_2D);
-                        }
-                        tex
-                    }
-                };
-                (name.clone(), texture)
-            })
-            .collect();
-
-        let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
-        let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
-        let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));
-        let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl"));
-        let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl"));
-
-        let mut vertices = Vec::with_capacity(self.papercraft.model().num_faces() * 3);
-        for (_, face) in self.papercraft.model().faces() {
-            for i_v in face.index_vertices() {
-                let v = &self.papercraft.model()[i_v];
-                vertices.push(MVertex3D {
-                    pos: v.pos(),
-                    normal: v.normal(),
-                    uv: v.uv(),
-                });
-            }
-        }
-        let vertices = glr::DynamicVertexArray::from(vertices);
-        let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; vertices.len()]);
-        let vertices_edges = glr::DynamicVertexArray::new();
-
-        let paper_vertices = glr::DynamicVertexArray::new();
-        let paper_vertices_edge = glr::DynamicVertexArray::new();
-        let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-        let paper_vertices_tab = glr::DynamicVertexArray::new();
-        let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
-
-        let page_0 = MVertex2D {
-            pos: Vector2::new(0.0, 0.0),
-            uv: Vector2::zero(),
-            color: [1.0, 1.0, 1.0, 1.0],
-        };
-        let page_2 = MVertex2D {
-            pos: Vector2::new(210.0, 297.0),
-            uv: Vector2::zero(),
-            color: [1.0, 1.0, 1.0, 1.0],
-        };
-        let page_1 = MVertex2D {
-            pos: Vector2::new(page_2.pos.x, 0.0),
-            uv: Vector2::zero(),
-            color: [1.0, 1.0, 1.0, 1.0],
-        };
-        let page_3 = MVertex2D {
-            pos: Vector2::new(0.0, page_2.pos.y),
-            uv: Vector2::zero(),
-            color: [1.0, 1.0, 1.0, 1.0],
-        };
-        let paper_vertices_page = glr::DynamicVertexArray::from(vec![page_0, page_2, page_1, page_0, page_3, page_2]);
-
-        let quad_vertices = glr::DynamicVertexArray::from(vec![
+            let quad_vertices = glr::DynamicVertexArray::from(vec![
                 MVertexQuad { pos: [-1.0, -1.0] },
                 MVertexQuad { pos: [ 3.0, -1.0] },
                 MVertexQuad { pos: [-1.0,  3.0] },
-        ]);
+            ]);
 
-        let gl_fixs = GLFixedObjects {
-            prg_scene_solid,
-            prg_scene_line,
-            prg_paper_solid,
-            prg_paper_line,
-            prg_quad,
+            self.gui.gl_fixs = Some(GLFixedObjects {
+                vao_scene: None,
+                vao_paper: None,
+                prg_scene_solid,
+                prg_scene_line,
+                prg_paper_solid,
+                prg_paper_line,
+                prg_quad,
 
-            quad_vertices,
-        };
+                quad_vertices,
+            });
+        }
+        if self.gl_objs.is_none() {
+            let textures = self.texture_images
+                .iter()
+                .map(|(name, pixbuf)| {
+                    let texture = match pixbuf {
+                        None => {
+                            // Empty texture is just a single white texel
+                            let empty = glr::Texture::generate().unwrap();
+                            unsafe {
+                                gl::BindTexture(gl::TEXTURE_2D, empty.id());
+                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0xffu8, 0xffu8, 0xffu8].as_ptr() as *const _);
+                            }
+                            empty
+                        }
+                        Some(img) => {
+                            let bytes = img.read_pixel_bytes().unwrap();
+                            let width = img.width();
+                            let height = img.height();
+                            let format = match img.n_channels() {
+                                4 => gl::RGBA,
+                                3 => gl::RGB,
+                                2 => gl::RG,
+                                _ => gl::RED,
+                            };
 
-        let gl_objs = GLObjects {
-            textures,
-            vertices,
-            vertices_sel,
-            vertices_edges,
+                            let tex = glr::Texture::generate().unwrap();
+                            unsafe {
+                                gl::BindTexture(gl::TEXTURE_2D, tex.id());
+                                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+                                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+                                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as i32, width, height, 0, format, gl::UNSIGNED_BYTE, bytes.as_ptr() as *const _);
+                                gl::GenerateMipmap(gl::TEXTURE_2D);
+                            }
+                            tex
+                        }
+                    };
+                    (name.clone(), texture)
+                })
+                .collect();
 
-            paper_vertices,
-            paper_vertices_edge,
-            paper_vertices_edge_sel,
-            paper_vertices_tab,
-            paper_vertices_tab_edge,
-            paper_vertices_page,
+            let mut vertices = Vec::with_capacity(self.papercraft.model().num_faces() * 3);
+            for (_, face) in self.papercraft.model().faces() {
+                for i_v in face.index_vertices() {
+                    let v = &self.papercraft.model()[i_v];
+                    vertices.push(MVertex3D {
+                        pos: v.pos(),
+                        normal: v.normal(),
+                        uv: v.uv(),
+                    });
+                }
+            }
+            let vertices = glr::DynamicVertexArray::from(vertices);
+            let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; vertices.len()]);
+            let vertices_edges_joint = glr::DynamicVertexArray::new();
+            let vertices_edges_cut = glr::DynamicVertexArray::new();
 
-        };
+            let paper_vertices = glr::DynamicVertexArray::new();
+            let paper_vertices_edge = glr::DynamicVertexArray::new();
+            let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
+            let paper_vertices_tab = glr::DynamicVertexArray::new();
+            let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
 
-        self.gui.gl_fixs = Some(gl_fixs);
-        self.gl_objs = Some(gl_objs);
+            let page_0 = MVertex2D {
+                pos: Vector2::new(0.0, 0.0),
+                uv: Vector2::zero(),
+                color: [1.0, 1.0, 1.0, 1.0],
+            };
+            let page_2 = MVertex2D {
+                pos: Vector2::new(210.0, 297.0),
+                uv: Vector2::zero(),
+                color: [1.0, 1.0, 1.0, 1.0],
+            };
+            let page_1 = MVertex2D {
+                pos: Vector2::new(page_2.pos.x, 0.0),
+                uv: Vector2::zero(),
+                color: [1.0, 1.0, 1.0, 1.0],
+            };
+            let page_3 = MVertex2D {
+                pos: Vector2::new(0.0, page_2.pos.y),
+                uv: Vector2::zero(),
+                color: [1.0, 1.0, 1.0, 1.0],
+            };
+            let paper_vertices_page = glr::DynamicVertexArray::from(vec![page_0, page_2, page_1, page_0, page_3, page_2]);
 
-        self.scene_edge_build();
-        self.paper_build();
-        self.update_scene_face_selection();
+            self.gl_objs = Some(GLObjects {
+                textures,
+                vertices,
+                vertices_sel,
+                vertices_edges_joint,
+                vertices_edges_cut,
+
+                paper_vertices,
+                paper_vertices_edge,
+                paper_vertices_edge_sel,
+                paper_vertices_tab,
+                paper_vertices_tab_edge,
+                paper_vertices_page,
+            });
+
+            self.scene_edge_build();
+            self.paper_build();
+            self.update_scene_face_selection();
+        }
     }
 
     fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, selected: bool, hi: bool, args: &mut PaperDrawFaceArgs) {
@@ -1399,6 +1404,7 @@ impl MyContext {
     }
 
     fn scene_render(&mut self) {
+        self.gl_objs = None;
         self.build_gl_objects();
         let gl_objs = self.gl_objs.as_ref().unwrap();
         let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
@@ -1427,16 +1433,19 @@ impl MyContext {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, texture.id());
 
-            let vao = glr::VertexArray::generate().unwrap();
-            gl::BindVertexArray(vao.id());
+            gl::BindVertexArray(gl_fixs.vao_scene.as_ref().unwrap().id());
+
+            gl::PolygonOffset(1.0, 1.0);
+            gl::Enable(gl::POLYGON_OFFSET_FILL);
+            gl_fixs.prg_scene_solid.draw(&u, (&gl_objs.vertices, &gl_objs.vertices_sel), gl::TRIANGLES);
+
+            gl::LineWidth(1.0);
+            gl::Disable(gl::LINE_SMOOTH);
+            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edges_joint, gl::LINES);
 
             gl::LineWidth(3.0);
             gl::Enable(gl::LINE_SMOOTH);
-            gl::PolygonOffset(1.0, 1.0);
-            gl::Enable(gl::POLYGON_OFFSET_FILL);
-
-            gl_fixs.prg_scene_solid.draw(&u, (&gl_objs.vertices, &gl_objs.vertices_sel), gl::TRIANGLES);
-            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edges, gl::LINES);
+            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edges_cut, gl::LINES);
         }
     }
 
@@ -1465,8 +1474,7 @@ impl MyContext {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, texture.id());
 
-            let vao = glr::VertexArray::generate().unwrap();
-            gl::BindVertexArray(vao.id());
+            gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
 
             gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
 
@@ -1495,7 +1503,8 @@ impl MyContext {
 
     fn scene_edge_build(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
-            let mut edges = Vec::new();
+            let mut edges_joint = Vec::new();
+            let mut edges_cut = Vec::new();
             for (i_edge, edge) in self.papercraft.model().edges() {
                 let selected = self.selected_edge == Some(i_edge);
                 let status = self.papercraft.edge_status(i_edge);
@@ -1511,10 +1520,13 @@ impl MyContext {
                 };
                 let p0 = self.papercraft.model()[edge.v0()].pos();
                 let p1 = self.papercraft.model()[edge.v1()].pos();
+
+                let edges = if cut { &mut edges_cut } else { &mut edges_joint };
                 edges.push(MVertex3DLine { pos: p0, color, top: selected as u8 });
                 edges.push(MVertex3DLine { pos: p1, color, top: selected as u8 });
             }
-            gl_objs.vertices_edges.set(edges);
+            gl_objs.vertices_edges_joint.set(edges_joint);
+            gl_objs.vertices_edges_cut.set(edges_cut);
         }
     }
 

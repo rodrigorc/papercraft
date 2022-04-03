@@ -496,6 +496,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slotmap",
+ "smallvec",
 ]
 
 [[package]]

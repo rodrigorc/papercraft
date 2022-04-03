@@ -1,6 +1,7 @@
 use std::{ffi::CString, cell::Cell};
 
 use gl::types::*;
+use smallvec::SmallVec;
 
 #[derive(Debug)]
 pub struct Error;
@@ -29,6 +30,26 @@ impl Texture {
     }
     pub fn id(&self) -> u32 {
         self.id
+    }
+}
+
+
+pub struct EnablerVertexAttribArray(GLuint);
+
+impl EnablerVertexAttribArray {
+    fn enable(id: GLuint) -> EnablerVertexAttribArray {
+        unsafe {
+            gl::EnableVertexAttribArray(id);
+        }
+         EnablerVertexAttribArray(id)
+    }
+}
+
+impl Drop for EnablerVertexAttribArray {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DisableVertexAttribArray(self.0);
+        }
     }
 }
 
@@ -245,25 +266,26 @@ pub trait AttribProviderList {
 }
 
 impl<A: AttribProvider> AttribProviderList for &[A] {
-    type KeepType = Buffer;
+    type KeepType = (Buffer, SmallVec<[EnablerVertexAttribArray; 8]>);
 
     fn len(&self) -> usize {
         <[A]>::len(&self)
     }
-    fn bind(&self, p: &Program) -> Buffer {
+    fn bind(&self, p: &Program) -> (Buffer, SmallVec<[EnablerVertexAttribArray; 8]>) {
         let buf = Buffer::generate().unwrap();
+        let mut vas = SmallVec::new();
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, buf.id());
             gl::BufferData(gl::ARRAY_BUFFER, (std::mem::size_of::<A>() * self.len()) as isize, self.as_ptr() as *const A as *const _, gl::STATIC_DRAW);
             for a in &p.attribs {
                 if let Some((size, ty, offs)) = A::apply(a) {
                     let loc = a.location() as u32;
-                    gl::EnableVertexAttribArray(loc);
+                    vas.push(EnablerVertexAttribArray::enable(loc));
                     gl::VertexAttribPointer(loc, size as i32, ty, gl::FALSE, std::mem::size_of::<A>() as i32, offs as *const _);
                 }
             }
         }
-        buf
+        (buf, vas)
     }
 }
 
@@ -297,6 +319,7 @@ impl<A: AttribProvider > DynamicVertexArray<A> {
         self.dirty.set(true);
         self.data = data.into();
     }
+    #[allow(dead_code)]
     pub fn data(&self) -> &[A] {
         &self.data[..]
     }

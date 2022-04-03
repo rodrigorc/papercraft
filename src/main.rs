@@ -62,9 +62,8 @@ fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
         gl_objs: None,
 
         papercraft: Papercraft::empty(),
-        texture_images: { let mut texs = HashMap::default(); texs.insert(String::new(), None); texs },
 
-        material: None,
+        texture_images: Vec::new(),
         selected_face: None,
         selected_edge: None,
         selected_islands: Vec::new(),
@@ -437,7 +436,7 @@ fn on_app_startup(app: &gtk::Application, args: Rc<RefCell<Option<String>>>) {
                 ctx.papercraft = papercraft;
 
                 // State
-                ctx.material = None;
+                ctx.texture_images = Vec::new();
                 ctx.selected_face = None;
                 ctx.selected_edge = None;
                 ctx.selected_islands = Vec::new();
@@ -534,18 +533,18 @@ struct GLFixedObjects {
 }
 
 struct GLObjects {
-    textures: HashMap<String, glr::Texture>,
+    textures: Vec<glr::Texture>,
 
     //GL objects that are rebuild with the model
-    vertices: glr::DynamicVertexArray<MVertex3D>,
+    vertices: Vec<glr::DynamicVertexArray<MVertex3D>>,
     vertices_sel: glr::DynamicVertexArray<MStatus>,
     vertices_edges_joint: glr::DynamicVertexArray<MVertex3DLine>,
     vertices_edges_cut: glr::DynamicVertexArray<MVertex3DLine>,
 
-    paper_vertices: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices: Vec<glr::DynamicVertexArray<MVertex2D>>,
     paper_vertices_edge: glr::DynamicVertexArray<MVertex2D>,
     paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2D>,
-    paper_vertices_tab: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices_tab: Vec<glr::DynamicVertexArray<MVertex2D>>,
     paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2D>,
 
     paper_vertices_page: glr::DynamicVertexArray<MVertex2D>,
@@ -567,10 +566,9 @@ struct MyContext {
 
     // The model
     papercraft: Papercraft,
-    texture_images: HashMap<String, Option<gdk_pixbuf::Pixbuf>>,
+    texture_images: Vec<Option<gdk_pixbuf::Pixbuf>>,
 
     // State
-    material: Option<String>,
     selected_face: Option<paper::FaceIndex>,
     selected_edge: Option<paper::EdgeIndex>,
     selected_islands: Vec<paper::IslandKey>,
@@ -639,13 +637,24 @@ enum ClickResult {
     Edge(paper::EdgeIndex, Option<paper::FaceIndex>),
 }
 
-#[derive(Default)]
 struct PaperDrawFaceArgs {
-    vertices: Vec<MVertex2D>,
+    vertices: Vec<Vec<MVertex2D>>,
     vertices_edge: Vec<MVertex2D>,
     vertices_edge_sel: Vec<MVertex2D>,
-    vertices_tab_buf: Vec<MVertex2D>,
-    vertices_tab_edge_buf: Vec<MVertex2D>,
+    vertices_tab: Vec<Vec<MVertex2D>>,
+    vertices_tab_edge: Vec<MVertex2D>,
+}
+
+impl PaperDrawFaceArgs {
+    fn new(mats: usize) -> PaperDrawFaceArgs {
+        PaperDrawFaceArgs {
+            vertices: vec![Vec::new(); mats],
+            vertices_edge: Vec::new(),
+            vertices_edge_sel: Vec::new(),
+            vertices_tab: vec![Vec::new(); mats],
+            vertices_tab_edge: Vec::new(),
+        }
+    }
 }
 
 impl MyContext {
@@ -656,11 +665,9 @@ impl MyContext {
 
         // For now read only the first model from the file
         let obj = models.get(0).unwrap();
-        let material = obj.material().map(String::from);
-        let mut texture_images = HashMap::new();
-        texture_images.insert(String::new(), None);
+        let mut texture_map = HashMap::new();
 
-        // Other textures are read from the .mtl file
+        // Textures are read from the .mtl file
         for lib in matlibs {
             let f = std::fs::File::open(lib).unwrap();
             let f = std::io::BufReader::new(f);
@@ -673,13 +680,13 @@ impl MyContext {
                     pbl.close().ok().unwrap();
                     let img = pbl.pixbuf().unwrap();
                     //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
-                    texture_images.insert(lib.name().to_owned(), Some(img));
-                    //textures.insert(name, tex);
+                    texture_map.insert(lib.name().to_owned(), img);
                 }
             }
         }
-
         let (mut model, facemap) = paper::Model::from_waveobj(obj);
+
+        let texture_images: Vec<_> = obj.materials().map(|s| texture_map.get(s).cloned()).collect();
 
         // Compute the bounding box, then move to the center and scale to a standard size
         let (v_min, v_max) = util_3d::bounding_box_3d(
@@ -724,10 +731,9 @@ impl MyContext {
         let papercraft = Papercraft::new(model, &facemap);
 
         self.papercraft = papercraft;
-        self.texture_images = texture_images;
 
         // State
-        self.material = material;
+        self.texture_images = texture_images;
         self.selected_face = None;
         self.selected_edge = None;
         self.selected_islands = Vec::new();
@@ -1040,7 +1046,7 @@ impl MyContext {
         if self.gl_objs.is_none() {
             let textures = self.texture_images
                 .iter()
-                .map(|(name, pixbuf)| {
+                .map(|pixbuf| {
                     let texture = match pixbuf {
                         None => {
                             // Empty texture is just a single white texel
@@ -1075,30 +1081,31 @@ impl MyContext {
                             tex
                         }
                     };
-                    (name.clone(), texture)
+                    texture
                 })
                 .collect();
 
-            let mut vertices = Vec::with_capacity(self.papercraft.model().num_faces() * 3);
+            let mut vertices = vec![Vec::new(); self.texture_images.len()];
             for (_, face) in self.papercraft.model().faces() {
+                let vs = &mut vertices[usize::from(face.material())];
                 for i_v in face.index_vertices() {
                     let v = &self.papercraft.model()[i_v];
-                    vertices.push(MVertex3D {
+                    vs.push(MVertex3D {
                         pos: v.pos(),
                         normal: v.normal(),
                         uv: v.uv(),
                     });
                 }
             }
-            let vertices = glr::DynamicVertexArray::from(vertices);
-            let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; vertices.len()]);
+            let vertices = vertices.into_iter().map(|vs| glr::DynamicVertexArray::from(vs)).collect();
+            let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * self.papercraft.model().num_faces()]);
             let vertices_edges_joint = glr::DynamicVertexArray::new();
             let vertices_edges_cut = glr::DynamicVertexArray::new();
 
-            let paper_vertices = glr::DynamicVertexArray::new();
+            let paper_vertices = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.texture_images.len()).collect();
             let paper_vertices_edge = glr::DynamicVertexArray::new();
             let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-            let paper_vertices_tab = glr::DynamicVertexArray::new();
+            let paper_vertices_tab = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.texture_images.len()).collect();
             let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
 
             let page_0 = MVertex2D {
@@ -1149,7 +1156,7 @@ impl MyContext {
             let v = &self.papercraft.model()[i_v];
             let p = self.papercraft.face_plane(face).project(&v.pos());
             let pos = m.transform_point(Point2::from_vec(p)).to_vec();
-            args.vertices.push(MVertex2D {
+            args.vertices[usize::from(face.material())].push(MVertex2D {
                 pos,
                 uv: v.uv(),
                 color: if hi { [1.0, 0.0, 0.0, 0.75] } else if selected { [0.0, 0.0, 1.0, 0.5] } else { [0.0, 0.0, 0.0, 0.0] },
@@ -1279,10 +1286,10 @@ impl MyContext {
                     let p = if just_one_tri {
                         //The unneeded vertex is actually [2], so remove that copying the [3] over
                         p[2] = p[3];
-                        args.vertices_tab_edge_buf.extend([p[0], p[1], p[1], p[2]]);
+                        args.vertices_tab_edge.extend([p[0], p[1], p[1], p[2]]);
                         &mut p[..3]
                     } else {
-                        args.vertices_tab_edge_buf.extend([p[0], p[1], p[1], p[2], p[2], p[3]]);
+                        args.vertices_tab_edge.extend([p[0], p[1], p[1], p[2], p[2], p[3]]);
                         &mut p[..]
                     };
 
@@ -1311,17 +1318,18 @@ impl MyContext {
                         px.uv = uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0);
                     }
 
+                    let vs_tab = &mut args.vertices_tab[usize::from(face_b.material())];
                     if just_one_tri {
                         p[0].color = [1.0, 1.0, 1.0, 0.0];
                         p[1].color = [1.0, 1.0, 1.0, 1.0];
                         p[2].color = [1.0, 1.0, 1.0, 0.0];
-                        args.vertices_tab_buf.extend([p[0], p[2], p[1]]);
+                        vs_tab.extend([p[0], p[2], p[1]]);
                     } else {
                         p[0].color = [1.0, 1.0, 1.0, 0.0];
                         p[1].color = [1.0, 1.0, 1.0, 1.0];
                         p[2].color = [1.0, 1.0, 1.0, 1.0];
                         p[3].color = [1.0, 1.0, 1.0, 0.0];
-                        args.vertices_tab_buf.extend([p[0], p[2], p[1], p[0], p[3], p[2]]);
+                        vs_tab.extend([p[0], p[2], p[1], p[0], p[3], p[2]]);
                     }
                 }
             }
@@ -1330,7 +1338,7 @@ impl MyContext {
 
     fn paper_build(&mut self) {
         //Maps VertexIndex in the model to index in vertices
-        let mut args = PaperDrawFaceArgs::default();
+        let mut args = PaperDrawFaceArgs::new(self.texture_images.len());
 
         let flat_sel = match self.selected_face {
             None => Default::default(),
@@ -1360,11 +1368,15 @@ impl MyContext {
         }
 
         if let Some(gl_objs) = &mut self.gl_objs {
-            gl_objs.paper_vertices.set(args.vertices);
+            for (d, s) in gl_objs.paper_vertices.iter_mut().zip(args.vertices.into_iter()) {
+                d.set(s);
+            }
             gl_objs.paper_vertices_edge.set(args.vertices_edge);
             gl_objs.paper_vertices_edge_sel.set(args.vertices_edge_sel);
-            gl_objs.paper_vertices_tab.set(args.vertices_tab_buf);
-            gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge_buf);
+            for (d, s) in gl_objs.paper_vertices_tab.iter_mut().zip(args.vertices_tab.into_iter()) {
+                d.set(s);
+            }
+            gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge);
         }
     }
 
@@ -1376,10 +1388,6 @@ impl MyContext {
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
-
-        let mat_name = self.material.as_deref().unwrap_or("");
-        let texture = gl_objs.textures.get(mat_name)
-            .unwrap_or_else(|| gl_objs.textures.get("").unwrap());
 
         let u = Uniforms3D {
             m: self.trans_scene.persp * self.trans_scene.obj,
@@ -1395,14 +1403,18 @@ impl MyContext {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, texture.id());
-
             gl::BindVertexArray(gl_fixs.vao_scene.as_ref().unwrap().id());
+            gl::ActiveTexture(gl::TEXTURE0);
 
             gl::PolygonOffset(1.0, 1.0);
             gl::Enable(gl::POLYGON_OFFSET_FILL);
-            gl_fixs.prg_scene_solid.draw(&u, (&gl_objs.vertices, &gl_objs.vertices_sel), gl::TRIANGLES);
+
+            let mut vi = 0;
+            for (verts, tex) in gl_objs.vertices.iter().zip(&gl_objs.textures) {
+                gl::BindTexture(gl::TEXTURE_2D, tex.id());
+                gl_fixs.prg_scene_solid.draw(&u, (verts, gl_objs.vertices_sel.sub(vi .. vi + verts.len())), gl::TRIANGLES);
+                vi += verts.len();
+            }
 
             gl::LineWidth(1.0);
             gl::Disable(gl::LINE_SMOOTH);
@@ -1419,10 +1431,6 @@ impl MyContext {
         let gl_objs = self.gl_objs.as_ref().unwrap();
         let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
 
-        let mat_name = self.material.as_deref().unwrap_or("");
-        let texture = gl_objs.textures.get(mat_name)
-            .unwrap_or_else(|| gl_objs.textures.get("").unwrap());
-
         let u = Uniforms2D {
             m: self.trans_paper.ortho * self.trans_paper.mx,
             texture: 0,
@@ -1436,18 +1444,19 @@ impl MyContext {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, texture.id());
-
             gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
+            gl::ActiveTexture(gl::TEXTURE0);
 
             gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
 
-            // Textured faces
-            gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices, gl::TRIANGLES);
+            for ((verts, verts_tab), tex) in gl_objs.paper_vertices.iter().zip(&gl_objs.paper_vertices_tab).zip(&gl_objs.textures) {
+                gl::BindTexture(gl::TEXTURE_2D, tex.id());
+                // Textured faces
+                gl_fixs.prg_paper_solid.draw(&u, verts, gl::TRIANGLES);
 
-            // Solid Tabs
-            gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
+                // Solid Tabs
+                gl_fixs.prg_paper_solid.draw(&u, verts_tab, gl::TRIANGLES);
+            }
 
             // Line Tabs
             gl::Disable(gl::LINE_SMOOTH);

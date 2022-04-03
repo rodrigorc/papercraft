@@ -307,7 +307,7 @@ pub struct DynamicVertexArray<A> {
     dirty: Cell<bool>,
 }
 
-impl<A: AttribProvider > DynamicVertexArray<A> {
+impl<A: AttribProvider> DynamicVertexArray<A> {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self::from(Vec::new())
@@ -322,6 +322,12 @@ impl<A: AttribProvider > DynamicVertexArray<A> {
     #[allow(dead_code)]
     pub fn data(&self) -> &[A] {
         &self.data[..]
+    }
+    pub fn sub<'s>(&'s self, range: std::ops::Range<usize>) -> DynamicVertexArraySub<'s, A> {
+        DynamicVertexArraySub {
+            array: self,
+            range,
+        }
     }
     pub fn bind_buffer(&self) {
         unsafe {
@@ -361,26 +367,57 @@ impl<A: AttribProvider> std::ops::IndexMut<usize> for DynamicVertexArray<A> {
 }
 
 impl<A: AttribProvider> AttribProviderList for &DynamicVertexArray<A> {
-    type KeepType = ();
+    type KeepType = SmallVec<[EnablerVertexAttribArray; 8]>;
 
     fn len(&self) -> usize {
         self.data.len()
     }
 
-    fn bind(&self, p: &Program) {
+    fn bind(&self, p: &Program) -> SmallVec<[EnablerVertexAttribArray; 8]> {
+        let mut vas = SmallVec::new();
         unsafe {
             self.bind_buffer();
             for a in &p.attribs {
                 if let Some((size, ty, offs)) = A::apply(a) {
                     let loc = a.location() as u32;
-                    gl::EnableVertexAttribArray(loc);
+                    vas.push(EnablerVertexAttribArray::enable(loc));
                     gl::VertexAttribPointer(loc, size as i32, ty, gl::FALSE, std::mem::size_of::<A>() as i32, offs as *const _);
                 }
             }
-       }
+        }
+        vas
     }
 }
 
+pub struct DynamicVertexArraySub<'a, A> {
+    array: &'a DynamicVertexArray<A>,
+    range: std::ops::Range<usize>,
+}
+
+impl<A: AttribProvider> AttribProviderList for DynamicVertexArraySub<'_, A> {
+    type KeepType = SmallVec<[EnablerVertexAttribArray; 8]>;
+
+    fn len(&self) -> usize {
+        self.range.len()
+    }
+
+    fn bind(&self, p: &Program) -> Self::KeepType {
+        let mut vas = SmallVec::new();
+        unsafe {
+            self.array.bind_buffer();
+            for a in &p.attribs {
+                if let Some((size, ty, offs)) = A::apply(a) {
+                    let loc = a.location() as u32;
+                    vas.push(EnablerVertexAttribArray::enable(loc));
+                    let offs = offs + std::mem::size_of::<A>() * self.range.start;
+                    gl::VertexAttribPointer(loc, size as i32, ty, gl::FALSE, std::mem::size_of::<A>() as i32, offs as *const _);
+                }
+            }
+        }
+        vas
+
+    }
+}
 
 pub struct Buffer {
     id: u32,

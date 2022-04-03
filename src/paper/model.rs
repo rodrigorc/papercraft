@@ -19,6 +19,23 @@ pub struct Model {
     faces: Vec<Face>,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[repr(transparent)]
+#[serde(transparent)]
+pub struct MaterialIndex(u32);
+
+impl From<MaterialIndex> for usize {
+    fn from(idx: MaterialIndex) -> usize {
+        idx.0 as usize
+    }
+}
+
+impl From<usize> for MaterialIndex {
+    fn from(idx: usize) -> MaterialIndex {
+        MaterialIndex(idx as u32)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 #[serde(transparent)]
@@ -64,6 +81,8 @@ impl From<usize> for FaceIndex {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Face {
+    #[serde(rename="m")]
+    material: MaterialIndex,
     #[serde(rename="vs")]
     vertices: [VertexIndex; 3],
     #[serde(rename="es")]
@@ -220,6 +239,7 @@ impl Model {
 
                 facemap.insert(i_face, index as u32);
                 faces.push(Face {
+                    material: MaterialIndex::from(face.material()),
                     vertices: face_vertices,
                     edges,
                 });
@@ -326,6 +346,9 @@ impl Face {
     }
     pub fn index_edges(&self) -> [EdgeIndex; 3] {
         self.edges
+    }
+    pub fn material(&self) -> MaterialIndex {
+        self.material
     }
     pub fn plane(&self, model: &Model, scale: f32) -> util_3d::Plane {
         util_3d::Plane::from_tri([

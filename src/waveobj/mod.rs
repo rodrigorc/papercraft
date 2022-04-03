@@ -10,6 +10,7 @@ pub struct FaceVertex {
 
 #[derive(Clone, Debug)]
 pub struct Face {
+    material: usize,
     verts: Vec<FaceVertex>,
 }
 
@@ -17,7 +18,7 @@ pub struct Face {
 pub struct Model {
     #[allow(dead_code)]
     name: String,
-    material: Option<String>,
+    materials: Vec<String>,
     vs0: Vec<[f32; 3]>,
     ns: Vec<[f32; 3]>,
     ts: Vec<[f32; 2]>,
@@ -35,24 +36,19 @@ impl Model {
         #[derive(Default)]
         struct ModelData {
             name: Option<String>,
-            material: Option<String>,
+            materials: Vec<String>,
+            current_material: usize,
             faces: Vec<Face>,
             pos: Vec<[f32; 3]>,
             normals: Vec<[f32; 3]>,
             uvs: Vec<[f32; 2]>,
-            //idx_map: BTreeMap<(usize, usize, usize), usize>,
         }
         impl ModelData {
             fn build(&mut self) -> Option<Model> {
-                //self.pos.clear();
-                //self.normals.clear();
-                //self.uvs.clear();
-                //self.idx_map.clear();
-
                 //Build the model even if empty, to always reset all self fields
-                let m = Model {
+                let mut m = Model {
                     name: self.name.take().unwrap_or_default(),
-                    material: self.material.take(),
+                    materials: std::mem::take(&mut self.materials),
                     vs0: std::mem::take(&mut self.pos),
                     ns: std::mem::take(&mut self.normals),
                     ts: std::mem::take(&mut self.uvs),
@@ -61,6 +57,10 @@ impl Model {
                 if m.faces.is_empty() {
                     None
                 } else {
+                    //Ensure that there is at least a blank material
+                    if m.materials.is_empty() {
+                        m.materials.push(String::new());
+                    }
                     Some(m)
                 }
             }
@@ -75,7 +75,7 @@ impl Model {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let mut words = line.split(' ');
+            let mut words = line.split_whitespace();
             let first = words.next().ok_or_else(syn_error)?;
             match first {
                 "o" => {
@@ -118,6 +118,7 @@ impl Model {
 
                     }
                     data.faces.push(Face {
+                        material: data.current_material,
                         verts
                     })
                 }
@@ -127,7 +128,12 @@ impl Model {
                 }
                 "usemtl" => {
                     let mtl = words.next().ok_or_else(syn_error)?;
-                    data.material = Some(String::from(mtl));
+                    if let Some(p) = data.materials.iter().position(|m| m == "mtl") {
+                        data.current_material = p;
+                    } else {
+                        data.current_material = data.materials.len();
+                        data.materials.push(String::from(mtl));
+                    }
                 }
                 "s" => { /* smoothing is ignored */}
                 p => {
@@ -144,8 +150,8 @@ impl Model {
     pub fn name(&self) -> &str {
         &self.name
     }
-    pub fn material(&self) -> Option<&str> {
-        self.material.as_deref()
+    pub fn materials(&self) -> impl Iterator<Item = &str> + '_ {
+        self.materials.iter().map(|s| &s[..])
     }
     pub fn faces(&self) -> &[Face] {
         &self.faces
@@ -162,6 +168,9 @@ impl Model {
 }
 
 impl Face {
+    pub fn material(&self) -> usize {
+        self.material
+    }
     pub fn vertices(&self) -> &[FaceVertex] {
         &self.verts
     }
@@ -221,7 +230,7 @@ impl Material {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let mut words = line.split(' ');
+            let mut words = line.split_whitespace();
             let first = words.next().ok_or_else(syn_error)?;
             match first {
                 "newmtl" => {

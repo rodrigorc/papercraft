@@ -538,6 +538,11 @@ struct GLObjects {
     vertices_edges_joint: glr::DynamicVertexArray<MVertex3DLine>,
     vertices_edges_cut: glr::DynamicVertexArray<MVertex3DLine>,
 
+    //vertices_sel is parallel to the concatenation of vertices[x], that's not a sequence of IndexFace,
+    //because the materials are not ordered.
+    // vertices_sel[3 * face_index[i_face] ] is the first value of face `i_face`.
+    face_index: Vec<u32>,
+
     paper_vertices: Vec<glr::DynamicVertexArray<MVertex2D>>,
     paper_vertices_edge: glr::DynamicVertexArray<MVertex2D>,
     paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2D>,
@@ -734,7 +739,8 @@ impl PapercraftContext {
                 .collect();
 
             let mut vertices = vec![Vec::new(); self.papercraft.model().num_textures()];
-            for (_, face) in self.papercraft.model().faces() {
+            let mut face_map = vec![Vec::new(); self.papercraft.model().num_textures()];
+            for (i_face, face) in self.papercraft.model().faces() {
                 let vs = &mut vertices[usize::from(face.material())];
                 for i_v in face.index_vertices() {
                     let v = &self.papercraft.model()[i_v];
@@ -744,7 +750,18 @@ impl PapercraftContext {
                         uv: v.uv(),
                     });
                 }
+                face_map[usize::from(face.material())].push(i_face);
             }
+
+            let mut face_index = vec![0; self.papercraft.model().num_faces()];
+            let mut f_idx = 0;
+            for fm in face_map {
+                for f in fm {
+                    face_index[usize::from(f)] = f_idx;
+                    f_idx += 1;
+                }
+            }
+
             let vertices = vertices.into_iter().map(|vs| glr::DynamicVertexArray::from(vs)).collect();
             let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * self.papercraft.model().num_faces()]);
             let vertices_edges_joint = glr::DynamicVertexArray::new();
@@ -784,6 +801,7 @@ impl PapercraftContext {
                 vertices_sel,
                 vertices_edges_joint,
                 vertices_edges_cut,
+                face_index,
 
                 paper_vertices,
                 paper_vertices_edge,
@@ -1066,9 +1084,9 @@ impl PapercraftContext {
             for &sel_island in &self.selected_islands {
                 if let Some(island) = self.papercraft.island_by_key(sel_island) {
                     self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
-                        let pos = 3 * usize::from(i_face_2);
+                        let pos = 3 * gl_objs.face_index[usize::from(i_face_2)];
                         for i in pos .. pos + 3 {
-                            gl_objs.vertices_sel[i] = MSTATUS_SEL;
+                            gl_objs.vertices_sel[i as usize] = MSTATUS_SEL;
                         }
                         ControlFlow::Continue(())
                     });
@@ -1076,9 +1094,9 @@ impl PapercraftContext {
             }
             if let Some(i_sel_face) = self.selected_face {
                 for i_face_2 in self.papercraft.get_flat_faces(i_sel_face) {
-                    let pos = 3 * usize::from(i_face_2);
+                    let pos = 3 * gl_objs.face_index[usize::from(i_face_2)];
                     for i in pos .. pos + 3 {
-                        gl_objs.vertices_sel[i] = MSTATUS_HI;
+                        gl_objs.vertices_sel[i as usize] = MSTATUS_HI;
                     }
                 }
             }

@@ -46,7 +46,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     let ctx: Rc<RefCell<GlobalContext>> = Rc::new(RefCell::new(ctx));
 
     let aquit = gio::SimpleAction::new("quit", None);
-    aquit.connect_activate(clone!(@weak app => move |_, _| app.quit() ));
+    aquit.connect_activate(clone!(@strong app => move |_, _| app.quit() ));
     app.add_action(&aquit);
 
     let aopen = gio::SimpleAction::new("open", None);
@@ -122,6 +122,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
 
             if let Some(name) = name {
                 ctx.borrow_mut().import_waveobj(name);
+                top_window.application().unwrap().lookup_action("mode").unwrap().change_state(&"face".to_variant());
             }
         }
     ));
@@ -170,6 +171,45 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     ));
     app.add_action(&asave_as);
 
+    let amode = gio::SimpleAction::new_stateful("mode", Some(glib::VariantTy::STRING), &"face".to_variant());
+    amode.connect_change_state(clone!(
+        @strong ctx =>
+        move |a, v| {
+            if let Some(v) = v {
+                // Without this hack ToggleButtons can be unseledted.
+                a.set_state(&"".to_variant());
+
+                a.set_state(v);
+                match v.str() {
+                    Some("face") => {
+                        ctx.borrow_mut().data.mode = MouseMode::Face;
+                    }
+                    Some("edge") => {
+                        ctx.borrow_mut().data.mode = MouseMode::Edge;
+                    }
+                    Some("tab") => {
+                        ctx.borrow_mut().data.mode = MouseMode::Tab;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    ));
+    app.add_action(&amode);
+
+    let areset_views = gio::SimpleAction::new("reset_views", None);
+    areset_views.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let mut ctx = ctx.borrow_mut();
+            let sz_scene = ctx.wscene.size_as_vector();
+            let sz_paper = ctx.wpaper.size_as_vector();
+            ctx.data.reset_views(sz_scene, sz_paper);
+            ctx.wpaper.queue_render();
+            ctx.wscene.queue_render();
+        }
+    ));
+    app.add_action(&areset_views);
 
     w.set_default_size(800, 600);
     w.connect_destroy(clone!(
@@ -193,12 +233,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             ctx.data.last_cursor_pos = pos;
 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.data.scene_analyze_click(ctx.wscene.size_as_vector(), pos);
-                match selection {
-                    ClickResult::None | ClickResult::Face(_) => {
-                        ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
-                    }
-                    ClickResult::Edge(i_edge, priority_face) => {
+                let selection = ctx.data.scene_analyze_click(ctx.data.mode, ctx.wscene.size_as_vector(), pos);
+                match (ctx.data.mode, selection) {
+                    (MouseMode::Edge, ClickResult::Edge(i_edge, priority_face)) => {
                         if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
                             ctx.data.try_join_strip(i_edge);
                         } else {
@@ -208,6 +245,19 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         ctx.data.scene_edge_build();
                         ctx.data.update_scene_face_selection();
                     }
+                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                        ctx.data.papercraft.edge_toggle_tab(i_edge);
+                        ctx.data.paper_build();
+                        ctx.data.scene_edge_build();
+                        ctx.data.update_scene_face_selection();
+                    }
+                    (_, ClickResult::Face(f)) => {
+                        ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                    }
+                    (_, ClickResult::None) => {
+                        ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                    }
+                    _ => {}
                 }
                 ctx.wscene.queue_render();
                 ctx.wpaper.queue_render();
@@ -303,13 +353,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
             ctx.data.last_cursor_pos = pos;
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.data.paper_analyze_click(ctx.wpaper.size_as_vector(), pos);
-                match selection {
-                    ClickResult::Face(_) => {
-                        ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
-                        ctx.data.grabbed_island = true;
-                    }
-                    ClickResult::Edge(i_edge, i_face) => {
+                let selection = ctx.data.paper_analyze_click(ctx.data.mode, ctx.wpaper.size_as_vector(), pos);
+                match (ctx.data.mode, selection) {
+                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                         //ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
                         ctx.data.grabbed_island = false;
                         if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
@@ -321,10 +367,21 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         ctx.data.scene_edge_build();
                         ctx.data.update_scene_face_selection();
                     }
-                    ClickResult::None => {
-                        ctx.data.grabbed_island = false;
-                        ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                        ctx.data.papercraft.edge_toggle_tab(i_edge);
+                        ctx.data.paper_build();
+                        ctx.data.scene_edge_build();
+                        ctx.data.update_scene_face_selection();
                     }
+                    (_, ClickResult::Face(f)) => {
+                        ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        ctx.data.grabbed_island = true;
+                    }
+                    (_, ClickResult::None) => {
+                        ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        ctx.data.grabbed_island = false;
+                    }
+                    _ => {}
                 }
                 ctx.wscene.queue_render();
                 ctx.wpaper.queue_render();
@@ -417,6 +474,26 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     btn.set_icon_name(Some("application-exit"));
     toolbar.add(&btn);
 
+    toolbar.add(&gtk::SeparatorToolItem::new());
+
+    let btn = gtk::ToggleToolButton::new();
+    btn.set_action_name(Some("app.mode"));
+    btn.set_action_target_value(Some(&"face".to_variant()));
+    btn.set_icon_name(Some("media-playback-stop"));
+    toolbar.add(&btn);
+
+    let btn = gtk::ToggleToolButton::new();
+    btn.set_action_name(Some("app.mode"));
+    btn.set_action_target_value(Some(&"edge".to_variant()));
+    btn.set_icon_name(Some("list-remove"));
+    toolbar.add(&btn);
+
+    let btn = gtk::ToggleToolButton::new();
+    btn.set_action_name(Some("app.mode"));
+    btn.set_action_target_value(Some(&"tab".to_variant()));
+    btn.set_icon_name(Some("object-flip-horizontal"));
+    toolbar.add(&btn);
+
     //app.lookup_action("quit").unwrap().downcast::<gio::SimpleAction>().unwrap().set_enabled(false);
 
     let vbin = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -446,6 +523,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 ctx.data = PapercraftContext::from_papercraft(papercraft, ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
                 ctx.top_window.clone()
             };
+            w.application().unwrap().lookup_action("mode").unwrap().change_state(&"face".to_variant());
             w.show_all();
             w.present();
         }
@@ -483,22 +561,6 @@ fn main() {
         }
     ));
     app.run();
-
-    /*
-    return;
-
-    w.show_all();
-    w.present();
-    gtk::main();
-    #[cfg(xxx)]
-    {
-        let ctx = ctx.borrow();
-        {
-            let f = std::fs::File::create("a.json").unwrap();
-            let f = std::io::BufWriter::new(f);
-            serde_json::to_writer(f, &ctx.papercraft).unwrap();
-        }
-    }*/
 }
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
@@ -552,6 +614,13 @@ struct GLObjects {
     paper_vertices_page: glr::DynamicVertexArray<MVertex2D>,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum MouseMode {
+    Face,
+    Edge,
+    Tab,
+}
+
 //Objects that are recreated when a new model is loaded
 struct PapercraftContext {
     // The model
@@ -568,6 +637,7 @@ struct PapercraftContext {
 
     last_cursor_pos: Vector2,
 
+    mode: MouseMode,
     trans_scene: Transformation3D,
     trans_paper: TransformationPaper,
 }
@@ -659,7 +729,7 @@ impl PaperDrawFaceArgs {
 }
 
 impl PapercraftContext {
-    fn from_papercraft(papercraft: Papercraft, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
+    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2) -> (Transformation3D, TransformationPaper) {
         let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
         let mut trans_scene = Transformation3D::new(
             Vector3::new(0.0, 0.0, -30.0),
@@ -680,6 +750,10 @@ impl PapercraftContext {
                 mx: ms * mt,
             }
         };
+        (trans_scene, trans_paper)
+    }
+    fn from_papercraft(papercraft: Papercraft, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
+        let (trans_scene, trans_paper) = Self::default_transformations(sz_scene, sz_paper);
 
         PapercraftContext {
             papercraft,
@@ -690,6 +764,7 @@ impl PapercraftContext {
             grabbed_island: false,
             scroll_timer: None,
             last_cursor_pos: Vector2::zero(),
+            mode: MouseMode::Face,
             trans_scene,
             trans_paper,
         }
@@ -815,6 +890,10 @@ impl PapercraftContext {
             self.paper_build();
             self.update_scene_face_selection();
         }
+    }
+
+    fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
+        (self.trans_scene, self.trans_paper) = Self::default_transformations(sz_scene, sz_paper);
     }
 
     fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, selected: bool, hi: bool, args: &mut PaperDrawFaceArgs) {
@@ -1157,7 +1236,7 @@ impl PapercraftContext {
         }
     }
 
-    fn scene_analyze_click(&self, size: Vector2, pos: Vector2) -> ClickResult {
+    fn scene_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
@@ -1169,6 +1248,7 @@ impl PapercraftContext {
 
         let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
+        //Faces has to be checked both in Edge and Face mode, because Edges can be hidden by a face.
         let mut hit_face = None;
         for (iface, face) in self.papercraft.model().faces() {
             let tri = face.index_vertices().map(|v| self.papercraft.model()[v].pos());
@@ -1180,6 +1260,13 @@ impl PapercraftContext {
                     (old, _) => old
                 };
             }
+        }
+
+        if mode == MouseMode::Face {
+            return match hit_face {
+                None => ClickResult::None,
+                Some((f, _)) => ClickResult::Face(f),
+            };
         }
 
         let mut hit_edge = None;
@@ -1219,14 +1306,15 @@ impl PapercraftContext {
             hit_edge = Some((i_edge, ray_hit, new_dist));
         }
 
-        match (hit_face, hit_edge) {
-            (_, Some((e, _, _))) => ClickResult::Edge(e, None),
-            (Some((f, _)), None) => ClickResult::Face(f),
+        // Edge has priority
+        match (hit_edge, hit_face) {
+            (Some((e, _, _)), _) => ClickResult::Edge(e, None),
+            (None, Some((f, _))) => ClickResult::Face(f),
             (None, None) => ClickResult::None,
         }
     }
 
-    fn paper_analyze_click(&self, size: Vector2, pos: Vector2) -> ClickResult {
+    fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point2::new(x, y);
@@ -1235,56 +1323,62 @@ impl PapercraftContext {
         let mx_inv = mx.invert().unwrap();
         let click = mx_inv.transform_point(click).to_vec();
 
-        let mut edge_sel = None;
-        let mut face_sel = None;
+        let mut hit_edge = None;
+        let mut hit_face = None;
 
         for (_i_island, island) in self.papercraft.islands().collect::<Vec<_>>().into_iter().rev() {
             self.papercraft.traverse_faces(island,
                 |i_face, face, fmx| {
                     let normal = self.papercraft.face_plane(face);
+
                     let tri = face.index_vertices();
                     let tri = tri.map(|v| {
                         let v3 = self.papercraft.model()[v].pos();
                         let v2 = normal.project(&v3);
                         fmx.transform_point(Point2::from_vec(v2)).to_vec()
                     });
-                    if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
-                        face_sel = Some(i_face);
+                    if hit_face.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
+                        hit_face = Some(i_face);
                     }
+                    match mode {
+                        MouseMode::Face => { }
+                        MouseMode::Edge | MouseMode::Tab => {
+                            for i_edge in face.index_edges() {
+                                if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
+                                    continue;
+                                }
+                                let edge = &self.papercraft.model()[i_edge];
+                                let v0 = self.papercraft.model()[edge.v0()].pos();
+                                let v0 = normal.project(&v0);
+                                let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
+                                let v1 = self.papercraft.model()[edge.v1()].pos();
+                                let v1 = normal.project(&v1);
+                                let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
 
-                    for i_edge in face.index_edges() {
-                        if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
-                            continue;
-                        }
-                        let edge = &self.papercraft.model()[i_edge];
-                        let v0 = self.papercraft.model()[edge.v0()].pos();
-                        let v0 = normal.project(&v0);
-                        let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
-                        let v1 = self.papercraft.model()[edge.v1()].pos();
-                        let v1 = normal.project(&v1);
-                        let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
-
-                        let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
-                        let d = <Matrix3 as Transform<Point2>>::transform_vector(&mx, Vector2::new(d, 0.0)).magnitude();
-                        if d > 0.02 { //too far?
-                            continue;
-                        }
-                        match &edge_sel {
-                            None => {
-                                edge_sel = Some((d, i_edge, i_face));
+                                let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
+                                let d = <Matrix3 as Transform<Point2>>::transform_vector(&mx, Vector2::new(d, 0.0)).magnitude();
+                                if d > 0.02 { //too far?
+                                    continue;
+                                }
+                                match &hit_edge {
+                                    None => {
+                                        hit_edge = Some((d, i_edge, i_face));
+                                    }
+                                    &Some((d_prev, _, _)) if d < d_prev => {
+                                        hit_edge = Some((d, i_edge, i_face));
+                                    }
+                                    _ => {}
+                                }
                             }
-                            &Some((d_prev, _, _)) if d < d_prev => {
-                                edge_sel = Some((d, i_edge, i_face));
-                            }
-                            _ => {}
                         }
                     }
                     ControlFlow::Continue(())
                 }
             );
         }
-        //Edge selection has priority
-        match (edge_sel, face_sel) {
+
+        // Edge has priority
+        match (hit_edge, hit_face) {
             (Some((_d, i_edge, i_face)), _) => ClickResult::Edge(i_edge, Some(i_face)),
             (None, Some(i_face)) => ClickResult::Face(i_face),
             (None, None) => ClickResult::None,
@@ -1311,7 +1405,7 @@ impl PapercraftContext {
             self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
             self.trans_scene.recompute_obj();
         } else {
-            let selection = self.scene_analyze_click(size, pos);
+            let selection = self.scene_analyze_click(self.mode, size, pos);
             self.set_selection(selection, false, false);
         }
     }
@@ -1338,7 +1432,7 @@ impl PapercraftContext {
                 self.paper_build();
             }
         } else {
-            let selection = self.paper_analyze_click(size, pos);
+            let selection = self.paper_analyze_click(self.mode, size, pos);
             self.set_selection(selection, false, false);
         }
     }
@@ -1352,7 +1446,6 @@ impl GlobalContext {
         let sz_scene = self.wscene.size_as_vector();
         let sz_paper = self.wpaper.size_as_vector();
         self.data = PapercraftContext::from_papercraft(papercraft, sz_scene, sz_paper);
-
         self.wscene.queue_render();
         self.wpaper.queue_render();
     }

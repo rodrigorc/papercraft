@@ -3,11 +3,93 @@ use std::{collections::{HashMap, HashSet}, ops::ControlFlow, io::{Read, Seek, Wr
 use cgmath::{One, EuclideanSpace, Transform, Rad, Zero};
 use gdk_pixbuf::traits::PixbufLoaderExt;
 use slotmap::SlotMap;
+use crate::{waveobj, util_3d};
 
 use super::*;
 
 impl Papercraft {
-    pub fn from_model(model: Model, facemap: &HashMap<FaceIndex, u32>) -> Papercraft {
+    pub fn save<W: Write + Seek>(&self, w: W) -> std::io::Result<()> {
+        let mut zip = zip::ZipWriter::new(w);
+        let options = zip::write::FileOptions::default();
+
+        zip.start_file("model.json", options)?;
+        serde_json::to_writer(&mut zip, self)?;
+
+        for tex in self.model.textures() {
+            if let Some(pixbuf) = tex.pixbuf() {
+                let file_name = tex.file_name();
+                zip.start_file(&format!("tex/{file_name}"), options)?;
+                let ext = Path::new(file_name).extension().and_then(|s| s.to_str()).unwrap_or("png").to_ascii_lowercase();
+                let data = pixbuf.save_to_bufferv(&ext, &[]).unwrap();
+                zip.write_all(&mut &data[..])?;
+            }
+        }
+        zip.finish()?;
+        Ok(())
+    }
+
+    pub fn load<R: Read + Seek>(r: R) -> std::io::Result<Papercraft> {
+        let mut zip = zip::ZipArchive::new(r)?;
+        let mut zmodel = zip.by_name("model.json")?;
+        let mut papercraft: Papercraft = serde_json::from_reader(&mut zmodel)?;
+        drop(zmodel);
+
+        papercraft.model.reload_textures(|file_name| {
+            let mut ztex = zip.by_name(&format!("tex/{file_name}")).ok()?;
+            let mut data = Vec::new();
+            ztex.read_to_end(&mut data).ok()?;
+
+            let pbl = gdk_pixbuf::PixbufLoader::new();
+            pbl.write(&data).ok().unwrap();
+            pbl.close().ok().unwrap();
+            let img = pbl.pixbuf().unwrap();
+            Some(img)
+        });
+        Ok(papercraft)
+    }
+
+    pub fn import_waveobj(file_name: impl AsRef<Path>) -> Papercraft {
+        let f = std::fs::File::open(file_name).unwrap();
+        let f = std::io::BufReader::new(f);
+        let (matlib, obj) = waveobj::Model::from_reader(f).unwrap();
+
+        let mut texture_map = HashMap::new();
+
+        // Textures are read from the .mtl file
+        let f = std::fs::File::open(matlib).unwrap();
+        let f = std::io::BufReader::new(f);
+
+        for lib in waveobj::Material::from_reader(f).unwrap()  {
+            if let Some(map) = lib.map() {
+                let pbl = gdk_pixbuf::PixbufLoader::new();
+                let data = std::fs::read(map).unwrap();
+                pbl.write(&data).ok().unwrap();
+                pbl.close().ok().unwrap();
+                let img = pbl.pixbuf().unwrap();
+                //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
+                let map_name = Path::new(map).file_name().unwrap().to_str().unwrap();
+                texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
+            }
+        }
+        let (mut model, facemap) = Model::from_waveobj(&obj, texture_map);
+
+        // Compute the bounding box, then move to the center and scale to a standard size
+        let (v_min, v_max) = util_3d::bounding_box_3d(
+            model
+                .vertices()
+                .map(|v| v.pos())
+        );
+        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
+        let mscale = Matrix4::from_scale(1.0 / size);
+        let center = (v_min + v_max) / 2.0;
+        let mcenter = Matrix4::from_translation(-center);
+        let m = mscale * mcenter;
+
+        model.transform_vertices(|pos, _normal| {
+            //only scale and translate, no need to touch normals
+            *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
+        });
+
         let mut edges = vec![EdgeStatus::Cut(false); model.num_edges()];
 
         for (i_edge, edge_status) in edges.iter_mut().enumerate() {
@@ -72,45 +154,5 @@ impl Papercraft {
             edges,
             islands,
         }
-    }
-
-    pub fn save<W: Write + Seek>(&self, w: W) -> std::io::Result<()> {
-        let mut zip = zip::ZipWriter::new(w);
-        let options = zip::write::FileOptions::default();
-
-        zip.start_file("model.json", options)?;
-        serde_json::to_writer(&mut zip, self)?;
-
-        for tex in self.model.textures() {
-            if let Some(pixbuf) = tex.pixbuf() {
-                let file_name = tex.file_name();
-                zip.start_file(&format!("tex/{file_name}"), options)?;
-                let ext = Path::new(file_name).extension().and_then(|s| s.to_str()).unwrap_or("png").to_ascii_lowercase();
-                let data = pixbuf.save_to_bufferv(&ext, &[]).unwrap();
-                zip.write_all(&mut &data[..])?;
-            }
-        }
-        zip.finish()?;
-        Ok(())
-    }
-
-    pub fn load<R: Read + Seek>(r: R) -> std::io::Result<Papercraft> {
-        let mut zip = zip::ZipArchive::new(r)?;
-        let mut zmodel = zip.by_name("model.json")?;
-        let mut papercraft: Papercraft = serde_json::from_reader(&mut zmodel)?;
-        drop(zmodel);
-
-        papercraft.model.reload_textures(|file_name| {
-            let mut ztex = zip.by_name(&format!("tex/{file_name}")).ok()?;
-            let mut data = Vec::new();
-            ztex.read_to_end(&mut data).ok()?;
-
-            let pbl = gdk_pixbuf::PixbufLoader::new();
-            pbl.write(&data).ok().unwrap();
-            pbl.close().ok().unwrap();
-            let img = pbl.pixbuf().unwrap();
-            Some(img)
-        });
-        Ok(papercraft)
     }
 }

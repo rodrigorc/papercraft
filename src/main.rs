@@ -199,7 +199,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             ctx.data.last_cursor_pos = pos;
 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.analyze_click(pos);
+                let selection = ctx.scene_analyze_click(pos);
                 match selection {
                     ClickResult::None | ClickResult::Face(_) => {
                         ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
@@ -307,7 +307,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
             ctx.data.last_cursor_pos = pos;
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.analyze_click_paper(pos);
+                let selection = ctx.paper_analyze_click(pos);
                 match selection {
                     ClickResult::Face(_) => {
                         ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
@@ -1149,54 +1149,10 @@ impl PapercraftContext {
 
 impl GlobalContext {
     fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
-        let f = std::fs::File::open(file_name).unwrap();
-        let f = std::io::BufReader::new(f);
-        let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
-
-        // For now read only the first model from the file
-        let obj = models.get(0).unwrap();
-        let mut texture_map = HashMap::new();
-
-        // Textures are read from the .mtl file
-        for lib in matlibs {
-            let f = std::fs::File::open(lib).unwrap();
-            let f = std::io::BufReader::new(f);
-
-            for lib in waveobj::Material::from_reader(f).unwrap()  {
-                if let Some(map) = lib.map() {
-                    let pbl = gdk_pixbuf::PixbufLoader::new();
-                    let data = std::fs::read(map).unwrap();
-                    pbl.write(&data).ok().unwrap();
-                    pbl.close().ok().unwrap();
-                    let img = pbl.pixbuf().unwrap();
-                    //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
-                    let map_name = Path::new(map).file_name().unwrap().to_str().unwrap();
-                    texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
-                }
-            }
-        }
-        let (mut model, facemap) = paper::Model::from_waveobj(obj, texture_map);
-
-        // Compute the bounding box, then move to the center and scale to a standard size
-        let (v_min, v_max) = util_3d::bounding_box_3d(
-            model
-                .vertices()
-                .map(|v| v.pos())
-        );
-        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
-        let mscale = Matrix4::from_scale(1.0 / size);
-        let center = (v_min + v_max) / 2.0;
-        let mcenter = Matrix4::from_translation(-center);
-        let m = mscale * mcenter;
-
-        model.transform_vertices(|pos, _normal| {
-            //only scale and translate, no need to touch normals
-            *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
-        });
+        let papercraft = Papercraft::import_waveobj(file_name);
 
         let rscene = self.gui.wscene.allocation();
         let rpaper = self.gui.wpaper.allocation();
-        let papercraft = Papercraft::from_model(model, &facemap);
         self.data = PapercraftContext::from_papercraft(papercraft, rscene, rpaper);
 
         self.gui.wscene.queue_render();
@@ -1231,7 +1187,7 @@ impl GlobalContext {
             self.data.trans_scene.recompute_obj();
             self.gui.wscene.queue_render();
         } else {
-            let selection = self.analyze_click(pos);
+            let selection = self.scene_analyze_click(pos);
             self.data.set_selection(selection, false, false);
             self.gui.wscene.queue_render();
             self.gui.wpaper.queue_render();
@@ -1262,7 +1218,7 @@ impl GlobalContext {
                 self.gui.wpaper.queue_render();
             }
         } else {
-            let selection = self.analyze_click_paper(pos);
+            let selection = self.paper_analyze_click(pos);
             self.data.set_selection(selection, false, false);
             self.gui.wscene.queue_render();
             self.gui.wpaper.queue_render();
@@ -1276,7 +1232,7 @@ impl GlobalContext {
         self.data.scroll_timer = tmr;
     }
 
-    fn analyze_click(&self, pos: Vector2) -> ClickResult {
+    fn scene_analyze_click(&self, pos: Vector2) -> ClickResult {
         let rect = self.gui.wscene.allocation();
         let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
         let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
@@ -1347,7 +1303,7 @@ impl GlobalContext {
         }
     }
 
-    fn analyze_click_paper(&self, pos: Vector2) -> ClickResult {
+    fn paper_analyze_click(&self, pos: Vector2) -> ClickResult {
         let rect = self.gui.wpaper.allocation();
         let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
         let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
@@ -1412,6 +1368,7 @@ impl GlobalContext {
             (None, None) => ClickResult::None,
         }
     }
+
     fn build_gl_fixs(&mut self) {
         if self.gui.gl_fixs.is_none() {
             let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
@@ -1439,6 +1396,7 @@ impl GlobalContext {
             });
         }
     }
+
     fn scene_render(&mut self) {
         self.data.build_gl_objs();
         let gl_objs = self.data.gl_objs.as_ref().unwrap();

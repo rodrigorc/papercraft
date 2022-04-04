@@ -16,53 +16,27 @@ pub struct Face {
 
 #[derive(Clone, Debug)]
 pub struct Model {
-    #[allow(dead_code)]
-    name: String,
     materials: Vec<String>,
-    vs0: Vec<[f32; 3]>,
+    vs: Vec<[f32; 3]>,
     ns: Vec<[f32; 3]>,
     ts: Vec<[f32; 2]>,
     faces: Vec<Face>,
 }
 
 impl Model {
-    //Returns (matlibs, models)
-    pub fn from_reader<R: BufRead>(r: R) -> Result<(Vec<String>, Vec<Model>)> {
+    //Returns (matlib, model)
+    pub fn from_reader<R: BufRead>(r: R) -> Result<(String, Model)> {
         let syn_error = || anyhow!("invalid obj syntax");
 
-        let mut objs = Vec::new();
-
-        let mut material_libs = Vec::new();
-        #[derive(Default)]
-        struct ModelData {
-            name: Option<String>,
-            materials: Vec<String>,
-            current_material: usize,
-            faces: Vec<Face>,
-            pos: Vec<[f32; 3]>,
-            normals: Vec<[f32; 3]>,
-            uvs: Vec<[f32; 2]>,
-        }
-        impl ModelData {
-            fn build(&mut self) -> Option<Model> {
-                //Build the model even if empty, to always reset all self fields
-                let m = Model {
-                    name: self.name.take().unwrap_or_default(),
-                    materials: std::mem::take(&mut self.materials),
-                    vs0: std::mem::take(&mut self.pos),
-                    ns: std::mem::take(&mut self.normals),
-                    ts: std::mem::take(&mut self.uvs),
-                    faces: std::mem::take(&mut self.faces),
-                };
-                if m.faces.is_empty() {
-                    None
-                } else {
-                    Some(m)
-                }
-            }
-        }
-        let mut data = ModelData::default();
-
+        let mut material_lib = String::new();
+        let mut current_material: usize = 0;
+        let mut data = Model {
+            materials: Vec::new(),
+            vs: Vec::new(),
+            ns: Vec::new(),
+            ts: Vec::new(),
+            faces: Vec::new(),
+        };
 
         for line in r.lines() {
             let line = line?;
@@ -75,27 +49,25 @@ impl Model {
             let first = words.next().ok_or_else(syn_error)?;
             match first {
                 "o" => {
-                    objs.extend(data.build());
-
-                    let name = words.next().ok_or_else(syn_error)?;
-                    data.name = Some(String::from(name));
+                    // We combine all the objects into one.
+                    // Fortunately the numbering of vertices and faces is global to the file not to the object, so nothing to do here.
                 }
                 "v" => {
                     let x: f32 = words.next().ok_or_else(syn_error)?.parse()?;
                     let y: f32 = words.next().ok_or_else(syn_error)?.parse()?;
                     let z: f32 = words.next().ok_or_else(syn_error)?.parse()?;
-                    data.pos.push([x, y, z]);
+                    data.vs.push([x, y, z]);
                 }
                 "vt" => {
                     let u: f32 = words.next().ok_or_else(syn_error)?.parse()?;
                     let v: f32 = words.next().ok_or_else(syn_error)?.parse()?;
-                    data.uvs.push([u, v]);
+                    data.ts.push([u, v]);
                 }
                 "vn" => {
                     let x: f32 = words.next().ok_or_else(syn_error)?.parse()?;
                     let y: f32 = words.next().ok_or_else(syn_error)?.parse()?;
                     let z: f32 = words.next().ok_or_else(syn_error)?.parse()?;
-                    data.normals.push([x, y, z]);
+                    data.ns.push([x, y, z]);
                 }
                 "f" => {
                     let mut verts = Vec::new();
@@ -114,20 +86,20 @@ impl Model {
 
                     }
                     data.faces.push(Face {
-                        material: data.current_material,
+                        material: current_material,
                         verts
                     })
                 }
                 "mtllib" => {
                     let lib = words.next().ok_or_else(syn_error)?;
-                    material_libs.push(String::from(lib));
+                    material_lib = lib.to_owned();
                 }
                 "usemtl" => {
                     let mtl = words.next().ok_or_else(syn_error)?;
                     if let Some(p) = data.materials.iter().position(|m| m == mtl) {
-                        data.current_material = p;
+                        current_material = p;
                     } else {
-                        data.current_material = data.materials.len();
+                        current_material = data.materials.len();
                         data.materials.push(String::from(mtl));
                     }
                 }
@@ -138,13 +110,7 @@ impl Model {
             }
         }
 
-        objs.extend(data.build());
-
-        Ok((material_libs, objs))
-    }
-    #[allow(dead_code)]
-    pub fn name(&self) -> &str {
-        &self.name
+        Ok((material_lib, data))
     }
     pub fn materials(&self) -> impl Iterator<Item = &str> + '_ {
         self.materials.iter().map(|s| &s[..])
@@ -153,7 +119,7 @@ impl Model {
         &self.faces
     }
     pub fn vertex_by_index(&self, idx: u32) -> &[f32; 3] {
-        &self.vs0[idx as usize]
+        &self.vs[idx as usize]
     }
     pub fn normal_by_index(&self, idx: u32) -> &[f32; 3] {
         &self.ns[idx as usize]

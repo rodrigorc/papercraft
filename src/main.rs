@@ -195,7 +195,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             ctx.data.last_cursor_pos = pos;
 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.scene_analyze_click(pos);
+                let selection = ctx.data.scene_analyze_click(ctx.wscene.size_as_vector(), pos);
                 match selection {
                     ClickResult::None | ClickResult::Face(_) => {
                         ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
@@ -241,7 +241,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = ev.position();
             let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
 
-            ctx.scene_motion_notify_event(pos, ev);
+            ctx.data.scene_motion_notify_event(ctx.wscene.size_as_vector(), pos, ev);
+            ctx.wscene.queue_render();
+            ctx.wpaper.queue_render();
             Inhibit(true)
         }
     ));
@@ -303,7 +305,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
             ctx.data.last_cursor_pos = pos;
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.paper_analyze_click(pos);
+                let selection = ctx.data.paper_analyze_click(ctx.wpaper.size_as_vector(), pos);
                 match selection {
                     ClickResult::Face(_) => {
                         ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
@@ -351,7 +353,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
 
             let grabbed = {
                 let mut ctx = ctx.borrow_mut();
-                ctx.paper_motion_notify_event(pos, state);
+                ctx.data.paper_motion_notify_event(size, pos, state);
+                ctx.wpaper.queue_render();
+                ctx.wscene.queue_render();
                 ctx.data.grabbed_island
             };
 
@@ -374,7 +378,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                             let mut ctx = ctx.borrow_mut();
                             ctx.data.last_cursor_pos += delta;
                             ctx.data.trans_paper.mx = Matrix3::from_translation(delta) * ctx.data.trans_paper.mx;
-                            ctx.paper_motion_notify_event(pos, state);
+                            ctx.data.paper_motion_notify_event(size, pos, state);
                             ctx.wpaper.queue_render();
                             glib::Continue(true)
                         }
@@ -387,7 +391,6 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                     ctx.borrow_mut().set_scroll_timer(None);
                 }
             }
-
             Inhibit(true)
         }
     ));
@@ -1137,109 +1140,22 @@ impl PapercraftContext {
             }
         }
     }
-}
 
-impl GlobalContext {
-    fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
-        let papercraft = Papercraft::import_waveobj(file_name);
-
-        let sz_scene = self.wscene.size_as_vector();
-        let sz_paper = self.wpaper.size_as_vector();
-        self.data = PapercraftContext::from_papercraft(papercraft, sz_scene, sz_paper);
-
-        self.wscene.queue_render();
-        self.wpaper.queue_render();
-    }
-
-    fn save(&self, filename: impl AsRef<Path>) {
-        let f = std::fs::File::create(filename).unwrap();
-        let f = std::io::BufWriter::new(f);
-        self.data.papercraft.save(f).unwrap();
-    }
-
-    fn scene_motion_notify_event(&mut self, pos: Vector2, ev: &gdk::EventMotion) {
-        let delta = pos - self.data.last_cursor_pos;
-        self.data.last_cursor_pos = pos;
-        if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
-            // half angles
-            let ang = delta / 200.0 / 2.0;
-            let cosy = ang.x.cos();
-            let siny = ang.x.sin();
-            let cosx = ang.y.cos();
-            let sinx = ang.y.sin();
-            let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
-            let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
-
-            self.data.trans_scene.rotation = (roty * rotx * self.data.trans_scene.rotation).normalize();
-            self.data.trans_scene.recompute_obj();
-            self.wscene.queue_render();
-        } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
-            let delta = delta / 50.0;
-            self.data.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
-            self.data.trans_scene.recompute_obj();
-            self.wscene.queue_render();
-        } else {
-            let selection = self.scene_analyze_click(pos);
-            self.data.set_selection(selection, false, false);
-            self.wscene.queue_render();
-            self.wpaper.queue_render();
-            }
-    }
-
-    fn paper_motion_notify_event(&mut self, pos: Vector2, ev_state: gdk::ModifierType) {
-        let delta = pos - self.data.last_cursor_pos;
-        self.data.last_cursor_pos = pos;
-        if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
-            self.data.trans_paper.mx = Matrix3::from_translation(delta) * self.data.trans_paper.mx;
-            self.wpaper.queue_render();
-        } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.data.grabbed_island {
-            if !self.data.selected_islands.is_empty() {
-                for &i_island in &self.data.selected_islands {
-                    if let Some(island) = self.data.papercraft.island_by_key_mut(i_island) {
-                        let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.data.trans_paper.mx, delta).unwrap();
-                        if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
-                            // Rotate island
-                            island.rotate(Deg(delta.y));
-                        } else {
-                            // Move island
-                            island.translate(delta_scaled);
-                        }
-                    }
-                }
-                self.data.paper_build();
-                self.wpaper.queue_render();
-            }
-        } else {
-            let selection = self.paper_analyze_click(pos);
-            self.data.set_selection(selection, false, false);
-            self.wscene.queue_render();
-            self.wpaper.queue_render();
-            }
-    }
-
-    fn set_scroll_timer(&mut self, tmr: Option<glib::SourceId>) {
-        if let Some(t) = self.data.scroll_timer.take() {
-            t.remove();
-        }
-        self.data.scroll_timer = tmr;
-    }
-
-    fn scene_analyze_click(&self, pos: Vector2) -> ClickResult {
-        let size = self.wscene.size_as_vector();
+    fn scene_analyze_click(&self, size: Vector2, pos: Vector2) -> ClickResult {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
         let height = size.y;
 
-        let click_camera = self.data.trans_scene.persp_inv.transform_point(click);
-        let click_obj = self.data.trans_scene.obj_inv.transform_point(click_camera);
-        let camera_obj = self.data.trans_scene.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
+        let click_camera = self.trans_scene.persp_inv.transform_point(click);
+        let click_obj = self.trans_scene.obj_inv.transform_point(click_camera);
+        let camera_obj = self.trans_scene.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
 
         let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
         let mut hit_face = None;
-        for (iface, face) in self.data.papercraft.model().faces() {
-            let tri = face.index_vertices().map(|v| self.data.papercraft.model()[v].pos());
+        for (iface, face) in self.papercraft.model().faces() {
+            let tri = face.index_vertices().map(|v| self.papercraft.model()[v].pos());
             let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
             if let Some(new_hit) = maybe_new_hit {
                 hit_face = match (hit_face, new_hit) {
@@ -1251,12 +1167,12 @@ impl GlobalContext {
         }
 
         let mut hit_edge = None;
-        for (i_edge, edge) in self.data.papercraft.model().edges() {
-            if self.data.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
+        for (i_edge, edge) in self.papercraft.model().edges() {
+            if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
                 continue;
             }
-            let v1 = self.data.papercraft.model()[edge.v0()].pos();
-            let v2 = self.data.papercraft.model()[edge.v1()].pos();
+            let v1 = self.papercraft.model()[edge.v0()].pos();
+            let v2 = self.papercraft.model()[edge.v1()].pos();
             let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
 
             // Behind the screen, it is not a hit
@@ -1294,26 +1210,25 @@ impl GlobalContext {
         }
     }
 
-    fn paper_analyze_click(&self, pos: Vector2) -> ClickResult {
-        let size = self.wpaper.size_as_vector();
+    fn paper_analyze_click(&self, size: Vector2, pos: Vector2) -> ClickResult {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point2::new(x, y);
 
-        let mx = self.data.trans_paper.ortho * self.data.trans_paper.mx;
+        let mx = self.trans_paper.ortho * self.trans_paper.mx;
         let mx_inv = mx.invert().unwrap();
         let click = mx_inv.transform_point(click).to_vec();
 
         let mut edge_sel = None;
         let mut face_sel = None;
 
-        for (_i_island, island) in self.data.papercraft.islands().collect::<Vec<_>>().into_iter().rev() {
-            self.data.papercraft.traverse_faces(island,
+        for (_i_island, island) in self.papercraft.islands().collect::<Vec<_>>().into_iter().rev() {
+            self.papercraft.traverse_faces(island,
                 |i_face, face, fmx| {
-                    let normal = self.data.papercraft.face_plane(face);
+                    let normal = self.papercraft.face_plane(face);
                     let tri = face.index_vertices();
                     let tri = tri.map(|v| {
-                        let v3 = self.data.papercraft.model()[v].pos();
+                        let v3 = self.papercraft.model()[v].pos();
                         let v2 = normal.project(&v3);
                         fmx.transform_point(Point2::from_vec(v2)).to_vec()
                     });
@@ -1322,14 +1237,14 @@ impl GlobalContext {
                     }
 
                     for i_edge in face.index_edges() {
-                        if self.data.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
+                        if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
                             continue;
                         }
-                        let edge = &self.data.papercraft.model()[i_edge];
-                        let v0 = self.data.papercraft.model()[edge.v0()].pos();
+                        let edge = &self.papercraft.model()[i_edge];
+                        let v0 = self.papercraft.model()[edge.v0()].pos();
                         let v0 = normal.project(&v0);
                         let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
-                        let v1 = self.data.papercraft.model()[edge.v1()].pos();
+                        let v1 = self.papercraft.model()[edge.v1()].pos();
                         let v1 = normal.project(&v1);
                         let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
 
@@ -1358,6 +1273,85 @@ impl GlobalContext {
             (None, Some(i_face)) => ClickResult::Face(i_face),
             (None, None) => ClickResult::None,
         }
+    }
+
+    fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev: &gdk::EventMotion) {
+        let delta = pos - self.last_cursor_pos;
+        self.last_cursor_pos = pos;
+        if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
+            // half angles
+            let ang = delta / 200.0 / 2.0;
+            let cosy = ang.x.cos();
+            let siny = ang.x.sin();
+            let cosx = ang.y.cos();
+            let sinx = ang.y.sin();
+            let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
+            let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
+
+            self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
+            self.trans_scene.recompute_obj();
+        } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
+            let delta = delta / 50.0;
+            self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
+            self.trans_scene.recompute_obj();
+        } else {
+            let selection = self.scene_analyze_click(size, pos);
+            self.set_selection(selection, false, false);
+        }
+    }
+
+    fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) {
+        let delta = pos - self.last_cursor_pos;
+        self.last_cursor_pos = pos;
+        if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
+            self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
+        } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.grabbed_island {
+            if !self.selected_islands.is_empty() {
+                for &i_island in &self.selected_islands {
+                    if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
+                        let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
+                        if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
+                            // Rotate island
+                            island.rotate(Deg(delta.y));
+                        } else {
+                            // Move island
+                            island.translate(delta_scaled);
+                        }
+                    }
+                }
+                self.paper_build();
+            }
+        } else {
+            let selection = self.paper_analyze_click(size, pos);
+            self.set_selection(selection, false, false);
+        }
+    }
+
+}
+
+impl GlobalContext {
+    fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
+        let papercraft = Papercraft::import_waveobj(file_name);
+
+        let sz_scene = self.wscene.size_as_vector();
+        let sz_paper = self.wpaper.size_as_vector();
+        self.data = PapercraftContext::from_papercraft(papercraft, sz_scene, sz_paper);
+
+        self.wscene.queue_render();
+        self.wpaper.queue_render();
+    }
+
+    fn save(&self, filename: impl AsRef<Path>) {
+        let f = std::fs::File::create(filename).unwrap();
+        let f = std::io::BufWriter::new(f);
+        self.data.papercraft.save(f).unwrap();
+    }
+
+    fn set_scroll_timer(&mut self, tmr: Option<glib::SourceId>) {
+        if let Some(t) = self.data.scroll_timer.take() {
+            t.remove();
+        }
+        self.data.scroll_timer = tmr;
     }
 
     fn build_gl_fixs(&mut self) {

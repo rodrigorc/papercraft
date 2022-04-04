@@ -29,23 +29,6 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
     app.set_menubar(Some(&menu));
 
-    let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
-    let trans_scene = Transformation3D::new(
-        Vector3::new(0.0, 0.0, -30.0),
-        Quaternion::one(),
-        20.0,
-        persp
-    );
-    let trans_paper = {
-        let mt = Matrix3::from_translation(Vector2::new(-210.0/2.0, -297.0/2.0));
-        let ms = Matrix3::from_scale(1.0);
-        TransformationPaper {
-            ortho: util_3d::ortho2d(1.0, 1.0),
-            //mx: mt * ms * mr,
-            mx: ms * mt,
-        }
-    };
-
     let wscene = gtk::GLArea::new();
     let wpaper = gtk::GLArea::new();
     let w = gtk::ApplicationWindow::new(app);
@@ -56,25 +39,15 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         wpaper: wpaper.clone(),
         gl_fixs: None,
     };
-    let ctx = MyContext {
+
+    let dummy_r = gtk::Allocation::new(0, 0, 1, 1);
+    let data = PapercraftContext::from_papercraft(Papercraft::empty(), dummy_r, dummy_r);
+    let ctx = GlobalContext {
         gui,
-
-        gl_objs: None,
-
-        papercraft: Papercraft::empty(),
-        selected_face: None,
-        selected_edge: None,
-        selected_islands: Vec::new(),
-        grabbed_island: false,
-        scroll_timer: None,
-
-        last_cursor_pos: Vector2::zero(),
-
-        trans_scene,
-        trans_paper,
+        data,
     };
 
-    let ctx: Rc<RefCell<MyContext>> = Rc::new(RefCell::new(ctx));
+    let ctx: Rc<RefCell<GlobalContext>> = Rc::new(RefCell::new(ctx));
 
     let aquit = gio::SimpleAction::new("quit", None);
     aquit.connect_activate(clone!(@weak app => move |_, _| app.quit() ));
@@ -223,28 +196,28 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let ctx = &mut *ctx;
             let pos = ev.position();
             let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
-            ctx.last_cursor_pos = pos;
+            ctx.data.last_cursor_pos = pos;
 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
                 let selection = ctx.analyze_click(pos);
                 match selection {
                     ClickResult::None | ClickResult::Face(_) => {
-                        ctx.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
                     }
                     ClickResult::Edge(i_edge, priority_face) => {
                         if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                            ctx.try_join_strip(i_edge);
+                            ctx.data.try_join_strip(i_edge);
                         } else {
-                            ctx.edge_toggle_cut(i_edge, priority_face);
+                            ctx.data.edge_toggle_cut(i_edge, priority_face);
                         }
-                        ctx.paper_build();
-                        ctx.scene_edge_build();
-                        ctx.update_scene_face_selection();
-                        ctx.gui.wscene.queue_render();
-                        ctx.gui.wpaper.queue_render();
+                        ctx.data.paper_build();
+                        ctx.data.scene_edge_build();
+                        ctx.data.update_scene_face_selection();
                     }
                 }
-            }
+                ctx.gui.wscene.queue_render();
+                ctx.gui.wpaper.queue_render();
+    }
             Inhibit(false)
         }
     ));
@@ -258,8 +231,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 gdk::ScrollDirection::Down => 1.0 / 1.1,
                 _ => 1.0,
             };
-            ctx.trans_scene.scale *= dz;
-            ctx.trans_scene.recompute_obj();
+            ctx.data.trans_scene.scale *= dz;
+            ctx.data.trans_scene.recompute_obj();
             ctx.gui.wscene.queue_render();
             Inhibit(true)
         }
@@ -296,7 +269,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 return;
             }
             let ratio = width as f32 / height as f32;
-            ctx.borrow_mut().trans_scene.set_ratio(ratio);
+            ctx.borrow_mut().data.trans_scene.set_ratio(ratio);
         }
     ));
 
@@ -320,7 +293,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             if height <= 0 || width <= 0 {
                 return;
             }
-            ctx.borrow_mut().trans_paper.ortho = util_3d::ortho2d(width as f32, height as f32);
+            ctx.borrow_mut().data.trans_paper.ortho = util_3d::ortho2d(width as f32, height as f32);
         }
     ));
 
@@ -332,34 +305,34 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let ctx = &mut *ctx;
             let pos = ev.position();
             let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
-            ctx.last_cursor_pos = pos;
+            ctx.data.last_cursor_pos = pos;
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
                 let selection = ctx.analyze_click_paper(pos);
                 match selection {
                     ClickResult::Face(_) => {
-                        ctx.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
-                        ctx.grabbed_island = true;
+                        ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        ctx.data.grabbed_island = true;
                     }
                     ClickResult::Edge(i_edge, i_face) => {
                         //ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
-                        ctx.grabbed_island = false;
+                        ctx.data.grabbed_island = false;
                         if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                            ctx.try_join_strip(i_edge);
+                            ctx.data.try_join_strip(i_edge);
                         } else {
-                            ctx.edge_toggle_cut(i_edge, i_face);
+                            ctx.data.edge_toggle_cut(i_edge, i_face);
                         }
-                        ctx.paper_build();
-                        ctx.scene_edge_build();
-                        ctx.update_scene_face_selection();
-                        ctx.gui.wscene.queue_render();
-                        ctx.gui.wpaper.queue_render();
+                        ctx.data.paper_build();
+                        ctx.data.scene_edge_build();
+                        ctx.data.update_scene_face_selection();
                     }
                     ClickResult::None => {
-                        ctx.grabbed_island = false;
-                        ctx.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        ctx.data.grabbed_island = false;
+                        ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
                     }
                 }
-            }
+                ctx.gui.wscene.queue_render();
+                ctx.gui.wpaper.queue_render();
+    }
             Inhibit(true)
         }
     ));
@@ -367,7 +340,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         @strong ctx =>
         move |_w, _ev|  {
             let mut ctx = ctx.borrow_mut();
-            ctx.grabbed_island = false;
+            ctx.data.grabbed_island = false;
             ctx.set_scroll_timer(None);
             Inhibit(true)
         }
@@ -383,7 +356,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let grabbed = {
                 let mut ctx = ctx.borrow_mut();
                 ctx.paper_motion_notify_event(pos, state);
-                ctx.grabbed_island
+                ctx.data.grabbed_island
             };
 
             if grabbed {
@@ -403,8 +376,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         @strong ctx =>
                         move || {
                             let mut ctx = ctx.borrow_mut();
-                            ctx.last_cursor_pos += delta;
-                            ctx.trans_paper.mx = Matrix3::from_translation(delta) * ctx.trans_paper.mx;
+                            ctx.data.last_cursor_pos += delta;
+                            ctx.data.trans_paper.mx = Matrix3::from_translation(delta) * ctx.data.trans_paper.mx;
                             ctx.paper_motion_notify_event(pos, state);
                             ctx.gui.wpaper.queue_render();
                             glib::Continue(true)
@@ -431,7 +404,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 gdk::ScrollDirection::Down => 1.0 / 1.1,
                 _ => 1.0,
             };
-            ctx.trans_paper.mx = Matrix3::from_scale(dz) * ctx.trans_paper.mx;
+            ctx.data.trans_paper.mx = Matrix3::from_scale(dz) * ctx.data.trans_paper.mx;
             ctx.gui.wpaper.queue_render();
             Inhibit(true)
         }
@@ -471,22 +444,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let f = &files[0];
             let (data, _) = f.load_contents(gio::Cancellable::NONE).unwrap();
             let papercraft = Papercraft::load(std::io::Cursor::new(&data[..])).unwrap();
-            //let papercraft: Papercraft = serde_json::from_reader(&data[..]).unwrap();
-
             let w = {
                 let mut ctx = ctx.borrow_mut();
-                ctx.papercraft = papercraft;
-
-                // State
-                ctx.selected_face = None;
-                ctx.selected_edge = None;
-                ctx.selected_islands = Vec::new();
-                ctx.grabbed_island = false;
-                ctx.scroll_timer = None;
-                ctx.last_cursor_pos = Vector2::zero();
-
-                ctx.gl_objs = None;
-
+                ctx.data = PapercraftContext::from_papercraft(papercraft, ctx.gui.wscene.allocation(), ctx.gui.wpaper.allocation());
                 ctx.gui.top_window.clone()
             };
             w.show_all();
@@ -544,15 +504,15 @@ fn main() {
     }*/
 }
 
-fn scene_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
+fn scene_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
-    ctx.build_gl_objects();
+    ctx.build_gl_fixs();
     ctx.gui.gl_fixs.as_mut().unwrap().vao_scene = Some(glr::VertexArray::generate().unwrap());
 }
 
-fn paper_realize(w: &gtk::GLArea, ctx: &mut MyContext) {
+fn paper_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
-    ctx.build_gl_objects();
+    ctx.build_gl_fixs();
     ctx.gui.gl_fixs.as_mut().unwrap().vao_paper = Some(glr::VertexArray::generate().unwrap());
 }
 
@@ -599,13 +559,12 @@ struct Gui {
     gl_fixs: Option<GLFixedObjects>,
 }
 
-struct MyContext {
-    gui: Gui,
-
-    gl_objs: Option<GLObjects>,
-
+//Objects that are recreated when a new model is loaded
+struct PapercraftContext {
     // The model
     papercraft: Papercraft,
+
+    gl_objs: Option<GLObjects>,
 
     // State
     selected_face: Option<paper::FaceIndex>,
@@ -618,6 +577,11 @@ struct MyContext {
 
     trans_scene: Transformation3D,
     trans_paper: TransformationPaper,
+}
+
+struct GlobalContext {
+    gui: Gui,
+    data: PapercraftContext,
 }
 
 struct Transformation3D {
@@ -696,68 +660,21 @@ impl PaperDrawFaceArgs {
     }
 }
 
-impl MyContext {
-    fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
-        let f = std::fs::File::open(file_name).unwrap();
-        let f = std::io::BufReader::new(f);
-        let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
-
-        // For now read only the first model from the file
-        let obj = models.get(0).unwrap();
-        let mut texture_map = HashMap::new();
-
-        // Textures are read from the .mtl file
-        for lib in matlibs {
-            let f = std::fs::File::open(lib).unwrap();
-            let f = std::io::BufReader::new(f);
-
-            for lib in waveobj::Material::from_reader(f).unwrap()  {
-                if let Some(map) = lib.map() {
-                    let pbl = gdk_pixbuf::PixbufLoader::new();
-                    let data = std::fs::read(map).unwrap();
-                    pbl.write(&data).ok().unwrap();
-                    pbl.close().ok().unwrap();
-                    let img = pbl.pixbuf().unwrap();
-                    //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
-                    let map_name = Path::new(map).file_name().unwrap().to_str().unwrap();
-                    texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
-                }
-            }
-        }
-        let (mut model, facemap) = paper::Model::from_waveobj(obj, texture_map);
-
-        // Compute the bounding box, then move to the center and scale to a standard size
-        let (v_min, v_max) = util_3d::bounding_box_3d(
-            model
-                .vertices()
-                .map(|v| v.pos())
-        );
-        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
-        let mscale = Matrix4::from_scale(1.0 / size);
-        let center = (v_min + v_max) / 2.0;
-        let mcenter = Matrix4::from_translation(-center);
-        let m = mscale * mcenter;
-
-        model.transform_vertices(|pos, _normal| {
-            //only scale and translate, no need to touch normals
-            *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
-        });
-
+impl PapercraftContext {
+    fn from_papercraft(papercraft: Papercraft, rscene: gtk::Allocation, rpaper: gtk::Allocation) -> PapercraftContext {
         let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
         let mut trans_scene = Transformation3D::new(
             Vector3::new(0.0, 0.0, -30.0),
             Quaternion::one(),
-             20.0,
-             persp
+            20.0,
+            persp
         );
-        let rscene = self.gui.wscene.allocation();
         let ratio = rscene.width() as f32 / rscene.height() as f32;
         trans_scene.set_ratio(ratio);
 
         let trans_paper = {
             let mt = Matrix3::from_translation(Vector2::new(-210.0/2.0, -297.0/2.0));
             let ms = Matrix3::from_scale(1.0);
-            let rpaper = self.gui.wpaper.allocation();
             let ortho = util_3d::ortho2d(rpaper.width() as f32, rpaper.height() as f32);
             TransformationPaper {
                 ortho,
@@ -766,326 +683,21 @@ impl MyContext {
             }
         };
 
-        let papercraft = Papercraft::from_model(model, &facemap);
-
-        self.papercraft = papercraft;
-
-        // State
-        self.selected_face = None;
-        self.selected_edge = None;
-        self.selected_islands = Vec::new();
-        self.grabbed_island = false;
-        self.scroll_timer = None;
-        self.last_cursor_pos = Vector2::zero();
-        self.trans_scene = trans_scene;
-        self.trans_paper = trans_paper;
-
-        self.gl_objs = None;
-
-        self.paper_build();
-        self.scene_edge_build();
-        self.update_scene_face_selection();
-
-        self.gui.wscene.queue_render();
-        self.gui.wpaper.queue_render();
-    }
-
-    fn save(&self, filename: impl AsRef<Path>) {
-        let f = std::fs::File::create(filename).unwrap();
-        let f = std::io::BufWriter::new(f);
-        self.papercraft.save(f).unwrap();
-    }
-
-    fn scene_motion_notify_event(&mut self, pos: Vector2, ev: &gdk::EventMotion) {
-        let delta = pos - self.last_cursor_pos;
-        self.last_cursor_pos = pos;
-        if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
-            // half angles
-            let ang = delta / 200.0 / 2.0;
-            let cosy = ang.x.cos();
-            let siny = ang.x.sin();
-            let cosx = ang.y.cos();
-            let sinx = ang.y.sin();
-            let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
-            let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
-
-            self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
-            self.trans_scene.recompute_obj();
-            self.gui.wscene.queue_render();
-        } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
-            let delta = delta / 50.0;
-            self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
-            self.trans_scene.recompute_obj();
-            self.gui.wscene.queue_render();
-        } else {
-            let selection = self.analyze_click(pos);
-            self.set_selection(selection, false, false);
+        PapercraftContext {
+            papercraft,
+            gl_objs: None,
+            selected_face: None,
+            selected_edge: None,
+            selected_islands: Vec::new(),
+            grabbed_island: false,
+            scroll_timer: None,
+            last_cursor_pos: Vector2::zero(),
+            trans_scene,
+            trans_paper,
         }
     }
 
-    fn paper_motion_notify_event(&mut self, pos: Vector2, ev_state: gdk::ModifierType) {
-        let delta = pos - self.last_cursor_pos;
-        self.last_cursor_pos = pos;
-        if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
-            self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
-            self.gui.wpaper.queue_render();
-        } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.grabbed_island {
-            if !self.selected_islands.is_empty() {
-                for &i_island in &self.selected_islands {
-                    if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
-                        let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
-                        if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
-                            // Rotate island
-                            island.rotate(Deg(delta.y));
-                        } else {
-                            // Move island
-                            island.translate(delta_scaled);
-                        }
-                    }
-                }
-                self.paper_build();
-                self.gui.wpaper.queue_render();
-            }
-        } else {
-            let selection = self.analyze_click_paper(pos);
-            self.set_selection(selection, false, false);
-        }
-    }
-
-    fn set_scroll_timer(&mut self, tmr: Option<glib::SourceId>) {
-        if let Some(t) = self.scroll_timer.take() {
-            t.remove();
-        }
-        self.scroll_timer = tmr;
-    }
-
-    fn analyze_click(&self, pos: Vector2) -> ClickResult {
-        let rect = self.gui.wscene.allocation();
-        let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
-        let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
-        let click = Point3::new(x, y, 1.0);
-        let height = rect.height() as f32;
-
-
-        let click_camera = self.trans_scene.persp_inv.transform_point(click);
-        let click_obj = self.trans_scene.obj_inv.transform_point(click_camera);
-        let camera_obj = self.trans_scene.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
-
-        let ray = (camera_obj.to_vec(), click_obj.to_vec());
-
-        let mut hit_face = None;
-        for (iface, face) in self.papercraft.model().faces() {
-            let tri = face.index_vertices().map(|v| self.papercraft.model()[v].pos());
-            let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
-            if let Some(new_hit) = maybe_new_hit {
-                hit_face = match (hit_face, new_hit) {
-                    (Some((_, p)), x) if p > x && x > 0.0 => Some((iface, x)),
-                    (None, x) if x > 0.0 => Some((iface, x)),
-                    (old, _) => old
-                };
-            }
-        }
-
-        let mut hit_edge = None;
-        for (i_edge, edge) in self.papercraft.model().edges() {
-            if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
-                continue;
-            }
-            let v1 = self.papercraft.model()[edge.v0()].pos();
-            let v2 = self.papercraft.model()[edge.v1()].pos();
-            let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
-
-            // Behind the screen, it is not a hit
-            if ray_hit <= 0.0001 {
-                continue;
-            }
-
-            // new_dist is originally the distance in real-world space, but the user is using the screen, so scale accordingly
-            let new_dist = new_dist / ray_hit * height;
-
-            // If this egde is from the ray further that the best one, it is worse and ignored
-            match hit_edge {
-                Some((_, _, p)) if p < new_dist => { continue; }
-                _ => {}
-            }
-
-            // Too far from the edge
-            if new_dist > 0.1 {
-                continue;
-            }
-
-            // If there is a face 99% nearer this edge, it is hidden, probably, so it does not count
-            match hit_face {
-                Some((_, p)) if p < 0.99 * ray_hit => { continue; }
-                _ => {}
-            }
-
-            hit_edge = Some((i_edge, ray_hit, new_dist));
-        }
-
-        match (hit_face, hit_edge) {
-            (_, Some((e, _, _))) => ClickResult::Edge(e, None),
-            (Some((f, _)), None) => ClickResult::Face(f),
-            (None, None) => ClickResult::None,
-        }
-    }
-
-    fn analyze_click_paper(&self, pos: Vector2) -> ClickResult {
-        let rect = self.gui.wpaper.allocation();
-        let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
-        let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
-        let click = Point2::new(x, y);
-
-        let mx = self.trans_paper.ortho * self.trans_paper.mx;
-        let mx_inv = mx.invert().unwrap();
-        let click = mx_inv.transform_point(click).to_vec();
-
-        let mut edge_sel = None;
-        let mut face_sel = None;
-
-        for (_i_island, island) in self.papercraft.islands().collect::<Vec<_>>().into_iter().rev() {
-            self.papercraft.traverse_faces(island,
-                |i_face, face, fmx| {
-                    let normal = self.papercraft.face_plane(face);
-                    let tri = face.index_vertices();
-                    let tri = tri.map(|v| {
-                        let v3 = self.papercraft.model()[v].pos();
-                        let v2 = normal.project(&v3);
-                        fmx.transform_point(Point2::from_vec(v2)).to_vec()
-                    });
-                    if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
-                        face_sel = Some(i_face);
-                    }
-
-                    for i_edge in face.index_edges() {
-                        if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
-                            continue;
-                        }
-                        let edge = &self.papercraft.model()[i_edge];
-                        let v0 = self.papercraft.model()[edge.v0()].pos();
-                        let v0 = normal.project(&v0);
-                        let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
-                        let v1 = self.papercraft.model()[edge.v1()].pos();
-                        let v1 = normal.project(&v1);
-                        let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
-
-                        let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
-                        let d = <Matrix3 as Transform<Point2>>::transform_vector(&mx, Vector2::new(d, 0.0)).magnitude();
-                        if d > 0.02 { //too far?
-                            continue;
-                        }
-                        match &edge_sel {
-                            None => {
-                                edge_sel = Some((d, i_edge, i_face));
-                            }
-                            &Some((d_prev, _, _)) if d < d_prev => {
-                                edge_sel = Some((d, i_edge, i_face));
-                            }
-                            _ => {}
-                        }
-                    }
-                    ControlFlow::Continue(())
-                }
-            );
-        }
-        //Edge selection has priority
-        match (edge_sel, face_sel) {
-            (Some((_d, i_edge, i_face)), _) => ClickResult::Edge(i_edge, Some(i_face)),
-            (None, Some(i_face)) => ClickResult::Face(i_face),
-            (None, None) => ClickResult::None,
-        }
-    }
-    fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool) {
-        //TODO check if nothing changed
-        match selection {
-            ClickResult::None => {
-                self.selected_edge = None;
-                self.selected_face = None;
-                if clicked && !add_to_sel {
-                    self.selected_islands.clear();
-                }
-            }
-            ClickResult::Face(i_face) => {
-                self.selected_edge = None;
-                self.selected_face = Some(i_face);
-                if clicked {
-                    let island = self.papercraft.island_by_face(i_face);
-                    if add_to_sel {
-                        if let Some(_n) = self.selected_islands.iter().position(|i| *i == island) {
-                            //unselect the island?
-                        } else {
-                            self.selected_islands.push(island);
-                        }
-                    } else {
-                        self.selected_islands = vec![island];
-                    }
-                }
-            }
-            ClickResult::Edge(i_edge, _) => {
-                self.selected_edge = Some(i_edge);
-                self.selected_face = None;
-            }
-        }
-        self.paper_build();
-        self.scene_edge_build();
-        self.update_scene_face_selection();
-        self.gui.wscene.queue_render();
-        self.gui.wpaper.queue_render();
-    }
-
-    fn update_scene_face_selection(&mut self) {
-        if let Some(gl_objs) = &mut self.gl_objs {
-            let n = gl_objs.vertices_sel.len();
-            for i in 0..n {
-                gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
-            }
-            for &sel_island in &self.selected_islands {
-                if let Some(island) = self.papercraft.island_by_key(sel_island) {
-                    self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
-                        let pos = 3 * usize::from(i_face_2);
-                        for i in pos .. pos + 3 {
-                            gl_objs.vertices_sel[i] = MSTATUS_SEL;
-                        }
-                        ControlFlow::Continue(())
-                    });
-                }
-            }
-            if let Some(i_sel_face) = self.selected_face {
-                for i_face_2 in self.papercraft.get_flat_faces(i_sel_face) {
-                    let pos = 3 * usize::from(i_face_2);
-                    for i in pos .. pos + 3 {
-                        gl_objs.vertices_sel[i] = MSTATUS_HI;
-                    }
-                }
-            }
-        }
-    }
-    fn build_gl_objects(&mut self) {
-        if self.gui.gl_fixs.is_none() {
-            let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
-            let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
-            let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));
-            let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl"));
-            let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl"));
-
-            let quad_vertices = glr::DynamicVertexArray::from(vec![
-                MVertexQuad { pos: [-1.0, -1.0] },
-                MVertexQuad { pos: [ 3.0, -1.0] },
-                MVertexQuad { pos: [-1.0,  3.0] },
-            ]);
-
-            self.gui.gl_fixs = Some(GLFixedObjects {
-                vao_scene: None,
-                vao_paper: None,
-                prg_scene_solid,
-                prg_scene_line,
-                prg_paper_solid,
-                prg_paper_line,
-                prg_quad,
-
-                quad_vertices,
-            });
-        }
+    fn build_gl_objs(&mut self) {
         if self.gl_objs.is_none() {
             let textures = self.papercraft.model()
                 .textures()
@@ -1423,18 +1035,421 @@ impl MyContext {
         }
     }
 
+    fn scene_edge_build(&mut self) {
+        if let Some(gl_objs) = &mut self.gl_objs {
+            let mut edges_joint = Vec::new();
+            let mut edges_cut = Vec::new();
+            for (i_edge, edge) in self.papercraft.model().edges() {
+                let selected = self.selected_edge == Some(i_edge);
+                let status = self.papercraft.edge_status(i_edge);
+                if status == paper::EdgeStatus::Hidden {
+                    continue;
+                }
+                let cut = matches!(self.papercraft.edge_status(i_edge), paper::EdgeStatus::Cut(_));
+                let color = match (selected, cut) {
+                    (true, false) => [0.0, 0.0, 1.0, 1.0],
+                    (true, true) => [0.5, 0.5, 1.0, 1.0],
+                    (false, false) => [0.0, 0.0, 0.0, 1.0],
+                    (false, true) => [1.0, 1.0, 1.0, 1.0],
+                };
+                let p0 = self.papercraft.model()[edge.v0()].pos();
+                let p1 = self.papercraft.model()[edge.v1()].pos();
+
+                let edges = if cut { &mut edges_cut } else { &mut edges_joint };
+                edges.push(MVertex3DLine { pos: p0, color, top: selected as u8 });
+                edges.push(MVertex3DLine { pos: p1, color, top: selected as u8 });
+            }
+            gl_objs.vertices_edges_joint.set(edges_joint);
+            gl_objs.vertices_edges_cut.set(edges_cut);
+        }
+    }
+
+    fn update_scene_face_selection(&mut self) {
+        if let Some(gl_objs) = &mut self.gl_objs {
+            let n = gl_objs.vertices_sel.len();
+            for i in 0..n {
+                gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
+            }
+            for &sel_island in &self.selected_islands {
+                if let Some(island) = self.papercraft.island_by_key(sel_island) {
+                    self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
+                        let pos = 3 * usize::from(i_face_2);
+                        for i in pos .. pos + 3 {
+                            gl_objs.vertices_sel[i] = MSTATUS_SEL;
+                        }
+                        ControlFlow::Continue(())
+                    });
+                }
+            }
+            if let Some(i_sel_face) = self.selected_face {
+                for i_face_2 in self.papercraft.get_flat_faces(i_sel_face) {
+                    let pos = 3 * usize::from(i_face_2);
+                    for i in pos .. pos + 3 {
+                        gl_objs.vertices_sel[i] = MSTATUS_HI;
+                    }
+                }
+            }
+        }
+    }
+
+    fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool) {
+        //TODO check if nothing changed
+        match selection {
+            ClickResult::None => {
+                self.selected_edge = None;
+                self.selected_face = None;
+                if clicked && !add_to_sel {
+                    self.selected_islands.clear();
+                }
+            }
+            ClickResult::Face(i_face) => {
+                self.selected_edge = None;
+                self.selected_face = Some(i_face);
+                if clicked {
+                    let island = self.papercraft.island_by_face(i_face);
+                    if add_to_sel {
+                        if let Some(_n) = self.selected_islands.iter().position(|i| *i == island) {
+                            //unselect the island?
+                        } else {
+                            self.selected_islands.push(island);
+                        }
+                    } else {
+                        self.selected_islands = vec![island];
+                    }
+                }
+            }
+            ClickResult::Edge(i_edge, _) => {
+                self.selected_edge = Some(i_edge);
+                self.selected_face = None;
+            }
+        }
+        self.paper_build();
+        self.scene_edge_build();
+        self.update_scene_face_selection();
+    }
+
+    fn edge_toggle_cut(&mut self, i_edge: paper::EdgeIndex, priority_face: Option<paper::FaceIndex>) {
+        let renames = self.papercraft.edge_toggle_cut(i_edge, priority_face);
+        self.islands_renamed(&renames);
+    }
+
+    fn try_join_strip(&mut self, i_edge: paper::EdgeIndex) {
+        let renames = self.papercraft.try_join_strip(i_edge);
+        self.islands_renamed(&renames);
+    }
+
+    fn islands_renamed(&mut self, renames: &HashMap<paper::IslandKey, paper::IslandKey>) {
+        for x in &mut self.selected_islands {
+            while let Some(n) = renames.get(x) {
+                *x = *n;
+            }
+        }
+    }
+}
+
+impl GlobalContext {
+    fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
+        let f = std::fs::File::open(file_name).unwrap();
+        let f = std::io::BufReader::new(f);
+        let (matlibs, models) = waveobj::Model::from_reader(f).unwrap();
+
+        // For now read only the first model from the file
+        let obj = models.get(0).unwrap();
+        let mut texture_map = HashMap::new();
+
+        // Textures are read from the .mtl file
+        for lib in matlibs {
+            let f = std::fs::File::open(lib).unwrap();
+            let f = std::io::BufReader::new(f);
+
+            for lib in waveobj::Material::from_reader(f).unwrap()  {
+                if let Some(map) = lib.map() {
+                    let pbl = gdk_pixbuf::PixbufLoader::new();
+                    let data = std::fs::read(map).unwrap();
+                    pbl.write(&data).ok().unwrap();
+                    pbl.close().ok().unwrap();
+                    let img = pbl.pixbuf().unwrap();
+                    //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
+                    let map_name = Path::new(map).file_name().unwrap().to_str().unwrap();
+                    texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
+                }
+            }
+        }
+        let (mut model, facemap) = paper::Model::from_waveobj(obj, texture_map);
+
+        // Compute the bounding box, then move to the center and scale to a standard size
+        let (v_min, v_max) = util_3d::bounding_box_3d(
+            model
+                .vertices()
+                .map(|v| v.pos())
+        );
+        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
+        let mscale = Matrix4::from_scale(1.0 / size);
+        let center = (v_min + v_max) / 2.0;
+        let mcenter = Matrix4::from_translation(-center);
+        let m = mscale * mcenter;
+
+        model.transform_vertices(|pos, _normal| {
+            //only scale and translate, no need to touch normals
+            *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
+        });
+
+        let rscene = self.gui.wscene.allocation();
+        let rpaper = self.gui.wpaper.allocation();
+        let papercraft = Papercraft::from_model(model, &facemap);
+        self.data = PapercraftContext::from_papercraft(papercraft, rscene, rpaper);
+
+        self.gui.wscene.queue_render();
+        self.gui.wpaper.queue_render();
+    }
+
+    fn save(&self, filename: impl AsRef<Path>) {
+        let f = std::fs::File::create(filename).unwrap();
+        let f = std::io::BufWriter::new(f);
+        self.data.papercraft.save(f).unwrap();
+    }
+
+    fn scene_motion_notify_event(&mut self, pos: Vector2, ev: &gdk::EventMotion) {
+        let delta = pos - self.data.last_cursor_pos;
+        self.data.last_cursor_pos = pos;
+        if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
+            // half angles
+            let ang = delta / 200.0 / 2.0;
+            let cosy = ang.x.cos();
+            let siny = ang.x.sin();
+            let cosx = ang.y.cos();
+            let sinx = ang.y.sin();
+            let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
+            let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
+
+            self.data.trans_scene.rotation = (roty * rotx * self.data.trans_scene.rotation).normalize();
+            self.data.trans_scene.recompute_obj();
+            self.gui.wscene.queue_render();
+        } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
+            let delta = delta / 50.0;
+            self.data.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
+            self.data.trans_scene.recompute_obj();
+            self.gui.wscene.queue_render();
+        } else {
+            let selection = self.analyze_click(pos);
+            self.data.set_selection(selection, false, false);
+            self.gui.wscene.queue_render();
+            self.gui.wpaper.queue_render();
+            }
+    }
+
+    fn paper_motion_notify_event(&mut self, pos: Vector2, ev_state: gdk::ModifierType) {
+        let delta = pos - self.data.last_cursor_pos;
+        self.data.last_cursor_pos = pos;
+        if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
+            self.data.trans_paper.mx = Matrix3::from_translation(delta) * self.data.trans_paper.mx;
+            self.gui.wpaper.queue_render();
+        } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.data.grabbed_island {
+            if !self.data.selected_islands.is_empty() {
+                for &i_island in &self.data.selected_islands {
+                    if let Some(island) = self.data.papercraft.island_by_key_mut(i_island) {
+                        let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.data.trans_paper.mx, delta).unwrap();
+                        if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
+                            // Rotate island
+                            island.rotate(Deg(delta.y));
+                        } else {
+                            // Move island
+                            island.translate(delta_scaled);
+                        }
+                    }
+                }
+                self.data.paper_build();
+                self.gui.wpaper.queue_render();
+            }
+        } else {
+            let selection = self.analyze_click_paper(pos);
+            self.data.set_selection(selection, false, false);
+            self.gui.wscene.queue_render();
+            self.gui.wpaper.queue_render();
+            }
+    }
+
+    fn set_scroll_timer(&mut self, tmr: Option<glib::SourceId>) {
+        if let Some(t) = self.data.scroll_timer.take() {
+            t.remove();
+        }
+        self.data.scroll_timer = tmr;
+    }
+
+    fn analyze_click(&self, pos: Vector2) -> ClickResult {
+        let rect = self.gui.wscene.allocation();
+        let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
+        let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
+        let click = Point3::new(x, y, 1.0);
+        let height = rect.height() as f32;
+
+
+        let click_camera = self.data.trans_scene.persp_inv.transform_point(click);
+        let click_obj = self.data.trans_scene.obj_inv.transform_point(click_camera);
+        let camera_obj = self.data.trans_scene.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
+
+        let ray = (camera_obj.to_vec(), click_obj.to_vec());
+
+        let mut hit_face = None;
+        for (iface, face) in self.data.papercraft.model().faces() {
+            let tri = face.index_vertices().map(|v| self.data.papercraft.model()[v].pos());
+            let maybe_new_hit = util_3d::ray_crosses_face(ray, &tri);
+            if let Some(new_hit) = maybe_new_hit {
+                hit_face = match (hit_face, new_hit) {
+                    (Some((_, p)), x) if p > x && x > 0.0 => Some((iface, x)),
+                    (None, x) if x > 0.0 => Some((iface, x)),
+                    (old, _) => old
+                };
+            }
+        }
+
+        let mut hit_edge = None;
+        for (i_edge, edge) in self.data.papercraft.model().edges() {
+            if self.data.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
+                continue;
+            }
+            let v1 = self.data.papercraft.model()[edge.v0()].pos();
+            let v2 = self.data.papercraft.model()[edge.v1()].pos();
+            let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
+
+            // Behind the screen, it is not a hit
+            if ray_hit <= 0.0001 {
+                continue;
+            }
+
+            // new_dist is originally the distance in real-world space, but the user is using the screen, so scale accordingly
+            let new_dist = new_dist / ray_hit * height;
+
+            // If this egde is from the ray further that the best one, it is worse and ignored
+            match hit_edge {
+                Some((_, _, p)) if p < new_dist => { continue; }
+                _ => {}
+            }
+
+            // Too far from the edge
+            if new_dist > 0.1 {
+                continue;
+            }
+
+            // If there is a face 99% nearer this edge, it is hidden, probably, so it does not count
+            match hit_face {
+                Some((_, p)) if p < 0.99 * ray_hit => { continue; }
+                _ => {}
+            }
+
+            hit_edge = Some((i_edge, ray_hit, new_dist));
+        }
+
+        match (hit_face, hit_edge) {
+            (_, Some((e, _, _))) => ClickResult::Edge(e, None),
+            (Some((f, _)), None) => ClickResult::Face(f),
+            (None, None) => ClickResult::None,
+        }
+    }
+
+    fn analyze_click_paper(&self, pos: Vector2) -> ClickResult {
+        let rect = self.gui.wpaper.allocation();
+        let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
+        let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
+        let click = Point2::new(x, y);
+
+        let mx = self.data.trans_paper.ortho * self.data.trans_paper.mx;
+        let mx_inv = mx.invert().unwrap();
+        let click = mx_inv.transform_point(click).to_vec();
+
+        let mut edge_sel = None;
+        let mut face_sel = None;
+
+        for (_i_island, island) in self.data.papercraft.islands().collect::<Vec<_>>().into_iter().rev() {
+            self.data.papercraft.traverse_faces(island,
+                |i_face, face, fmx| {
+                    let normal = self.data.papercraft.face_plane(face);
+                    let tri = face.index_vertices();
+                    let tri = tri.map(|v| {
+                        let v3 = self.data.papercraft.model()[v].pos();
+                        let v2 = normal.project(&v3);
+                        fmx.transform_point(Point2::from_vec(v2)).to_vec()
+                    });
+                    if face_sel.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
+                        face_sel = Some(i_face);
+                    }
+
+                    for i_edge in face.index_edges() {
+                        if self.data.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
+                            continue;
+                        }
+                        let edge = &self.data.papercraft.model()[i_edge];
+                        let v0 = self.data.papercraft.model()[edge.v0()].pos();
+                        let v0 = normal.project(&v0);
+                        let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
+                        let v1 = self.data.papercraft.model()[edge.v1()].pos();
+                        let v1 = normal.project(&v1);
+                        let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
+
+                        let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));
+                        let d = <Matrix3 as Transform<Point2>>::transform_vector(&mx, Vector2::new(d, 0.0)).magnitude();
+                        if d > 0.02 { //too far?
+                            continue;
+                        }
+                        match &edge_sel {
+                            None => {
+                                edge_sel = Some((d, i_edge, i_face));
+                            }
+                            &Some((d_prev, _, _)) if d < d_prev => {
+                                edge_sel = Some((d, i_edge, i_face));
+                            }
+                            _ => {}
+                        }
+                    }
+                    ControlFlow::Continue(())
+                }
+            );
+        }
+        //Edge selection has priority
+        match (edge_sel, face_sel) {
+            (Some((_d, i_edge, i_face)), _) => ClickResult::Edge(i_edge, Some(i_face)),
+            (None, Some(i_face)) => ClickResult::Face(i_face),
+            (None, None) => ClickResult::None,
+        }
+    }
+    fn build_gl_fixs(&mut self) {
+        if self.gui.gl_fixs.is_none() {
+            let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
+            let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
+            let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));
+            let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl"));
+            let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl"));
+
+            let quad_vertices = glr::DynamicVertexArray::from(vec![
+                MVertexQuad { pos: [-1.0, -1.0] },
+                MVertexQuad { pos: [ 3.0, -1.0] },
+                MVertexQuad { pos: [-1.0,  3.0] },
+            ]);
+
+            self.gui.gl_fixs = Some(GLFixedObjects {
+                vao_scene: None,
+                vao_paper: None,
+                prg_scene_solid,
+                prg_scene_line,
+                prg_paper_solid,
+                prg_paper_line,
+                prg_quad,
+
+                quad_vertices,
+            });
+        }
+    }
     fn scene_render(&mut self) {
-        self.gl_objs = None;
-        self.build_gl_objects();
-        let gl_objs = self.gl_objs.as_ref().unwrap();
+        self.data.build_gl_objs();
+        let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
         let u = Uniforms3D {
-            m: self.trans_scene.persp * self.trans_scene.obj,
-            mnormal: self.trans_scene.mnormal, // should be transpose of inverse
+            m: self.data.trans_scene.persp * self.data.trans_scene.obj,
+            mnormal: self.data.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
             texture: 0,
         };
@@ -1470,12 +1485,12 @@ impl MyContext {
     }
 
     fn paper_render(&mut self) {
-        self.build_gl_objects();
-        let gl_objs = self.gl_objs.as_ref().unwrap();
+        self.data.build_gl_objs();
+        let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
 
         let u = Uniforms2D {
-            m: self.trans_paper.ortho * self.trans_paper.mx,
+            m: self.data.trans_paper.ortho * self.data.trans_paper.mx,
             texture: 0,
             frac_dash: 0.5,
         };
@@ -1510,55 +1525,10 @@ impl MyContext {
             gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge, gl::LINES);
 
             // - Selected edge
-            if self.selected_edge.is_some() {
+            if self.data.selected_edge.is_some() {
                 gl::Enable(gl::LINE_SMOOTH);
                 gl::LineWidth(5.0);
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
-            }
-        }
-    }
-
-    fn scene_edge_build(&mut self) {
-        if let Some(gl_objs) = &mut self.gl_objs {
-            let mut edges_joint = Vec::new();
-            let mut edges_cut = Vec::new();
-            for (i_edge, edge) in self.papercraft.model().edges() {
-                let selected = self.selected_edge == Some(i_edge);
-                let status = self.papercraft.edge_status(i_edge);
-                if status == paper::EdgeStatus::Hidden {
-                    continue;
-                }
-                let cut = matches!(self.papercraft.edge_status(i_edge), paper::EdgeStatus::Cut(_));
-                let color = match (selected, cut) {
-                    (true, false) => [0.0, 0.0, 1.0, 1.0],
-                    (true, true) => [0.5, 0.5, 1.0, 1.0],
-                    (false, false) => [0.0, 0.0, 0.0, 1.0],
-                    (false, true) => [1.0, 1.0, 1.0, 1.0],
-                };
-                let p0 = self.papercraft.model()[edge.v0()].pos();
-                let p1 = self.papercraft.model()[edge.v1()].pos();
-
-                let edges = if cut { &mut edges_cut } else { &mut edges_joint };
-                edges.push(MVertex3DLine { pos: p0, color, top: selected as u8 });
-                edges.push(MVertex3DLine { pos: p1, color, top: selected as u8 });
-            }
-            gl_objs.vertices_edges_joint.set(edges_joint);
-            gl_objs.vertices_edges_cut.set(edges_cut);
-        }
-    }
-
-    fn edge_toggle_cut(&mut self, i_edge: paper::EdgeIndex, priority_face: Option<paper::FaceIndex>) {
-        let renames = self.papercraft.edge_toggle_cut(i_edge, priority_face);
-        self.islands_renamed(&renames);
-    }
-    fn try_join_strip(&mut self, i_edge: paper::EdgeIndex) {
-        let renames = self.papercraft.try_join_strip(i_edge);
-        self.islands_renamed(&renames);
-    }
-    fn islands_renamed(&mut self, renames: &HashMap<paper::IslandKey, paper::IslandKey>) {
-        for x in &mut self.selected_islands {
-            while let Some(n) = renames.get(x) {
-                *x = *n;
             }
         }
     }

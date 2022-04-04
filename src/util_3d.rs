@@ -1,5 +1,6 @@
 use std::f32::consts::PI;
 use cgmath::{Zero, InnerSpace, Rad};
+use gtk::traits::WidgetExt;
 
 pub type Vector2 = cgmath::Vector2<f32>;
 pub type Vector3 = cgmath::Vector3<f32>;
@@ -288,4 +289,15 @@ pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
         0.0, 2.0 / (top - bottom), 0.0,
         0.0, 0.0, 1.0
     )
+}
+
+pub trait SizeAsVector {
+    fn size_as_vector(&self) -> Vector2;
+}
+
+impl<T: glib::IsA<gtk::Widget>> SizeAsVector for T {
+    fn size_as_vector(&self) -> Vector2 {
+        let r = self.allocation();
+        Vector2::new(r.width() as f32, r.height() as f32)
+    }
 }

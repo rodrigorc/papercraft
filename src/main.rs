@@ -20,7 +20,7 @@ mod glr;
 
 use paper::Papercraft;
 
-use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
+use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2, SizeAsVector};
 use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine};
 
 fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) {
@@ -33,17 +33,13 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     let wpaper = gtk::GLArea::new();
     let w = gtk::ApplicationWindow::new(app);
 
-    let gui = Gui {
+    let sz_dummy = Vector2::new(1.0, 1.0);
+    let data = PapercraftContext::from_papercraft(Papercraft::empty(), sz_dummy, sz_dummy);
+    let ctx = GlobalContext {
         top_window: w.clone(),
         wscene: wscene.clone(),
         wpaper: wpaper.clone(),
         gl_fixs: None,
-    };
-
-    let dummy_r = gtk::Allocation::new(0, 0, 1, 1);
-    let data = PapercraftContext::from_papercraft(Papercraft::empty(), dummy_r, dummy_r);
-    let ctx = GlobalContext {
-        gui,
         data,
     };
 
@@ -96,7 +92,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     aimport.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
-            let top_window = ctx.borrow().gui.top_window.clone();
+            let top_window = ctx.borrow().top_window.clone();
             let dlg = gtk::FileChooserDialog::with_buttons(
                 Some("Import OBJ"),
                 Some(&top_window),
@@ -135,7 +131,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     asave_as.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
-            let top_window = ctx.borrow().gui.top_window.clone();
+            let top_window = ctx.borrow().top_window.clone();
             let dlg = gtk::FileChooserDialog::with_buttons(
                 Some("Import OBJ"),
                 Some(&top_window),
@@ -215,8 +211,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         ctx.data.update_scene_face_selection();
                     }
                 }
-                ctx.gui.wscene.queue_render();
-                ctx.gui.wpaper.queue_render();
+                ctx.wscene.queue_render();
+                ctx.wpaper.queue_render();
     }
             Inhibit(false)
         }
@@ -233,7 +229,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             };
             ctx.data.trans_scene.scale *= dz;
             ctx.data.trans_scene.recompute_obj();
-            ctx.gui.wscene.queue_render();
+            ctx.wscene.queue_render();
             Inhibit(true)
         }
     ));
@@ -330,8 +326,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         ctx.data.set_selection(selection, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
                     }
                 }
-                ctx.gui.wscene.queue_render();
-                ctx.gui.wpaper.queue_render();
+                ctx.wscene.queue_render();
+                ctx.wpaper.queue_render();
     }
             Inhibit(true)
         }
@@ -348,7 +344,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     wpaper.connect_motion_notify_event(clone!(
         @strong ctx =>
         move |w, ev| {
-            let rect = w.allocation();
+            let size = w.size_as_vector();
             let pos = ev.position();
             let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
             let state = ev.state();
@@ -362,12 +358,12 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             if grabbed {
                 let delta = if pos.x < 5.0 {
                     Some(Vector2::new((-pos.x).max(5.0).min(25.0), 0.0))
-                } else if pos.x > rect.width() as f32 - 5.0 {
-                    Some(Vector2::new(-(pos.x - rect.width() as f32).max(5.0).min(25.0), 0.0))
+                } else if pos.x > size.x - 5.0 {
+                    Some(Vector2::new(-(pos.x - size.x).max(5.0).min(25.0), 0.0))
                 } else if pos.y < 5.0 {
                     Some(Vector2::new(0.0, (-pos.y).max(5.0).min(25.0)))
-                } else if pos.y > rect.height() as f32 - 5.0 {
-                    Some(Vector2::new(0.0, -(pos.y - rect.height() as f32).max(5.0).min(25.0)))
+                } else if pos.y > size.y - 5.0 {
+                    Some(Vector2::new(0.0, -(pos.y - size.y).max(5.0).min(25.0)))
                 } else {
                     None
                 };
@@ -379,7 +375,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                             ctx.data.last_cursor_pos += delta;
                             ctx.data.trans_paper.mx = Matrix3::from_translation(delta) * ctx.data.trans_paper.mx;
                             ctx.paper_motion_notify_event(pos, state);
-                            ctx.gui.wpaper.queue_render();
+                            ctx.wpaper.queue_render();
                             glib::Continue(true)
                         }
                     );
@@ -405,7 +401,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 _ => 1.0,
             };
             ctx.data.trans_paper.mx = Matrix3::from_scale(dz) * ctx.data.trans_paper.mx;
-            ctx.gui.wpaper.queue_render();
+            ctx.wpaper.queue_render();
             Inhibit(true)
         }
     ));
@@ -432,7 +428,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         @strong ctx =>
         move |_app| {
             dbg!("activate");
-            let w = ctx.borrow().gui.top_window.clone();
+            let w = ctx.borrow().top_window.clone();
             w.show_all();
             w.present();
     	}
@@ -446,8 +442,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let papercraft = Papercraft::load(std::io::Cursor::new(&data[..])).unwrap();
             let w = {
                 let mut ctx = ctx.borrow_mut();
-                ctx.data = PapercraftContext::from_papercraft(papercraft, ctx.gui.wscene.allocation(), ctx.gui.wpaper.allocation());
-                ctx.gui.top_window.clone()
+                ctx.data = PapercraftContext::from_papercraft(papercraft, ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
+                ctx.top_window.clone()
             };
             w.show_all();
             w.present();
@@ -507,13 +503,13 @@ fn main() {
 fn scene_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
     ctx.build_gl_fixs();
-    ctx.gui.gl_fixs.as_mut().unwrap().vao_scene = Some(glr::VertexArray::generate().unwrap());
+    ctx.gl_fixs.as_mut().unwrap().vao_scene = Some(glr::VertexArray::generate().unwrap());
 }
 
 fn paper_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
     ctx.build_gl_fixs();
-    ctx.gui.gl_fixs.as_mut().unwrap().vao_paper = Some(glr::VertexArray::generate().unwrap());
+    ctx.gl_fixs.as_mut().unwrap().vao_paper = Some(glr::VertexArray::generate().unwrap());
 }
 
 struct GLFixedObjects {
@@ -550,15 +546,6 @@ struct GLObjects {
     paper_vertices_page: glr::DynamicVertexArray<MVertex2D>,
 }
 
-//Objects that persist a file open action
-struct Gui {
-    top_window: gtk::ApplicationWindow,
-    wscene: gtk::GLArea,
-    wpaper: gtk::GLArea,
-
-    gl_fixs: Option<GLFixedObjects>,
-}
-
 //Objects that are recreated when a new model is loaded
 struct PapercraftContext {
     // The model
@@ -580,7 +567,12 @@ struct PapercraftContext {
 }
 
 struct GlobalContext {
-    gui: Gui,
+    top_window: gtk::ApplicationWindow,
+    wscene: gtk::GLArea,
+    wpaper: gtk::GLArea,
+
+    gl_fixs: Option<GLFixedObjects>,
+
     data: PapercraftContext,
 }
 
@@ -661,7 +653,7 @@ impl PaperDrawFaceArgs {
 }
 
 impl PapercraftContext {
-    fn from_papercraft(papercraft: Papercraft, rscene: gtk::Allocation, rpaper: gtk::Allocation) -> PapercraftContext {
+    fn from_papercraft(papercraft: Papercraft, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
         let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
         let mut trans_scene = Transformation3D::new(
             Vector3::new(0.0, 0.0, -30.0),
@@ -669,13 +661,13 @@ impl PapercraftContext {
             20.0,
             persp
         );
-        let ratio = rscene.width() as f32 / rscene.height() as f32;
+        let ratio = sz_scene.x / sz_scene.y;
         trans_scene.set_ratio(ratio);
 
         let trans_paper = {
             let mt = Matrix3::from_translation(Vector2::new(-210.0/2.0, -297.0/2.0));
             let ms = Matrix3::from_scale(1.0);
-            let ortho = util_3d::ortho2d(rpaper.width() as f32, rpaper.height() as f32);
+            let ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
             TransformationPaper {
                 ortho,
                 //mx: mt * ms * mr,
@@ -1151,12 +1143,12 @@ impl GlobalContext {
     fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
         let papercraft = Papercraft::import_waveobj(file_name);
 
-        let rscene = self.gui.wscene.allocation();
-        let rpaper = self.gui.wpaper.allocation();
-        self.data = PapercraftContext::from_papercraft(papercraft, rscene, rpaper);
+        let sz_scene = self.wscene.size_as_vector();
+        let sz_paper = self.wpaper.size_as_vector();
+        self.data = PapercraftContext::from_papercraft(papercraft, sz_scene, sz_paper);
 
-        self.gui.wscene.queue_render();
-        self.gui.wpaper.queue_render();
+        self.wscene.queue_render();
+        self.wpaper.queue_render();
     }
 
     fn save(&self, filename: impl AsRef<Path>) {
@@ -1180,17 +1172,17 @@ impl GlobalContext {
 
             self.data.trans_scene.rotation = (roty * rotx * self.data.trans_scene.rotation).normalize();
             self.data.trans_scene.recompute_obj();
-            self.gui.wscene.queue_render();
+            self.wscene.queue_render();
         } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
             let delta = delta / 50.0;
             self.data.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
             self.data.trans_scene.recompute_obj();
-            self.gui.wscene.queue_render();
+            self.wscene.queue_render();
         } else {
             let selection = self.scene_analyze_click(pos);
             self.data.set_selection(selection, false, false);
-            self.gui.wscene.queue_render();
-            self.gui.wpaper.queue_render();
+            self.wscene.queue_render();
+            self.wpaper.queue_render();
             }
     }
 
@@ -1199,7 +1191,7 @@ impl GlobalContext {
         self.data.last_cursor_pos = pos;
         if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
             self.data.trans_paper.mx = Matrix3::from_translation(delta) * self.data.trans_paper.mx;
-            self.gui.wpaper.queue_render();
+            self.wpaper.queue_render();
         } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.data.grabbed_island {
             if !self.data.selected_islands.is_empty() {
                 for &i_island in &self.data.selected_islands {
@@ -1215,13 +1207,13 @@ impl GlobalContext {
                     }
                 }
                 self.data.paper_build();
-                self.gui.wpaper.queue_render();
+                self.wpaper.queue_render();
             }
         } else {
             let selection = self.paper_analyze_click(pos);
             self.data.set_selection(selection, false, false);
-            self.gui.wscene.queue_render();
-            self.gui.wpaper.queue_render();
+            self.wscene.queue_render();
+            self.wpaper.queue_render();
             }
     }
 
@@ -1233,12 +1225,11 @@ impl GlobalContext {
     }
 
     fn scene_analyze_click(&self, pos: Vector2) -> ClickResult {
-        let rect = self.gui.wscene.allocation();
-        let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
-        let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
+        let size = self.wscene.size_as_vector();
+        let x = (pos.x / size.x) * 2.0 - 1.0;
+        let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
-        let height = rect.height() as f32;
-
+        let height = size.y;
 
         let click_camera = self.data.trans_scene.persp_inv.transform_point(click);
         let click_obj = self.data.trans_scene.obj_inv.transform_point(click_camera);
@@ -1304,9 +1295,9 @@ impl GlobalContext {
     }
 
     fn paper_analyze_click(&self, pos: Vector2) -> ClickResult {
-        let rect = self.gui.wpaper.allocation();
-        let x = (pos.x / rect.width() as f32) * 2.0 - 1.0;
-        let y = -((pos.y / rect.height() as f32) * 2.0 - 1.0);
+        let size = self.wpaper.size_as_vector();
+        let x = (pos.x / size.x) * 2.0 - 1.0;
+        let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point2::new(x, y);
 
         let mx = self.data.trans_paper.ortho * self.data.trans_paper.mx;
@@ -1370,7 +1361,7 @@ impl GlobalContext {
     }
 
     fn build_gl_fixs(&mut self) {
-        if self.gui.gl_fixs.is_none() {
+        if self.gl_fixs.is_none() {
             let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
             let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
             let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));
@@ -1383,7 +1374,7 @@ impl GlobalContext {
                 MVertexQuad { pos: [-1.0,  3.0] },
             ]);
 
-            self.gui.gl_fixs = Some(GLFixedObjects {
+            self.gl_fixs = Some(GLFixedObjects {
                 vao_scene: None,
                 vao_paper: None,
                 prg_scene_solid,
@@ -1400,7 +1391,7 @@ impl GlobalContext {
     fn scene_render(&mut self) {
         self.data.build_gl_objs();
         let gl_objs = self.data.gl_objs.as_ref().unwrap();
-        let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
+        let gl_fixs = self.gl_fixs.as_ref().unwrap();
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
@@ -1445,7 +1436,7 @@ impl GlobalContext {
     fn paper_render(&mut self) {
         self.data.build_gl_objs();
         let gl_objs = self.data.gl_objs.as_ref().unwrap();
-        let gl_fixs = self.gui.gl_fixs.as_ref().unwrap();
+        let gl_fixs = self.gl_fixs.as_ref().unwrap();
 
         let u = Uniforms2D {
             m: self.data.trans_paper.ortho * self.data.trans_paper.mx,

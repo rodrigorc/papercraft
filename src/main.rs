@@ -178,8 +178,6 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             app.quit();
         }
     ));
-    gl_loader::init_gl();
-    gl::load_with(|s| gl_loader::get_proc_address(s) as _);
 
     wscene.set_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_MOTION_MASK | EventMask::POINTER_MOTION_MASK | EventMask::SCROLL_MASK);
     wscene.set_has_depth_buffer(true);
@@ -1356,6 +1354,9 @@ impl GlobalContext {
 
     fn build_gl_fixs(&mut self) {
         if self.gl_fixs.is_none() {
+            gl_loader::init_gl();
+            gl::load_with(|s| gl_loader::get_proc_address(s) as _);
+
             let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
             let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
             let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));

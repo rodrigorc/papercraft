@@ -20,8 +20,19 @@ mod util_gl;
 
 use paper::Papercraft;
 
-use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2, SizeAsVector};
+use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2, Rgba};
 use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine};
+
+pub trait SizeAsVector {
+    fn size_as_vector(&self) -> Vector2;
+}
+
+impl<T: glib::IsA<gtk::Widget>> SizeAsVector for T {
+    fn size_as_vector(&self) -> Vector2 {
+        let r = self.allocation();
+        Vector2::new(r.width() as f32, r.height() as f32)
+    }
+}
 
 fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) {
     dbg!("startup");
@@ -851,22 +862,22 @@ impl PapercraftContext {
             let page_0 = MVertex2D {
                 pos: Vector2::new(0.0, 0.0),
                 uv: Vector2::zero(),
-                color: [1.0, 1.0, 1.0, 1.0],
+                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
             };
             let page_2 = MVertex2D {
                 pos: Vector2::new(210.0, 297.0),
                 uv: Vector2::zero(),
-                color: [1.0, 1.0, 1.0, 1.0],
+                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
             };
             let page_1 = MVertex2D {
                 pos: Vector2::new(page_2.pos.x, 0.0),
                 uv: Vector2::zero(),
-                color: [1.0, 1.0, 1.0, 1.0],
+                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
             };
             let page_3 = MVertex2D {
                 pos: Vector2::new(0.0, page_2.pos.y),
                 uv: Vector2::zero(),
-                color: [1.0, 1.0, 1.0, 1.0],
+                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
             };
             let paper_vertices_page = glr::DynamicVertexArray::from(vec![page_0, page_2, page_1, page_0, page_3, page_2]);
 
@@ -904,7 +915,7 @@ impl PapercraftContext {
             args.vertices[usize::from(face.material())].push(MVertex2D {
                 pos,
                 uv: v.uv(),
-                color: if hi { [1.0, 0.0, 0.0, 0.75] } else if selected { [0.0, 0.0, 1.0, 0.5] } else { [0.0, 0.0, 0.0, 0.0] },
+                color: if hi { Rgba::new(1.0, 0.0, 0.0, 0.75) } else if selected { Rgba::new(0.0, 0.0, 1.0, 0.5) } else { Rgba::new(0.0, 0.0, 0.0, 0.0) },
             });
         }
 
@@ -940,12 +951,12 @@ impl PapercraftContext {
                 let mut v0 = MVertex2D {
                     pos: pos0,
                     uv: Vector2::zero(),
-                    color: [0.0, 0.0, 0.0, 1.0],
+                    color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                 };
                 let mut v1 = MVertex2D {
                     pos: pos1,
                     uv: Vector2::zero(),
-                    color: [0.0, 0.0, 0.0, 1.0],
+                    color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                 };
                 if false && edge_status == paper::EdgeStatus::Joined {
                     let vn = v.normalize_to(0.01);
@@ -965,12 +976,12 @@ impl PapercraftContext {
                 args.vertices_edge_sel.push(MVertex2D {
                     pos: pos0,
                     uv: Vector2::zero(),
-                    color: [0.5, 0.5, 1.0, 1.0],
+                    color: Rgba::new(0.5, 0.5, 1.0, 1.0),
                 });
                 args.vertices_edge_sel.push(MVertex2D {
                     pos: pos1,
                     uv: Vector2::zero(),
-                    color: [0.5, 0.5, 1.0, 1.0],
+                    color: Rgba::new(0.5, 0.5, 1.0, 1.0),
                 });
             }
 
@@ -1010,22 +1021,22 @@ impl PapercraftContext {
                         MVertex2D {
                             pos: pos0,
                             uv: Vector2::zero(),
-                            color: [0.0, 0.0, 0.0, 1.0],
+                            color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                         },
                         MVertex2D {
                             pos: pos0 + n + v_0,
                             uv: Vector2::zero(),
-                            color: [0.0, 0.0, 0.0, 1.0],
+                            color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                         },
                         MVertex2D {
                             pos: pos1 + n - v_1,
                             uv: Vector2::zero(),
-                            color: [0.0, 0.0, 0.0, 1.0],
+                            color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                         },
                         MVertex2D {
                             pos: pos1,
                             uv: Vector2::zero(),
-                            color: [0.0, 0.0, 0.0, 1.0],
+                            color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                         },
                     ];
                     let p = if just_one_tri {
@@ -1065,15 +1076,15 @@ impl PapercraftContext {
 
                     let vs_tab = &mut args.vertices_tab[usize::from(face_b.material())];
                     if just_one_tri {
-                        p[0].color = [1.0, 1.0, 1.0, 0.0];
-                        p[1].color = [1.0, 1.0, 1.0, 1.0];
-                        p[2].color = [1.0, 1.0, 1.0, 0.0];
+                        p[0].color = Rgba::new(1.0, 1.0, 1.0, 0.0);
+                        p[1].color = Rgba::new(1.0, 1.0, 1.0, 1.0);
+                        p[2].color = Rgba::new(1.0, 1.0, 1.0, 0.0);
                         vs_tab.extend([p[0], p[2], p[1]]);
                     } else {
-                        p[0].color = [1.0, 1.0, 1.0, 0.0];
-                        p[1].color = [1.0, 1.0, 1.0, 1.0];
-                        p[2].color = [1.0, 1.0, 1.0, 1.0];
-                        p[3].color = [1.0, 1.0, 1.0, 0.0];
+                        p[0].color = Rgba::new(1.0, 1.0, 1.0, 0.0);
+                        p[1].color = Rgba::new(1.0, 1.0, 1.0, 1.0);
+                        p[2].color = Rgba::new(1.0, 1.0, 1.0, 1.0);
+                        p[3].color = Rgba::new(1.0, 1.0, 1.0, 0.0);
                         vs_tab.extend([p[0], p[2], p[1], p[0], p[3], p[2]]);
                     }
                 }
@@ -1137,10 +1148,10 @@ impl PapercraftContext {
                 }
                 let cut = matches!(self.papercraft.edge_status(i_edge), paper::EdgeStatus::Cut(_));
                 let color = match (selected, cut) {
-                    (true, false) => [0.0, 0.0, 1.0, 1.0],
-                    (true, true) => [0.5, 0.5, 1.0, 1.0],
-                    (false, false) => [0.0, 0.0, 0.0, 1.0],
-                    (false, true) => [1.0, 1.0, 1.0, 1.0],
+                    (true, false) => Rgba::new(0.0, 0.0, 1.0, 1.0),
+                    (true, true) => Rgba::new(0.5, 0.5, 1.0, 1.0),
+                    (false, false) => Rgba::new(0.0, 0.0, 0.0, 1.0),
+                    (false, true) => Rgba::new(1.0, 1.0, 1.0, 1.0),
                 };
                 let p0 = self.papercraft.model()[edge.v0()].pos();
                 let p1 = self.papercraft.model()[edge.v1()].pos();

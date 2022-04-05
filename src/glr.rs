@@ -313,6 +313,11 @@ unsafe impl AttribField for i32 {
         (1, gl::INT)
     }
 }
+unsafe impl AttribField for crate::Rgba {
+    fn detail() -> (usize, GLenum) {
+        (4, gl::FLOAT)
+    }
+}
 unsafe impl<F: AttribField, const N: usize> AttribField for [F; N] {
     fn detail() -> (usize, GLenum) {
         let (d, t) = F::detail();

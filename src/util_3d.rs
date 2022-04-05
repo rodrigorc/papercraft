@@ -1,6 +1,5 @@
 use std::f32::consts::PI;
 use cgmath::{Zero, InnerSpace, Rad};
-use gtk::traits::WidgetExt;
 
 pub type Vector2 = cgmath::Vector2<f32>;
 pub type Vector3 = cgmath::Vector3<f32>;
@@ -47,6 +46,21 @@ impl Plane {
     }
     pub fn normal(&self) -> Vector3 {
         self.base_x.cross(self.base_y)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct Rgba {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
+impl Rgba {
+    pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Rgba {
+        Rgba { r, g, b, a }
     }
 }
 
@@ -291,13 +305,3 @@ pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
     )
 }
 
-pub trait SizeAsVector {
-    fn size_as_vector(&self) -> Vector2;
-}
-
-impl<T: glib::IsA<gtk::Widget>> SizeAsVector for T {
-    fn size_as_vector(&self) -> Vector2 {
-        let r = self.allocation();
-        Vector2::new(r.width() as f32, r.height() as f32)
-    }
-}

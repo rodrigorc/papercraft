@@ -105,7 +105,7 @@ crate::attrib! {
     #[repr(C)]
     pub struct MVertex3DLine {
         pub pos: Vector3,
-        pub color: [f32; 4],
+        pub color: Rgba,
         pub top: u8,
     }
     #[derive(Copy, Clone, Debug)]
@@ -113,7 +113,7 @@ crate::attrib! {
     pub struct MVertex2D {
         pub pos: Vector2,
         pub uv: Vector2,
-        pub color: [f32; 4],
+        pub color: Rgba,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -123,14 +123,14 @@ crate::attrib! {
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MStatus {
-        pub status: [f32; 4],
+        pub status: Rgba,
     }
 }
 
 
-pub const MSTATUS_UNSEL: MStatus = MStatus { status: [0.0, 0.0, 0.0, 0.0]};
-pub const MSTATUS_SEL: MStatus = MStatus { status: [0.0, 0.0, 1.0, 0.5]};
-pub const MSTATUS_HI: MStatus = MStatus { status: [1.0, 0.0, 0.0, 0.75]};
+pub const MSTATUS_UNSEL: MStatus = MStatus { status: Rgba::new(0.0, 0.0, 0.0, 0.0)};
+pub const MSTATUS_SEL: MStatus = MStatus { status: Rgba::new(0.0, 0.0, 1.0, 0.5)};
+pub const MSTATUS_HI: MStatus = MStatus { status: Rgba::new(1.0, 0.0, 0.0, 0.75)};
 
 pub fn program_from_source(shaders: &str) -> glr::Program {
     let split = shaders.find("###").unwrap();

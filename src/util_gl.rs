@@ -1,6 +1,5 @@
 use crate::util_3d::*;
 use crate::glr;
-use gl::types::*;
 
 /*
 use gtk::gdk;
@@ -37,7 +36,7 @@ pub struct Uniforms3D {
     pub texture: i32,
 }
 
-impl glr::UniformProvider for Uniforms3D {
+unsafe impl glr::UniformProvider for Uniforms3D {
     fn apply(&self, u: &glr::Uniform) {
         match u.name() {
             "m" => {
@@ -71,7 +70,7 @@ pub struct Uniforms2D {
     pub frac_dash: f32,
 }
 
-impl glr::UniformProvider for Uniforms2D {
+unsafe impl glr::UniformProvider for Uniforms2D {
     fn apply(&self, u: &glr::Uniform) {
         match u.name() {
             "m" => {
@@ -86,7 +85,7 @@ impl glr::UniformProvider for Uniforms2D {
             }
             "tex" => {
                 unsafe {
-                    gl::Uniform1i(u.location(), 0); //TODO
+                    gl::Uniform1i(u.location(), 0);
                 }
             }
             _ => {}
@@ -94,119 +93,44 @@ impl glr::UniformProvider for Uniforms2D {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-pub struct MVertex3D {
-    pub pos: Vector3,
-    pub normal: Vector3,
-    pub uv: Vector2,
-}
-
-impl glr::AttribProvider for MVertex3D {
-    fn apply(a: &glr::Attribute) -> Option<(usize, GLenum, usize)> {
-        match a.name() {
-            "pos" => {
-                Some((3, gl::FLOAT,  0))
-            }
-            "normal" => {
-                Some((3, gl::FLOAT, 4 * 3))
-            }
-            "uv" => {
-                Some((2, gl::FLOAT, 4 * 3 + 4 * 3))
-            }
-            _ => None,
-        }
+crate::attrib! {
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MVertex3D {
+        pub pos: Vector3,
+        pub normal: Vector3,
+        pub uv: Vector2,
+    }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MVertex3DLine {
+        pub pos: Vector3,
+        pub color: [f32; 4],
+        pub top: u8,
+    }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MVertex2D {
+        pub pos: Vector2,
+        pub uv: Vector2,
+        pub color: [f32; 4],
+    }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MVertexQuad {
+        pub pos: Vector2,
+    }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MStatus {
+        pub status: [f32; 4],
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-pub struct MVertex3DLine {
-    pub pos: Vector3,
-    pub color: [f32; 4],
-    pub top: u8,
-}
-
-impl glr::AttribProvider for MVertex3DLine {
-    fn apply(a: &glr::Attribute) -> Option<(usize, GLenum, usize)> {
-        match a.name() {
-            "pos" => {
-                Some((3, gl::FLOAT,  0))
-            }
-            "color" => {
-                Some((4, gl::FLOAT,  3 * 4))
-            }
-            "top" => {
-                Some((1, gl::BYTE,  3 * 4 + 4 * 4))
-            }
-            _ => None,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-pub struct MVertex2D {
-    pub pos: Vector2,
-    pub uv: Vector2,
-    pub color: [f32; 4],
-}
-
-impl glr::AttribProvider for MVertex2D {
-    fn apply(a: &glr::Attribute) -> Option<(usize, GLenum, usize)> {
-        match a.name() {
-            "pos" => {
-                Some((3, gl::FLOAT,  0))
-            }
-            "uv" => {
-                Some((2, gl::FLOAT,  2 * 4))
-            }
-            "color" => {
-                Some((4, gl::FLOAT,  4 * 4))
-            }
-            _ => None,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-pub struct MVertexQuad {
-    pub pos: [f32; 2],
-}
-
-impl glr::AttribProvider for MVertexQuad {
-    fn apply(a: &glr::Attribute) -> Option<(usize, GLenum, usize)> {
-        match a.name() {
-            "pos" => {
-                Some((2, gl::FLOAT,  0))
-            }
-            _ => None,
-        }
-    }
-}
-
-
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-pub struct MStatus {
-    pub status: [f32; 4],
-}
 
 pub const MSTATUS_UNSEL: MStatus = MStatus { status: [0.0, 0.0, 0.0, 0.0]};
 pub const MSTATUS_SEL: MStatus = MStatus { status: [0.0, 0.0, 1.0, 0.5]};
 pub const MSTATUS_HI: MStatus = MStatus { status: [1.0, 0.0, 0.0, 0.75]};
-
-impl glr::AttribProvider for MStatus {
-    fn apply(a: &glr::Attribute) -> Option<(usize, GLenum, usize)> {
-        match a.name() {
-            "status" => {
-                Some((4, gl::FLOAT,  0))
-            }
-            _ => None,
-        }
-    }
-}
 
 pub fn program_from_source(shaders: &str) -> glr::Program {
     let split = shaders.find("###").unwrap();

@@ -251,11 +251,11 @@ impl Attribute {
     }
 }
 
-pub trait UniformProvider {
+pub unsafe trait UniformProvider {
     fn apply(&self, u: &Uniform);
 }
 
-pub trait AttribProvider: Copy {
+pub unsafe trait AttribProvider: Copy {
     fn apply(a: &Attribute) -> Option<(usize, GLenum, usize)>;
 }
 
@@ -286,6 +286,83 @@ impl<A: AttribProvider> AttribProviderList for &[A] {
             }
         }
         (buf, vas)
+    }
+}
+
+pub unsafe trait AttribField {
+    fn detail() -> (usize, GLenum);
+}
+
+unsafe impl AttribField for f32 {
+    fn detail() -> (usize, GLenum) {
+        (1, gl::FLOAT)
+    }
+}
+unsafe impl AttribField for u8 {
+    fn detail() -> (usize, GLenum) {
+        (1, gl::BYTE)
+    }
+}
+unsafe impl AttribField for u32 {
+    fn detail() -> (usize, GLenum) {
+        (1, gl::UNSIGNED_INT)
+    }
+}
+unsafe impl AttribField for i32 {
+    fn detail() -> (usize, GLenum) {
+        (1, gl::INT)
+    }
+}
+unsafe impl<F: AttribField, const N: usize> AttribField for [F; N] {
+    fn detail() -> (usize, GLenum) {
+        let (d, t) = F::detail();
+        (N * d, t)
+    }
+}
+unsafe impl<F: AttribField> AttribField for cgmath::Vector2<F> {
+    fn detail() -> (usize, GLenum) {
+        let (d, t) = F::detail();
+        (2 * d, t)
+    }
+}
+unsafe impl<F: AttribField> AttribField for cgmath::Vector3<F> {
+    fn detail() -> (usize, GLenum) {
+        let (d, t) = F::detail();
+        (3 * d, t)
+    }
+}
+
+#[macro_export]
+macro_rules! attrib {
+    (
+        $(
+            $(#[$a:meta])* $v:vis struct $name:ident {
+                $(
+                    $fv:vis $f:ident : $ft:ty
+                ),*
+                $(,)?
+            }
+        )*
+    ) => {
+        $(
+            $(#[$a])* $v struct $name {
+                $(
+                    $fv $f: $ft ,
+                )*
+            }
+            unsafe impl crate::glr::AttribProvider for $name {
+                fn apply(a: &glr::Attribute) -> Option<(usize, gl::types::GLenum, usize)> {
+                    let name = a.name();
+                    $(
+                        if name == stringify!($f) {
+                            let (n, t) = <$ft as glr::AttribField>::detail();
+                            return Some((n, t, memoffset::offset_of!($name, $f)));
+                        }
+                    )*
+                    None
+                }
+            }
+        )*
     }
 }
 

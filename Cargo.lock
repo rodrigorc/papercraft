@@ -691,6 +691,7 @@ dependencies = [
  "gl_loader",
  "glib",
  "gtk",
+ "memoffset",
  "serde",
  "serde_json",
  "slotmap",

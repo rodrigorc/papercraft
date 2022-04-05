@@ -14,9 +14,9 @@ use std::cell::RefCell;
 
 mod waveobj;
 mod paper;
+mod glr;
 mod util_3d;
 mod util_gl;
-mod glr;
 
 use paper::Papercraft;
 
@@ -1475,9 +1475,9 @@ impl GlobalContext {
             let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl"));
 
             let quad_vertices = glr::DynamicVertexArray::from(vec![
-                MVertexQuad { pos: [-1.0, -1.0] },
-                MVertexQuad { pos: [ 3.0, -1.0] },
-                MVertexQuad { pos: [-1.0,  3.0] },
+                MVertexQuad { pos: Vector2::new(-1.0, -1.0) },
+                MVertexQuad { pos: Vector2::new( 3.0, -1.0) },
+                MVertexQuad { pos: Vector2::new(-1.0,  3.0) },
             ]);
 
             self.gl_fixs = Some(GLFixedObjects {

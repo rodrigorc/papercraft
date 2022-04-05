@@ -34,6 +34,12 @@ impl<T: glib::IsA<gtk::Widget>> SizeAsVector for T {
     }
 }
 
+fn app_set_default_options(app: &gtk::Application) {
+    app.lookup_action("mode").unwrap().change_state(&"face".to_variant());
+    app.lookup_action("view_textures").unwrap().change_state(&true.to_variant());
+    app.lookup_action("view_tabs").unwrap().change_state(&true.to_variant());
+}
+
 fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
@@ -57,10 +63,11 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     let ctx: Rc<RefCell<GlobalContext>> = Rc::new(RefCell::new(ctx));
 
     let aquit = gio::SimpleAction::new("quit", None);
-    aquit.connect_activate(clone!(@strong app => move |_, _| app.quit() ));
     app.add_action(&aquit);
+    aquit.connect_activate(clone!(@strong app => move |_, _| app.quit() ));
 
     let aopen = gio::SimpleAction::new("open", None);
+    app.add_action(&aopen);
     aopen.connect_activate(clone!(
         @strong w as top_window, @strong app =>
         move |_, _| {
@@ -97,9 +104,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             }
         }
     ));
-    app.add_action(&aopen);
 
     let aimport = gio::SimpleAction::new("import", None);
+    app.add_action(&aimport);
     aimport.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
@@ -133,13 +140,13 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
 
             if let Some(name) = name {
                 ctx.borrow_mut().import_waveobj(name);
-                top_window.application().unwrap().lookup_action("mode").unwrap().change_state(&"face".to_variant());
+                app_set_default_options(&top_window.application().unwrap());
             }
         }
     ));
-    app.add_action(&aimport);
 
     let asave_as = gio::SimpleAction::new("save_as", None);
+    app.add_action(&asave_as);
     asave_as.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
@@ -180,9 +187,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             }
         }
     ));
-    app.add_action(&asave_as);
 
     let amode = gio::SimpleAction::new_stateful("mode", Some(glib::VariantTy::STRING), &"face".to_variant());
+    app.add_action(&amode);
     amode.connect_change_state(clone!(
         @strong ctx =>
         move |a, v| {
@@ -191,14 +198,14 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 a.set_state(&"".to_variant());
 
                 a.set_state(v);
-                match v.str() {
-                    Some("face") => {
+                match v.str().unwrap() {
+                    "face" => {
                         ctx.borrow_mut().data.mode = MouseMode::Face;
                     }
-                    Some("edge") => {
+                    "edge" => {
                         ctx.borrow_mut().data.mode = MouseMode::Edge;
                     }
-                    Some("tab") => {
+                    "tab" => {
                         ctx.borrow_mut().data.mode = MouseMode::Tab;
                     }
                     _ => {}
@@ -206,9 +213,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             }
         }
     ));
-    app.add_action(&amode);
 
     let areset_views = gio::SimpleAction::new("reset_views", None);
+    app.add_action(&areset_views);
     areset_views.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
@@ -220,7 +227,36 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             ctx.wscene.queue_render();
         }
     ));
-    app.add_action(&areset_views);
+
+    let atexture = gio::SimpleAction::new_stateful("view_textures", None, &true.to_variant());
+    app.add_action(&atexture);
+    atexture.connect_change_state(clone!(
+        @strong ctx =>
+        move |a, v| {
+            if let Some(v)  = v {
+                a.set_state(&v);
+                let mut ctx = ctx.borrow_mut();
+                ctx.data.show_textures = v.get().unwrap();
+                ctx.wpaper.queue_render();
+                ctx.wscene.queue_render();
+            }
+        }
+    ));
+
+    let atabs = gio::SimpleAction::new_stateful("view_tabs", None, &true.to_variant());
+    app.add_action(&atabs);
+    atabs.connect_change_state(clone!(
+        @strong ctx =>
+        move |a, v| {
+            if let Some(v)  = v {
+                a.set_state(&v);
+                let mut ctx = ctx.borrow_mut();
+                ctx.data.show_tabs = v.get().unwrap();
+                ctx.wpaper.queue_render();
+                ctx.wscene.queue_render();
+            }
+        }
+    ));
 
     w.set_default_size(800, 600);
     w.connect_destroy(clone!(
@@ -505,8 +541,6 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     btn.set_icon_name(Some("object-flip-horizontal"));
     toolbar.add(&btn);
 
-    //app.lookup_action("quit").unwrap().downcast::<gio::SimpleAction>().unwrap().set_enabled(false);
-
     let vbin = gtk::Box::new(gtk::Orientation::Vertical, 0);
     w.add(&vbin);
 
@@ -534,7 +568,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 ctx.data = PapercraftContext::from_papercraft(papercraft, ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
                 ctx.top_window.clone()
             };
-            w.application().unwrap().lookup_action("mode").unwrap().change_state(&"face".to_variant());
+            app_set_default_options(&w.application().unwrap());
+
             w.show_all();
             w.present();
         }
@@ -649,6 +684,8 @@ struct PapercraftContext {
     last_cursor_pos: Vector2,
 
     mode: MouseMode,
+    show_textures: bool,
+    show_tabs: bool,
     trans_scene: Transformation3D,
     trans_paper: TransformationPaper,
 }
@@ -776,6 +813,8 @@ impl PapercraftContext {
             scroll_timer: None,
             last_cursor_pos: Vector2::zero(),
             mode: MouseMode::Face,
+            show_textures: true,
+            show_tabs: true,
             trans_scene,
             trans_paper,
         }
@@ -785,14 +824,17 @@ impl PapercraftContext {
         if self.gl_objs.is_none() {
             let textures = self.papercraft.model()
                 .textures()
-                .map(|tex| {
-                    let texture = match tex.pixbuf() {
+                .map(|tex| tex.pixbuf())
+                //Ensure an empty texture in N+1
+                .chain(std::iter::once(None))
+                .map(|pixbuf| {
+                    let texture = match pixbuf {
                         None => {
                             // Empty texture is just a single white texel
                             let empty = glr::Texture::generate().unwrap();
                             unsafe {
                                 gl::BindTexture(gl::TEXTURE_2D, empty.id());
-                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0xffu8, 0xffu8, 0xffu8].as_ptr() as *const _);
+                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0x80u8, 0x80u8, 0x80u8].as_ptr() as *const _);
                             }
                             empty
                         }
@@ -1535,7 +1577,7 @@ impl GlobalContext {
 
             let mut vi = 0;
             for (verts, tex) in gl_objs.vertices.iter().zip(&gl_objs.textures) {
-                gl::BindTexture(gl::TEXTURE_2D, tex.id());
+                gl::BindTexture(gl::TEXTURE_2D, if self.data.show_textures { tex.id() } else { gl_objs.textures.last().unwrap().id() });
                 gl_fixs.prg_scene_solid.draw(&u, (verts, gl_objs.vertices_sel.sub(vi .. vi + verts.len())), gl::TRIANGLES);
                 vi += verts.len();
             }
@@ -1571,21 +1613,26 @@ impl GlobalContext {
             gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
             gl::ActiveTexture(gl::TEXTURE0);
 
+            // The paper
             gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
 
             for ((verts, verts_tab), tex) in gl_objs.paper_vertices.iter().zip(&gl_objs.paper_vertices_tab).zip(&gl_objs.textures) {
-                gl::BindTexture(gl::TEXTURE_2D, tex.id());
+                gl::BindTexture(gl::TEXTURE_2D, if self.data.show_textures { tex.id() } else { gl_objs.textures.last().unwrap().id() });
                 // Textured faces
                 gl_fixs.prg_paper_solid.draw(&u, verts, gl::TRIANGLES);
 
                 // Solid Tabs
-                gl_fixs.prg_paper_solid.draw(&u, verts_tab, gl::TRIANGLES);
+                if self.data.show_tabs {
+                    gl_fixs.prg_paper_solid.draw(&u, verts_tab, gl::TRIANGLES);
+                }
             }
 
             // Line Tabs
             gl::Disable(gl::LINE_SMOOTH);
             gl::LineWidth(1.0);
-            gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
+            if self.data.show_tabs {
+                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
+            }
 
             // Creases
             gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge, gl::LINES);

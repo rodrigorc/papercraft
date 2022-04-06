@@ -36,7 +36,7 @@ pub struct Uniforms3D {
     pub texture: i32,
 }
 
-unsafe impl glr::UniformProvider for Uniforms3D {
+impl glr::UniformProvider for Uniforms3D {
     fn apply(&self, u: &glr::Uniform) {
         match u.name() {
             "m" => {
@@ -70,7 +70,7 @@ pub struct Uniforms2D {
     pub frac_dash: f32,
 }
 
-unsafe impl glr::UniformProvider for Uniforms2D {
+impl glr::UniformProvider for Uniforms2D {
     fn apply(&self, u: &glr::Uniform) {
         match u.name() {
             "m" => {

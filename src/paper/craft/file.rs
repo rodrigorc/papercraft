@@ -21,7 +21,7 @@ impl Papercraft {
                 zip.start_file(&format!("tex/{file_name}"), options)?;
                 let ext = Path::new(file_name).extension().and_then(|s| s.to_str()).unwrap_or("png").to_ascii_lowercase();
                 let data = pixbuf.save_to_bufferv(&ext, &[]).unwrap();
-                zip.write_all(&mut &data[..])?;
+                zip.write_all(&data[..])?;
             }
         }
         zip.finish()?;

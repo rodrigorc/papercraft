@@ -161,7 +161,7 @@ impl Program {
             gl::UseProgram(self.id);
 
             for u in &self.uniforms {
-                uniforms.apply(&u);
+                uniforms.apply(u);
             }
 
             let _bufs = attribs.bind(self);
@@ -251,10 +251,14 @@ impl Attribute {
     }
 }
 
-pub unsafe trait UniformProvider {
+pub trait UniformProvider {
     fn apply(&self, u: &Uniform);
 }
 
+/// # Safety
+///
+/// This trait returns offsets from Self that will be used to index the raw memory of a
+/// VertexAttribBuffer. Better implemented using the `attrib!` macro.
 pub unsafe trait AttribProvider: Copy {
     fn apply(a: &Attribute) -> Option<(usize, GLenum, usize)>;
 }
@@ -269,7 +273,7 @@ impl<A: AttribProvider> AttribProviderList for &[A] {
     type KeepType = (Buffer, SmallVec<[EnablerVertexAttribArray; 8]>);
 
     fn len(&self) -> usize {
-        <[A]>::len(&self)
+        <[A]>::len(self)
     }
     fn bind(&self, p: &Program) -> (Buffer, SmallVec<[EnablerVertexAttribArray; 8]>) {
         let buf = Buffer::generate().unwrap();
@@ -289,6 +293,10 @@ impl<A: AttribProvider> AttribProviderList for &[A] {
     }
 }
 
+/// # Safety
+///
+/// Returned information will be used to index the raw memory of a VertexAttribBuffer. Returning
+/// wrong information will cause seg faults.
 pub unsafe trait AttribField {
     fn detail() -> (usize, GLenum);
 }
@@ -405,7 +413,7 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
     pub fn data(&self) -> &[A] {
         &self.data[..]
     }
-    pub fn sub<'s>(&'s self, range: std::ops::Range<usize>) -> DynamicVertexArraySub<'s, A> {
+    pub fn sub(&self, range: std::ops::Range<usize>) -> DynamicVertexArraySub<'_, A> {
         DynamicVertexArraySub {
             array: self,
             range,
@@ -424,12 +432,11 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
 
 impl<A: AttribProvider > From<Vec<A>> for DynamicVertexArray<A> {
     fn from(data: Vec<A>) -> Self {
-        let r = DynamicVertexArray {
+        DynamicVertexArray {
             data,
             buf: Buffer::generate().unwrap(),
             dirty: Cell::new(true),
-        };
-        r
+        }
     }
 }
 
@@ -508,7 +515,7 @@ pub struct Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteBuffers(1, &mut self.id);
+            gl::DeleteBuffers(1, &self.id);
         }
     }
 }
@@ -529,10 +536,11 @@ impl Buffer {
 pub struct VertexArray {
     id: u32,
 }
+
 impl Drop for VertexArray {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteVertexArrays(1, &mut self.id);
+            gl::DeleteVertexArrays(1, &self.id);
         }
     }
 }

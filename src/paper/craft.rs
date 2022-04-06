@@ -77,9 +77,8 @@ impl Papercraft {
         if let (_, None) = self.model()[i_edge].faces() {
             return;
         }
-        match self.edges[usize::from(i_edge)]{
-            EdgeStatus::Cut(ref mut x) => *x = !*x,
-            _ => (),
+        if let EdgeStatus::Cut(ref mut x) = self.edges[usize::from(i_edge)] {
+            *x = !*x;
         }
     }
 
@@ -163,7 +162,7 @@ impl Papercraft {
             }
             EdgeStatus::Hidden => {}
         };
-        return renames;
+        renames
     }
 
     fn compare_islands(&self, a: &Island, b: &Island, priority_face: Option<FaceIndex>) -> bool {
@@ -227,18 +226,18 @@ impl Papercraft {
         let (_f, i_v0_b, i_v1_b, _edge_b) = flat_contour
             .iter()
             .copied()
-            .filter(|&(_f, _v0, _v1, e)| e == i_edge)
-            .next().unwrap();
+            .find(|&(_f, _v0, _v1, e)| e == i_edge)
+            .unwrap();
         let x0 = flat_contour
             .iter()
             .copied()
-            .filter(|&(_f, _v0, v1, _e)| i_v0_b == v1)
-            .next().unwrap();
+            .find(|&(_f, _v0, v1, _e)| i_v0_b == v1)
+            .unwrap();
         let x1 = flat_contour
             .iter()
             .copied()
-            .filter(|&(_f, v0, _v1, _e)| i_v1_b == v0)
-            .next().unwrap();
+            .find(|&(_f, v0, _v1, _e)| i_v1_b == v0)
+            .unwrap();
 
         let pps = [(x0.0, x0.1), (x0.0, x0.2), (x1.0, x1.1), (x1.0, x1.2)]
             .map(|(f, v)| {
@@ -280,8 +279,8 @@ impl Papercraft {
             }
 
             // Compute the number of faces before joining them
-            let n_faces_a = self.island_face_count(&self.island_by_key(self.island_by_face(i_face_a)).unwrap());
-            let n_faces_b = self.island_face_count(&self.island_by_key(self.island_by_face(i_face_b)).unwrap());
+            let n_faces_a = self.island_face_count(self.island_by_key(self.island_by_face(i_face_a)).unwrap());
+            let n_faces_b = self.island_face_count(self.island_by_key(self.island_by_face(i_face_b)).unwrap());
             if n_faces_a != 2 && n_faces_b != 2 {
                 continue;
             }
@@ -308,7 +307,7 @@ impl Papercraft {
                     continue;
                 }
                 // Get the opposite edge, if any
-                let opposite = edges.iter().copied().filter(|&i_e| {
+                let opposite = edges.iter().copied().find(|&i_e| {
                     if i_e == i_edge {
                         return false;
                     }
@@ -318,7 +317,7 @@ impl Papercraft {
                         return false;
                     }
                     true
-                }).next();
+                });
                 i_edges.extend(opposite);
             }
         }

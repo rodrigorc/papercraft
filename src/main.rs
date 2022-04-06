@@ -234,7 +234,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         @strong ctx =>
         move |a, v| {
             if let Some(v)  = v {
-                a.set_state(&v);
+                a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_textures = v.get().unwrap();
                 ctx.wpaper.queue_render();
@@ -249,7 +249,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         @strong ctx =>
         move |a, v| {
             if let Some(v)  = v {
-                a.set_state(&v);
+                a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_tabs = v.get().unwrap();
                 ctx.wpaper.queue_render();
@@ -828,13 +828,13 @@ impl PapercraftContext {
                 //Ensure an empty texture in N+1
                 .chain(std::iter::once(None))
                 .map(|pixbuf| {
-                    let texture = match pixbuf {
+                    match pixbuf {
                         None => {
                             // Empty texture is just a single white texel
                             let empty = glr::Texture::generate().unwrap();
                             unsafe {
                                 gl::BindTexture(gl::TEXTURE_2D, empty.id());
-                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0x80u8, 0x80u8, 0x80u8].as_ptr() as *const _);
+                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB8 as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0x80u8, 0x80u8, 0x80u8].as_ptr() as *const _);
                             }
                             empty
                         }
@@ -856,13 +856,12 @@ impl PapercraftContext {
                                 gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
                                 gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
                                 gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
-                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as i32, width, height, 0, format, gl::UNSIGNED_BYTE, bytes.as_ptr() as *const _);
+                                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8 as i32, width, height, 0, format, gl::UNSIGNED_BYTE, bytes.as_ptr() as *const _);
                                 gl::GenerateMipmap(gl::TEXTURE_2D);
                             }
                             tex
                         }
-                    };
-                    texture
+                    }
                 })
                 .collect();
 
@@ -890,15 +889,15 @@ impl PapercraftContext {
                 }
             }
 
-            let vertices = vertices.into_iter().map(|vs| glr::DynamicVertexArray::from(vs)).collect();
+            let vertices = vertices.into_iter().map(glr::DynamicVertexArray::from).collect();
             let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * self.papercraft.model().num_faces()]);
             let vertices_edges_joint = glr::DynamicVertexArray::new();
             let vertices_edges_cut = glr::DynamicVertexArray::new();
 
-            let paper_vertices = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.papercraft.model().num_textures()).collect();
+            let paper_vertices = std::iter::repeat_with(glr::DynamicVertexArray::new).take(self.papercraft.model().num_textures()).collect();
             let paper_vertices_edge = glr::DynamicVertexArray::new();
             let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-            let paper_vertices_tab = std::iter::repeat_with(|| glr::DynamicVertexArray::new()).take(self.papercraft.model().num_textures()).collect();
+            let paper_vertices_tab = std::iter::repeat_with(glr::DynamicVertexArray::new).take(self.papercraft.model().num_textures()).collect();
             let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
 
             let page_0 = MVertex2D {

@@ -24,7 +24,11 @@
                     <item>
                         <attribute name='label' translatable='yes'>Import O_BJ...</attribute>
                         <attribute name='action'>app.import</attribute>
-                        <attribute name='icon'>document-import</attribute>
+                        <attribute name='icon'>insert-object</attribute>
+                    </item>
+                    <item>
+                        <attribute name='label' translatable='yes'>Export _PDF...</attribute>
+                        <attribute name='action'>app.export_pdf</attribute>
                     </item>
                 </section>
                 <section>

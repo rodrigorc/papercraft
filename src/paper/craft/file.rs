@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, ops::ControlFlow, io::{Read, Seek, Write}, path::Path};
+use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path};
 
 use cgmath::{One, EuclideanSpace, Transform, Rad, Zero};
 use gdk_pixbuf::traits::PixbufLoaderExt;
@@ -103,10 +103,6 @@ impl Papercraft {
             }
         }
 
-        let mut row_height = 0.0f32;
-        let mut pos_x = 0.0;
-        let mut pos_y = 0.0;
-
         let mut pending_faces: HashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
         let scale = 100.0;
 
@@ -114,45 +110,29 @@ impl Papercraft {
         while let Some(root) = pending_faces.iter().copied().next() {
             pending_faces.remove(&root);
 
-            //Compute the bounding box of the flat face, since Self is not yet build, we have to use the traverse_faces_ex() version directly
-            let mut vx = Vec::new();
-            traverse_faces_ex(&model, root, Matrix3::one(), craft::NormalTraverseFace(&model, &edges, scale),
-                |i_face, face, mx| {
+            traverse_faces_ex(&model, root, (), NoMatrixTraverseFace(&model, &edges),
+                |i_face, _, _| {
                     pending_faces.remove(&i_face);
-                    let normal = face.plane(&model, scale);
-                    vx.extend(face.index_vertices().map(|v| {
-                        mx.transform_point(Point2::from_vec(normal.project(&model[v].pos()))).to_vec()
-                    }));
                     ControlFlow::Continue(())
                 }
             );
 
-            let bbox = bounding_box_2d(vx);
-            let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
-            pos_x += bbox.1.x - bbox.0.x + 5.0;
-            row_height = row_height.max(bbox.1.y - bbox.0.y);
-
-            if pos_x > 210.0 {
-                pos_y += row_height + 5.0;
-                row_height = 0.0;
-                pos_x = 0.0;
-            }
-
-            let mut island = Island {
+            let island = Island {
                 root,
-                loc: pos,
+                loc: Vector2::zero(),
                 rot: Rad::zero(),
                 mx: Matrix3::one(),
             };
-            island.recompute_matrix();
             islands.insert(island);
         }
 
-        Papercraft {
+        let mut papercraft = Papercraft {
             model,
             scale,
             edges,
             islands,
-        }
+        };
+        papercraft.pack_islands();
+        papercraft
     }
 }

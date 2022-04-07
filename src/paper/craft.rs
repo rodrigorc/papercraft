@@ -50,6 +50,20 @@ impl Papercraft {
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
     }
+    pub fn island_bounding_box(&self, island: &Island) -> (Vector2, Vector2) {
+        let mut vx = Vec::new();
+        self.traverse_faces(island,
+            |_, face, mx| {
+                let vs = face.index_vertices().map(|v| {
+                    let normal = self.face_plane(face);
+                    mx.transform_point(Point2::from_vec(normal.project(&self.model[v].pos()))).to_vec()
+                });
+                vx.extend(vs);
+                ControlFlow::Continue(())
+            }
+        );
+        crate::util_3d::bounding_box_2d(vx)
+    }
 
     pub fn island_by_face(&self, i_face: FaceIndex) -> IslandKey {
         for (i_island, island) in &self.islands {
@@ -322,6 +336,34 @@ impl Papercraft {
             }
         }
         renames
+    }
+
+    pub fn pack_islands(&mut self) {
+        let mut row_height = 0.0f32;
+        let mut pos_x = 0.0;
+        let mut pos_y = 0.0;
+
+        // The island position cannot be updated while iterating
+        let mut positions = slotmap::SecondaryMap::<IslandKey, Vector2>::new();
+
+        for (i_island, island) in &self.islands {
+            let bbox = self.island_bounding_box(island);
+            let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
+            pos_x += bbox.1.x - bbox.0.x + 5.0;
+            row_height = row_height.max(bbox.1.y - bbox.0.y);
+
+            if pos_x > 210.0 {
+                pos_y += row_height + 5.0;
+                row_height = 0.0;
+                pos_x = 0.0;
+            }
+            positions.insert(i_island, pos);
+        }
+        for (i_island, pos) in positions {
+            let island = self.island_by_key_mut(i_island).unwrap();
+            island.loc = pos;
+            island.recompute_matrix();
+        }
     }
 }
 

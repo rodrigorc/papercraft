@@ -9,6 +9,7 @@ edition = "2021"
 gtk = { version = "*", features = ["v3_22"] }
 glib = "*"
 gio = "*"
+cairo-rs = { version = "*", features = ["pdf"] }
 gl_loader = "*"
 cgmath = "*"
 anyhow = "*"
@@ -20,3 +21,4 @@ gl ="*"
 smallvec = "*"
 zip = "*"
 memoffset = "*"
+

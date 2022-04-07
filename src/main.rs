@@ -40,7 +40,7 @@ fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("view_tabs").unwrap().change_state(&true.to_variant());
 }
 
-fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) {
+fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::PathBuf>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
@@ -144,6 +144,48 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             }
         }
     ));
+    let aexport_pdf = gio::SimpleAction::new("export_pdf", None);
+    app.add_action(&aexport_pdf);
+    aexport_pdf.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let top_window = ctx.borrow().top_window.clone();
+            let dlg = gtk::FileChooserDialog::with_buttons(
+                Some("Export PDF"),
+                Some(&top_window),
+                gtk::FileChooserAction::Save,
+                &[
+                    ("Cancel", gtk::ResponseType::Cancel),
+                    ("Export PDF", gtk::ResponseType::Accept)
+                ]
+            );
+            dlg.set_current_folder(".");
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Craft models"));
+            filter.add_pattern("*.pdf");
+            dlg.add_filter(&filter);
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("All files"));
+            filter.add_pattern("*");
+            dlg.add_filter(&filter);
+            dlg.set_do_overwrite_confirmation(true);
+
+            let res = dlg.run();
+            let name = if res == gtk::ResponseType::Accept {
+                dlg.filename()
+            } else {
+                None
+            };
+            unsafe { dlg.destroy(); }
+
+            if let Some(mut name) = name {
+                if name.extension().is_none() {
+                    name.set_extension("pdf");
+                }
+                ctx.borrow_mut().export_pdf(name);
+            }
+        }
+    ));
 
     let asave_as = gio::SimpleAction::new("save_as", None);
     app.add_action(&asave_as);
@@ -152,7 +194,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         move |_, _| {
             let top_window = ctx.borrow().top_window.clone();
             let dlg = gtk::FileChooserDialog::with_buttons(
-                Some("Import OBJ"),
+                Some("Save as"),
                 Some(&top_window),
                 gtk::FileChooserAction::Save,
                 &[
@@ -183,7 +225,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 if name.extension().is_none() {
                     name.set_extension("craft");
                 }
-                ctx.borrow_mut().save(name);
+                ctx.borrow().save(name);
             }
         }
     ));
@@ -516,12 +558,6 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     hbin.pack2(&wpaper, true, true);
 
     let toolbar = gtk::Toolbar::new();
-    let btn = gtk::ToolButton::new(gtk::Widget::NONE, None);
-    btn.set_action_name(Some("app.quit"));
-    btn.set_icon_name(Some("application-exit"));
-    toolbar.add(&btn);
-
-    toolbar.add(&gtk::SeparatorToolItem::new());
 
     let btn = gtk::ToggleToolButton::new();
     btn.set_action_name(Some("app.mode"));
@@ -552,6 +588,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         move |_app| {
             dbg!("activate");
             let w = ctx.borrow().top_window.clone();
+
             w.show_all();
             w.present();
     	}
@@ -588,15 +625,15 @@ fn main() {
     let app = gtk::Application::new(None,
         gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE
     );
-    app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::String, "Import a WaveOBJ file", None);
+    app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::Filename, "Import a WaveOBJ file", None);
     let imports = Rc::new(RefCell::new(None));
     app.connect_handle_local_options(clone!(
         @strong imports =>
         move |_app, dict| {
             dbg!("local_option");
             //It should be a OsString but that gets an \0 at the end that breaks everything
-            let s: Option<String> = dict.lookup("import").unwrap();
-            *imports.borrow_mut() = s;
+            let s: Option<std::path::PathBuf> = dict.lookup("import").unwrap();
+            *imports.borrow_mut() = dbg!(s);
             -1
         }
     ));
@@ -794,7 +831,6 @@ impl PapercraftContext {
             let ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
             TransformationPaper {
                 ortho,
-                //mx: mt * ms * mr,
                 mx: ms * mt,
             }
         };
@@ -1604,8 +1640,7 @@ impl GlobalContext {
 
         unsafe {
             gl::ClearColor(0.7, 0.7, 0.7, 1.0);
-            gl::ClearDepth(1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
@@ -1643,6 +1678,101 @@ impl GlobalContext {
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
         }
+    }
+    //TODO should not be mut
+    fn export_pdf(&mut self, filename: impl AsRef<Path>) {
+        self.wpaper.make_current();
+        self.data.selected_face = None;
+        self.data.selected_islands = Vec::new();
+        self.data.selected_edge = None;
+        self.data.paper_build();
+
+        let page_size_mm = Vector2::new(210.0, 297.0);
+        let page_size_inches = page_size_mm / 25.4;
+        let page_size_dots = page_size_inches * 72.0;
+        let page_size_pixels = page_size_inches * 300.0;
+        let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
+
+        let pixbuf;
+
+        unsafe {
+            let rb_rgb = glr::Renderbuffer::generate().unwrap();
+            let _brb = rb_rgb.bind(gl::RENDERBUFFER);
+            gl::RenderbufferStorage(gl::RENDERBUFFER, gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+            drop(_brb);
+
+            let fb = glr::Framebuffer::generate().unwrap();
+            let _bfb = fb.bind(gl::FRAMEBUFFER);
+
+            gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rb_rgb.id());
+
+            gl::ClearColor(1.0, 1.0, 1.0, 0.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
+            // Start render
+            {
+                let _vp = glr::PushViewport::push(0, 0, page_size_pixels.x, page_size_pixels.y);
+
+                self.data.build_gl_objs();
+                let gl_objs = self.data.gl_objs.as_ref().unwrap();
+                let gl_fixs = self.gl_fixs.as_ref().unwrap();
+
+                let ortho = util_3d::ortho2d(page_size_mm.x, -page_size_mm.y);
+                let mt = Matrix3::from_translation(Vector2::new(-page_size_mm.x / 2.0, -page_size_mm.y / 2.0));
+                let u = Uniforms2D {
+                    m: ortho * mt,
+                    texture: 0,
+                    frac_dash: 0.5,
+                };
+
+                gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
+                gl::ActiveTexture(gl::TEXTURE0);
+
+                for ((verts, verts_tab), tex) in gl_objs.paper_vertices.iter().zip(&gl_objs.paper_vertices_tab).zip(&gl_objs.textures) {
+                    gl::BindTexture(gl::TEXTURE_2D, if self.data.show_textures { tex.id() } else { gl_objs.textures.last().unwrap().id() });
+                    // Textured faces
+                    gl_fixs.prg_paper_solid.draw(&u, verts, gl::TRIANGLES);
+
+                    // Solid Tabs
+                    if self.data.show_tabs {
+                        gl_fixs.prg_paper_solid.draw(&u, verts_tab, gl::TRIANGLES);
+                    }
+                }
+
+                // Line Tabs
+                gl::Enable(gl::LINE_SMOOTH);
+                gl::LineWidth(1.0);
+                if self.data.show_tabs {
+                    gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
+                }
+
+                // Creases
+                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge, gl::LINES);
+            }
+            // End render
+
+            gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
+            pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y).unwrap();
+            gl::PixelStorei(gl::PACK_ROW_LENGTH, pixbuf.rowstride() / 4);
+            let data = pixbuf.pixels();
+            gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::RGBA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
+            gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
+            drop(data);
+        }
+
+        let mut pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, filename).unwrap();
+        let cr = cairo::Context::new(&mut pdf).unwrap();
+        cr.set_source_pixbuf(&pixbuf, 0.0, 0.0);
+        let pat = cr.source();
+        let mut mc = cairo::Matrix::identity();
+        let scale = 300.0 / 72.0;
+        mc.scale(scale, scale);
+        pat.set_matrix(mc);
+        cr.paint().unwrap();
+        drop(cr);
+        drop(pdf);
     }
 }
 

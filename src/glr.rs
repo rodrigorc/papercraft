@@ -53,6 +53,26 @@ impl Drop for EnablerVertexAttribArray {
     }
 }
 
+pub struct PushViewport([i32; 4]);
+
+impl PushViewport {
+    pub fn push(x: i32, y: i32, width: i32, height: i32) -> PushViewport {
+        unsafe {
+            let mut prev = [0; 4];
+            gl::GetIntegerv(gl::VIEWPORT, prev.as_mut_ptr());
+            gl::Viewport(x, y, width, height);
+            PushViewport(prev)
+        }
+    }
+}
+impl Drop for PushViewport {
+    fn drop(&mut self) {
+        unsafe {
+            gl::Viewport(self.0[0], self.0[1], self.0[2], self.0[3]);
+        }
+    }
+}
+
 pub struct Program {
     id: u32,
     uniforms: Vec<Uniform>,
@@ -555,6 +575,90 @@ impl VertexArray {
     }
     pub fn id(&self) -> u32 {
         self.id
+    }
+}
+
+pub struct Renderbuffer {
+    id: u32,
+}
+
+impl Drop for Renderbuffer {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteRenderbuffers(1, &self.id);
+        }
+    }
+}
+
+impl Renderbuffer {
+    pub fn generate() -> Result<Renderbuffer> {
+        unsafe {
+            let mut id = 0;
+            gl::GenRenderbuffers(1, &mut id);
+            Ok(Renderbuffer { id })
+        }
+    }
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+    pub fn bind(&self, target: GLenum) -> BinderRenderbufer {
+        unsafe {
+            gl::BindRenderbuffer(target, self.id);
+        }
+        BinderRenderbufer(target)
+    }
+}
+
+pub struct BinderRenderbufer(GLenum);
+
+impl Drop for BinderRenderbufer {
+    fn drop(&mut self) {
+        unsafe {
+            gl::BindRenderbuffer(self.0, 0);
+        }
+    }
+}
+
+
+pub struct Framebuffer {
+    id: u32,
+}
+
+impl Drop for Framebuffer {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteFramebuffers(1, &self.id);
+        }
+    }
+}
+
+impl Framebuffer {
+    pub fn generate() -> Result<Framebuffer> {
+        unsafe {
+            let mut id = 0;
+            gl::GenFramebuffers(1, &mut id);
+            Ok(Framebuffer { id })
+        }
+    }
+    #[allow(unused)]
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+    pub fn bind(&self, target: GLenum) -> BinderFramebufer {
+        unsafe {
+            gl::BindFramebuffer(target, self.id);
+        }
+        BinderFramebufer(target)
+    }
+}
+
+pub struct BinderFramebufer(GLenum);
+
+impl Drop for BinderFramebufer {
+    fn drop(&mut self) {
+        unsafe {
+            gl::BindFramebuffer(self.0, 0);
+        }
     }
 }
 

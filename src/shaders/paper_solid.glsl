@@ -20,7 +20,6 @@ void main(void) {
 #version 150
 
 uniform sampler2D tex;
-uniform vec4 color;
 
 in vec2 v_uv;
 in vec4 v_color;

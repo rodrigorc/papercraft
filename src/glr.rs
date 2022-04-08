@@ -172,6 +172,9 @@ impl Program {
         }
     }
 
+    pub fn attrib_by_name(&self, name: &str) -> Option<&Attribute> {
+        self.attribs.iter().find(|a| a.name == name)
+    }
     pub fn draw<U, AS>(&self, uniforms: &U, attribs: AS, primitive: GLenum)
         where
             U: UniformProvider,

@@ -198,7 +198,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
                 ctx.set_title(false, Some(&name.display().to_string()));
                 return;
             }
-            let app = ctx.top_window.application().unwrap().clone();
+            let app = ctx.top_window.application().unwrap();
             drop(ctx);
             app.lookup_action("save_as").unwrap().activate(None);
 
@@ -1234,7 +1234,7 @@ impl PapercraftContext {
 
     fn paper_build(&mut self) {
         //Maps VertexIndex in the model to index in vertices
-        let mut args = PaperDrawFaceArgs::new(&self.papercraft.model());
+        let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
 
         for (_, island) in self.papercraft.islands() {
             self.papercraft.traverse_faces(island,
@@ -1891,11 +1891,10 @@ impl GlobalContext {
             let data = pixbuf.pixels();
             gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::RGBA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
-            drop(data);
         }
 
-        let mut pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, filename).unwrap();
-        let cr = cairo::Context::new(&mut pdf).unwrap();
+        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, filename).unwrap();
+        let cr = cairo::Context::new(&pdf).unwrap();
         cr.set_source_pixbuf(&pixbuf, 0.0, 0.0);
         let pat = cr.source();
         let mut mc = cairo::Matrix::identity();

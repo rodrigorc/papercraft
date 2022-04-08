@@ -332,13 +332,13 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
                         }
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
-                        ctx.data.update_face_selection();
+                        ctx.data.update_selection();
                     }
                     (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
                         ctx.data.papercraft.edge_toggle_tab(i_edge);
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
-                        ctx.data.update_face_selection();
+                        ctx.data.update_selection();
                     }
                     (_, ClickResult::Face(f)) => {
                         ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
@@ -454,13 +454,13 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
                         }
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
-                        ctx.data.update_face_selection();
+                        ctx.data.update_selection();
                     }
                     (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
                         ctx.data.papercraft.edge_toggle_tab(i_edge);
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
-                        ctx.data.update_face_selection();
+                        ctx.data.update_selection();
                     }
                     (_, ClickResult::Face(f)) => {
                         ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
@@ -680,8 +680,9 @@ struct GLObjects {
     //GL objects that are rebuild with the model
     vertices: Vec<glr::DynamicVertexArray<MVertex3D>>,
     vertices_sel: glr::DynamicVertexArray<MStatus>,
-    vertices_edges_joint: glr::DynamicVertexArray<MVertex3DLine>,
-    vertices_edges_cut: glr::DynamicVertexArray<MVertex3DLine>,
+    vertices_edge_joint: glr::DynamicVertexArray<MVertex3DLine>,
+    vertices_edge_cut: glr::DynamicVertexArray<MVertex3DLine>,
+    vertices_edge_sel: glr::DynamicVertexArray<MVertex3DLine>,
 
     //vertices_sel is parallel to the concatenation of vertices[x], that's not a sequence of IndexFace,
     //because the materials are not ordered.
@@ -697,6 +698,8 @@ struct GLObjects {
 
     // Similar to face_index but for paper_vertices
     paper_face_index: Vec<u32>,
+    // Similar to face_index but for edges, split edges are drawn twice
+    paper_edge_index: Vec<(u32, Option<u32>)>,
 
     paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
 }
@@ -800,10 +803,10 @@ enum ClickResult {
 struct PaperDrawFaceArgs {
     vertices: Vec<Vec<MVertex2D>>,
     vertices_edge: Vec<MVertex2D>,
-    vertices_edge_sel: Vec<MVertex2D>,
     vertices_tab: Vec<Vec<MVertex2DColor>>,
     vertices_tab_edge: Vec<MVertex2D>,
     face_index: Vec<(paper::MaterialIndex, u32)>,
+    edge_index: Vec<(u32, Option<u32>)>,
 }
 
 impl PaperDrawFaceArgs {
@@ -811,10 +814,10 @@ impl PaperDrawFaceArgs {
         PaperDrawFaceArgs {
             vertices: vec![Vec::new(); model.num_textures()],
             vertices_edge: Vec::new(),
-            vertices_edge_sel: Vec::new(),
             vertices_tab: vec![Vec::new(); model.num_textures()],
             vertices_tab_edge: Vec::new(),
             face_index: vec![(paper::MaterialIndex::from(0), 0); model.num_faces()],
+            edge_index: vec![(0, None); model.num_edges()],
         }
     }
 }
@@ -933,8 +936,9 @@ impl PapercraftContext {
 
             let vertices = vertices.into_iter().map(glr::DynamicVertexArray::from).collect();
             let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * self.papercraft.model().num_faces()]);
-            let vertices_edges_joint = glr::DynamicVertexArray::new();
-            let vertices_edges_cut = glr::DynamicVertexArray::new();
+            let vertices_edge_joint = glr::DynamicVertexArray::new();
+            let vertices_edge_cut = glr::DynamicVertexArray::new();
+            let vertices_edge_sel = glr::DynamicVertexArray::new();
 
             let paper_vertices = std::iter::repeat_with(glr::DynamicVertexArray::new).take(self.papercraft.model().num_textures()).collect();
             let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * self.papercraft.model().num_faces()]);
@@ -969,8 +973,9 @@ impl PapercraftContext {
                 textures,
                 vertices,
                 vertices_sel,
-                vertices_edges_joint,
-                vertices_edges_cut,
+                vertices_edge_joint,
+                vertices_edge_cut,
+                vertices_edge_sel,
                 face_index,
 
                 paper_vertices,
@@ -980,13 +985,14 @@ impl PapercraftContext {
                 paper_vertices_tab,
                 paper_vertices_tab_edge,
                 paper_face_index: vec![0; self.papercraft.model().num_faces()],
+                paper_edge_index: vec![(0, None); self.papercraft.model().num_edges()],
 
                 paper_vertices_page,
             });
 
             self.scene_edge_build();
             self.paper_build();
-            self.update_face_selection();
+            self.update_selection();
         }
     }
 
@@ -1018,7 +1024,7 @@ impl PapercraftContext {
                 paper::EdgeStatus::Joined => edge.face_sign(i_face),
             };
             let plane = self.papercraft.face_plane(face);
-            let selected_edge = self.selected_edge == Some(i_edge);
+            //let selected_edge = self.selected_edge == Some(i_edge);
             let v0 = &self.papercraft.model()[i_v0];
             let p0 = plane.project(&v0.pos());
             let pos0 = m.transform_point(Point2::from_vec(p0)).to_vec();
@@ -1041,12 +1047,10 @@ impl PapercraftContext {
                 let mut v0 = MVertex2D {
                     pos: pos0,
                     uv: Vector2::zero(),
-                    //color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                 };
                 let mut v1 = MVertex2D {
                     pos: pos1,
                     uv: Vector2::zero(),
-                    //color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                 };
                 if false && edge_status == paper::EdgeStatus::Joined {
                     let vn = v.normalize_to(0.01);
@@ -1058,21 +1062,19 @@ impl PapercraftContext {
                 } else if dotted {
                     v1.uv.x = v.magnitude();
                 }
+                let edge_pos = args.vertices_edge.len() as u32 / 2;
+                let edge_index = &mut args.edge_index[usize::from(i_edge)];
+                if matches!(edge_status, paper::EdgeStatus::Cut(_)) {
+                    if edge.face_sign(i_face) {
+                        edge_index.0 = edge_pos;
+                    } else {
+                        edge_index.1 = Some(edge_pos);
+                    }
+                } else {
+                    *edge_index = (edge_pos, None)
+                }
                 args.vertices_edge.push(v0);
                 args.vertices_edge.push(v1);
-            }
-
-            if selected_edge {
-                args.vertices_edge_sel.push(MVertex2D {
-                    pos: pos0,
-                    uv: Vector2::zero(),
-                    //color: Rgba::new(0.5, 0.5, 1.0, 1.0),
-                });
-                args.vertices_edge_sel.push(MVertex2D {
-                    pos: pos1,
-                    uv: Vector2::zero(),
-                    //color: Rgba::new(0.5, 0.5, 1.0, 1.0),
-                });
             }
 
             if edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) {
@@ -1206,24 +1208,11 @@ impl PapercraftContext {
             );
         }
 
-        if args.vertices_edge_sel.len() == 4 {
-            for i in 0 .. 2 {
-                let v0 = &args.vertices_edge_sel[2*i];
-                let v1 = &args.vertices_edge_sel[2*i+1];
-                let vm = MVertex2D {
-                    pos: (v0.pos + v1.pos) / 2.0,
-                    .. *v0
-                };
-                args.vertices_edge_sel.push(vm);
-            }
-        }
-
         if let Some(gl_objs) = &mut self.gl_objs {
             for (d, s) in gl_objs.paper_vertices.iter_mut().zip(args.vertices.into_iter()) {
                 d.set(s);
             }
             gl_objs.paper_vertices_edge.set(args.vertices_edge);
-            gl_objs.paper_vertices_edge_sel.set(args.vertices_edge_sel);
             for (d, s) in gl_objs.paper_vertices_tab.iter_mut().zip(args.vertices_tab.into_iter()) {
                 d.set(s);
             }
@@ -1238,6 +1227,7 @@ impl PapercraftContext {
                     *d = faces_mat_count[usize::from(i_mat)] as u32 + n;
                 }
             }
+            gl_objs.paper_edge_index = args.edge_index;
         }
     }
 
@@ -1246,31 +1236,28 @@ impl PapercraftContext {
             let mut edges_joint = Vec::new();
             let mut edges_cut = Vec::new();
             for (i_edge, edge) in self.papercraft.model().edges() {
-                let selected = self.selected_edge == Some(i_edge);
                 let status = self.papercraft.edge_status(i_edge);
                 if status == paper::EdgeStatus::Hidden {
                     continue;
                 }
                 let cut = matches!(self.papercraft.edge_status(i_edge), paper::EdgeStatus::Cut(_));
-                let color = match (selected, cut) {
-                    (true, false) => Rgba::new(0.0, 0.0, 1.0, 1.0),
-                    (true, true) => Rgba::new(0.5, 0.5, 1.0, 1.0),
-                    (false, false) => Rgba::new(0.0, 0.0, 0.0, 1.0),
-                    (false, true) => Rgba::new(1.0, 1.0, 1.0, 1.0),
-                };
                 let p0 = self.papercraft.model()[edge.v0()].pos();
                 let p1 = self.papercraft.model()[edge.v1()].pos();
 
-                let edges = if cut { &mut edges_cut } else { &mut edges_joint };
-                edges.push(MVertex3DLine { pos: p0, color, top: selected as u8 });
-                edges.push(MVertex3DLine { pos: p1, color, top: selected as u8 });
+                let (edges, color) = if cut {
+                    (&mut edges_cut, Rgba::new(1.0, 1.0, 1.0, 1.0))
+                } else {
+                    (&mut edges_joint, Rgba::new(0.0, 0.0, 0.0, 1.0))
+                };
+                edges.push(MVertex3DLine { pos: p0, color, top: 0 });
+                edges.push(MVertex3DLine { pos: p1, color, top: 0 });
             }
-            gl_objs.vertices_edges_joint.set(edges_joint);
-            gl_objs.vertices_edges_cut.set(edges_cut);
+            gl_objs.vertices_edge_joint.set(edges_joint);
+            gl_objs.vertices_edge_cut.set(edges_cut);
         }
     }
 
-    fn update_face_selection(&mut self) {
+    fn update_selection(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let n = gl_objs.vertices_sel.len();
             for i in 0..n {
@@ -1304,6 +1291,57 @@ impl PapercraftContext {
                     }
                 }
             }
+            if let Some(i_sel_edge) = self.selected_edge {
+                let mut edges_sel = Vec::new();
+                let color = Rgba::new(0.5, 0.5, 1.0, 1.0);
+                let edge = &self.papercraft.model()[i_sel_edge];
+                let p0 = self.papercraft.model()[edge.v0()].pos();
+                let p1 = self.papercraft.model()[edge.v1()].pos();
+                edges_sel.push(MVertex3DLine { pos: p0, color, top: 1 });
+                edges_sel.push(MVertex3DLine { pos: p1, color, top: 1 });
+                gl_objs.vertices_edge_sel.set(edges_sel);
+
+                let pos = gl_objs.paper_edge_index[usize::from(i_sel_edge)].0;
+                let pos = 2 * pos as usize;
+                let mut edge_sel = Vec::with_capacity(6);
+                edge_sel.extend_from_slice(&[
+                    MVertex2D {
+                        pos: gl_objs.paper_vertices_edge[pos].pos,
+                        uv: Vector2::zero(),
+                    },
+                    MVertex2D {
+                        pos: gl_objs.paper_vertices_edge[pos + 1].pos,
+                        uv: Vector2::zero(),
+                    },
+                ]);
+                if let Some(pos) = gl_objs.paper_edge_index[usize::from(i_sel_edge)].1 {
+                    let pos = 2 * pos as usize;
+                    edge_sel.extend_from_slice(&[
+                        MVertex2D {
+                            pos: gl_objs.paper_vertices_edge[pos].pos,
+                            uv: Vector2::zero(),
+                        },
+                        MVertex2D {
+                            pos: gl_objs.paper_vertices_edge[pos + 1].pos,
+                            uv: Vector2::zero(),
+                        },
+                    ]);
+
+                    let link_line = [
+                        MVertex2D {
+                            pos: (edge_sel[0].pos + edge_sel[1].pos) / 2.0,
+                            uv: Vector2::zero(),
+                        },
+                        MVertex2D {
+                            pos: (edge_sel[2].pos + edge_sel[3].pos) / 2.0,
+                            uv: Vector2::zero(),
+                        },
+                    ];
+                    edge_sel.extend_from_slice(&link_line);
+                }
+                gl_objs.paper_vertices_edge_sel.set(edge_sel);
+            }
+
         }
     }
 
@@ -1338,9 +1376,7 @@ impl PapercraftContext {
                 self.selected_face = None;
             }
         }
-        self.paper_build();
-        self.scene_edge_build();
-        self.update_face_selection();
+        self.update_selection();
     }
 
     fn edge_toggle_cut(&mut self, i_edge: paper::EdgeIndex, priority_face: Option<paper::FaceIndex>) {
@@ -1656,11 +1692,17 @@ impl GlobalContext {
 
             gl::LineWidth(1.0);
             gl::Disable(gl::LINE_SMOOTH);
-            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edges_joint, gl::LINES);
+            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_joint, gl::LINES);
 
             gl::LineWidth(3.0);
             gl::Enable(gl::LINE_SMOOTH);
-            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edges_cut, gl::LINES);
+            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_cut, gl::LINES);
+
+            if self.data.selected_edge.is_some() {
+                gl::LineWidth(5.0);
+                gl::Enable(gl::LINE_SMOOTH);
+                gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_sel, gl::LINES);
+            }
         }
     }
 

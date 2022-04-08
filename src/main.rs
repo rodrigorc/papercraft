@@ -8,7 +8,7 @@ use gtk::{
     gdk::{self, EventMask},
 };
 
-use std::{collections::HashMap, ops::ControlFlow, time::Duration, path::Path};
+use std::{collections::HashMap, ops::ControlFlow, time::Duration, path::{Path, PathBuf}};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -40,7 +40,7 @@ fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("view_tabs").unwrap().change_state(&true.to_variant());
 }
 
-fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::PathBuf>>>) {
+fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
@@ -48,12 +48,12 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
 
     let wscene = gtk::GLArea::new();
     let wpaper = gtk::GLArea::new();
-    let w = gtk::ApplicationWindow::new(app);
+    let top_window = gtk::ApplicationWindow::new(app);
 
     let sz_dummy = Vector2::new(1.0, 1.0);
-    let data = PapercraftContext::from_papercraft(Papercraft::empty(), sz_dummy, sz_dummy);
+    let data = PapercraftContext::from_papercraft(Papercraft::empty(), None, sz_dummy, sz_dummy);
     let ctx = GlobalContext {
-        top_window: w.clone(),
+        top_window: top_window.clone(),
         wscene: wscene.clone(),
         wpaper: wpaper.clone(),
         gl_fixs: None,
@@ -69,7 +69,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
     let aopen = gio::SimpleAction::new("open", None);
     app.add_action(&aopen);
     aopen.connect_activate(clone!(
-        @strong w as top_window, @strong app =>
+        @strong  top_window, @strong app =>
         move |_, _| {
             let dlg = gtk::FileChooserDialog::with_buttons(
                 Some("Open model"),
@@ -187,6 +187,24 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
         }
     ));
 
+    let asave = gio::SimpleAction::new("save", None);
+    app.add_action(&asave);
+    asave.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let ctx = ctx.borrow();
+            if let Some(name) = &ctx.data.file_name {
+                ctx.save(name);
+                ctx.set_title(false, Some(&name.display().to_string()));
+                return;
+            }
+            let app = ctx.top_window.application().unwrap().clone();
+            drop(ctx);
+            app.lookup_action("save_as").unwrap().activate(None);
+
+        }
+    ));
+
     let asave_as = gio::SimpleAction::new("save_as", None);
     app.add_action(&asave_as);
     asave_as.connect_activate(clone!(
@@ -225,7 +243,10 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
                 if name.extension().is_none() {
                     name.set_extension("craft");
                 }
-                ctx.borrow().save(name);
+                let mut ctx = ctx.borrow_mut();
+                ctx.save(&name);
+                ctx.set_title(false, Some(&name));
+                ctx.data.file_name = Some(name);
             }
         }
     ));
@@ -300,8 +321,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
         }
     ));
 
-    w.set_default_size(800, 600);
-    w.connect_destroy(clone!(
+    top_window.set_default_size(800, 600);
+    top_window.connect_destroy(clone!(
         @strong app =>
         move |_| {
             app.quit();
@@ -578,7 +599,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
     toolbar.add(&btn);
 
     let vbin = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    w.add(&vbin);
+    top_window.add(&vbin);
 
     vbin.pack_start(&toolbar, false, true, 0);
     vbin.pack_start(&hbin, true, true, 0);
@@ -602,7 +623,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
             let papercraft = Papercraft::load(std::io::Cursor::new(&data[..])).unwrap();
             let w = {
                 let mut ctx = ctx.borrow_mut();
-                ctx.data = PapercraftContext::from_papercraft(papercraft, ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
+                let file_name = f.path();
+                ctx.data = PapercraftContext::from_papercraft(papercraft, file_name.as_deref(), ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
+                ctx.set_title(false, file_name.as_ref());
                 ctx.top_window.clone()
             };
             app_set_default_options(&w.application().unwrap());
@@ -620,7 +643,6 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<std::path::
 
 fn main() {
     std::env::set_var("GTK_CSD", "0");
-    //gtk::init().expect("gtk::init");
 
     let app = gtk::Application::new(None,
         gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE
@@ -632,7 +654,7 @@ fn main() {
         move |_app, dict| {
             dbg!("local_option");
             //It should be a OsString but that gets an \0 at the end that breaks everything
-            let s: Option<std::path::PathBuf> = dict.lookup("import").unwrap();
+            let s: Option<PathBuf> = dict.lookup("import").unwrap();
             *imports.borrow_mut() = dbg!(s);
             -1
         }
@@ -714,6 +736,7 @@ enum MouseMode {
 //Objects that are recreated when a new model is loaded
 struct PapercraftContext {
     // The model
+    file_name: Option<PathBuf>,
     papercraft: Papercraft,
 
     gl_objs: Option<GLObjects>,
@@ -845,10 +868,11 @@ impl PapercraftContext {
         };
         (trans_scene, trans_paper)
     }
-    fn from_papercraft(papercraft: Papercraft, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
+    fn from_papercraft(papercraft: Papercraft, file_name: Option<&Path>, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
         let (trans_scene, trans_paper) = Self::default_transformations(sz_scene, sz_paper);
 
         PapercraftContext {
+            file_name: file_name.map(|f| f.to_owned()),
             papercraft,
             gl_objs: None,
             selected_face: None,
@@ -1602,11 +1626,13 @@ impl PapercraftContext {
 
 impl GlobalContext {
     fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
-        let papercraft = Papercraft::import_waveobj(file_name);
+        let papercraft = Papercraft::import_waveobj(&file_name);
 
         let sz_scene = self.wscene.size_as_vector();
         let sz_paper = self.wpaper.size_as_vector();
-        self.data = PapercraftContext::from_papercraft(papercraft, sz_scene, sz_paper);
+        let file_name = file_name.as_ref().file_name();
+        self.data = PapercraftContext::from_papercraft(papercraft, None, sz_scene, sz_paper);
+        self.set_title(true, file_name);
         self.wscene.queue_render();
         self.wpaper.queue_render();
     }
@@ -1615,6 +1641,18 @@ impl GlobalContext {
         let f = std::fs::File::create(filename).unwrap();
         let f = std::io::BufWriter::new(f);
         self.data.papercraft.save(f).unwrap();
+    }
+
+    fn set_title(&self, unsaved: bool, file_name: Option<impl AsRef<Path>>) {
+        let unsaved = if unsaved { "*" } else { "" };
+        let app_name = "Papercraft";
+        let title = match &file_name {
+            Some(f) =>
+                format!("{unsaved}{} - {app_name}", f.as_ref().display()),
+            None =>
+                format!("{unsaved} - {app_name}"),
+        };
+        self.top_window.set_title(&title);
     }
 
     fn set_scroll_timer(&mut self, tmr: Option<glib::SourceId>) {

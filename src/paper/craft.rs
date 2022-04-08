@@ -346,8 +346,20 @@ impl Papercraft {
         // The island position cannot be updated while iterating
         let mut positions = slotmap::SecondaryMap::<IslandKey, Vector2>::new();
 
-        for (i_island, island) in &self.islands {
-            let bbox = self.island_bounding_box(island);
+        let mut ordered_islands: Vec<_> = self.islands
+            .iter()
+            .map(|(i_island, island)| {
+                let bbox = self.island_bounding_box(island);
+                (i_island, bbox)
+            })
+            .collect();
+        ordered_islands.sort_by_key(|(_, bbox)| {
+            let w = bbox.1.x - bbox.0.x;
+            let h = bbox.1.y - bbox.0.y;
+            -(w * h) as i64
+        });
+
+        for (i_island, bbox) in ordered_islands {
             let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
             pos_x += bbox.1.x - bbox.0.x + 5.0;
             row_height = row_height.max(bbox.1.y - bbox.0.y);
@@ -361,7 +373,7 @@ impl Papercraft {
         }
         for (i_island, pos) in positions {
             let island = self.island_by_key_mut(i_island).unwrap();
-            island.loc = pos;
+            island.loc += pos;
             island.recompute_matrix();
         }
     }

@@ -291,6 +291,19 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
         }
     ));
 
+    let arepack = gio::SimpleAction::new("repack", None);
+    app.add_action(&arepack);
+    arepack.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let mut ctx = ctx.borrow_mut();
+            ctx.data.papercraft.pack_islands();
+            ctx.data.paper_build();
+            ctx.data.update_selection();
+            ctx.wpaper.queue_render();
+        }
+    ));
+
     let atexture = gio::SimpleAction::new_stateful("view_textures", None, &true.to_variant());
     app.add_action(&atexture);
     atexture.connect_change_state(clone!(

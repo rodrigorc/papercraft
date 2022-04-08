@@ -69,6 +69,12 @@
                         <attribute name='action'>app.reset_views</attribute>
                     </item>
                 </section>
+                <section>
+                    <item>
+                        <attribute name='label' translatable='yes'>Repac_k pieces</attribute>
+                        <attribute name='action'>app.repack</attribute>
+                    </item>
+                </section>
             </submenu>
             <submenu>
                 <attribute name='label' translatable='yes'>_View</attribute>

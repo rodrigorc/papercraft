@@ -19,9 +19,9 @@ mod util_3d;
 mod util_gl;
 
 use paper::Papercraft;
-
-use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2, Rgba};
-use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine};
+use glr::Rgba;
+use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
+use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 
 pub trait SizeAsVector {
     fn size_as_vector(&self) -> Vector2;
@@ -714,7 +714,7 @@ struct GLObjects {
 
     //GL objects that are rebuild with the model
     vertices: Vec<glr::DynamicVertexArray<MVertex3D>>,
-    vertices_sel: glr::DynamicVertexArray<MStatus>,
+    vertices_sel: glr::DynamicVertexArray<MStatus3D>,
     vertices_edge_joint: glr::DynamicVertexArray<MVertex3DLine>,
     vertices_edge_cut: glr::DynamicVertexArray<MVertex3DLine>,
     vertices_edge_sel: glr::DynamicVertexArray<MVertex3DLine>,
@@ -725,7 +725,7 @@ struct GLObjects {
     face_index: Vec<u32>,
 
     paper_vertices: Vec<glr::DynamicVertexArray<MVertex2D>>,
-    paper_vertices_sel: glr::DynamicVertexArray<MStatus>,
+    paper_vertices_sel: glr::DynamicVertexArray<MStatus2D>,
     paper_vertices_edge: glr::DynamicVertexArray<MVertex2DLine>,
     paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
     paper_vertices_tab: Vec<glr::DynamicVertexArray<MVertex2DColor>>,
@@ -978,7 +978,7 @@ impl PapercraftContext {
             let vertices_edge_sel = glr::DynamicVertexArray::new();
 
             let paper_vertices = std::iter::repeat_with(glr::DynamicVertexArray::new).take(self.papercraft.model().num_textures()).collect();
-            let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * self.papercraft.model().num_faces()]);
+            let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * self.papercraft.model().num_faces()]);
             let paper_vertices_edge = glr::DynamicVertexArray::new();
             let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
             let paper_vertices_tab = std::iter::repeat_with(glr::DynamicVertexArray::new).take(self.papercraft.model().num_textures()).collect();
@@ -1272,8 +1272,8 @@ impl PapercraftContext {
                 } else {
                     (&mut edges_joint, Rgba::new(0.0, 0.0, 0.0, 1.0))
                 };
-                edges.push(MVertex3DLine { pos: p0, color, top: 0 });
-                edges.push(MVertex3DLine { pos: p1, color, top: 0 });
+                edges.push(MVertex3DLine { pos: p0, color });
+                edges.push(MVertex3DLine { pos: p1, color });
             }
             gl_objs.vertices_edge_joint.set(edges_joint);
             gl_objs.vertices_edge_cut.set(edges_cut);
@@ -1285,7 +1285,7 @@ impl PapercraftContext {
             let n = gl_objs.vertices_sel.len();
             for i in 0..n {
                 gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
-                gl_objs.paper_vertices_sel[i] = MSTATUS_UNSEL;
+                gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_UNSEL.color };
             }
             for &sel_island in &self.selected_islands {
                 if let Some(island) = self.papercraft.island_by_key(sel_island) {
@@ -1296,7 +1296,7 @@ impl PapercraftContext {
                         }
                         let pos = 3 * gl_objs.paper_face_index[usize::from(i_face_2)];
                         for i in pos .. pos + 3 {
-                            gl_objs.paper_vertices_sel[i as usize] = MSTATUS_SEL;
+                            gl_objs.paper_vertices_sel[i as usize] = MStatus2D { color: MSTATUS_SEL.color };
                         }
                         ControlFlow::Continue(())
                     });
@@ -1310,7 +1310,7 @@ impl PapercraftContext {
                     }
                     let pos = 3 * gl_objs.paper_face_index[usize::from(i_face_2)];
                     for i in pos .. pos + 3 {
-                        gl_objs.paper_vertices_sel[i as usize] = MSTATUS_HI;
+                        gl_objs.paper_vertices_sel[i as usize] = MStatus2D { color: MSTATUS_HI.color };
                     }
                 }
             }
@@ -1320,8 +1320,8 @@ impl PapercraftContext {
                 let edge = &self.papercraft.model()[i_sel_edge];
                 let p0 = self.papercraft.model()[edge.v0()].pos();
                 let p1 = self.papercraft.model()[edge.v1()].pos();
-                edges_sel.push(MVertex3DLine { pos: p0, color, top: 1 });
-                edges_sel.push(MVertex3DLine { pos: p1, color, top: 1 });
+                edges_sel.push(MVertex3DLine { pos: p0, color });
+                edges_sel.push(MVertex3DLine { pos: p1, color });
                 gl_objs.vertices_edge_sel.set(edges_sel);
 
                 let pos = gl_objs.paper_edge_index[usize::from(i_sel_edge)].0;
@@ -1700,11 +1700,12 @@ impl GlobalContext {
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
-        let u = Uniforms3D {
+        let mut u = Uniforms3D {
             m: self.data.trans_scene.persp * self.data.trans_scene.obj,
             mnormal: self.data.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
-            texture: 0,
+            tex: 0,
+            line_top: 0,
         };
 
         unsafe {
@@ -1738,6 +1739,7 @@ impl GlobalContext {
             if self.data.selected_edge.is_some() {
                 gl::LineWidth(5.0);
                 gl::Enable(gl::LINE_SMOOTH);
+                u.line_top = 1;
                 gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_sel, gl::LINES);
             }
         }
@@ -1750,10 +1752,9 @@ impl GlobalContext {
 
         let mut u = Uniforms2D {
             m: self.data.trans_paper.ortho * self.data.trans_paper.mx,
-            texture: 0,
+            tex: 0,
             frac_dash: 0.5,
-            //color is for the lines, faces have the color in the status buffer
-            color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+            line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
         };
 
         unsafe {
@@ -1795,7 +1796,7 @@ impl GlobalContext {
             if self.data.selected_edge.is_some() {
                 gl::Enable(gl::LINE_SMOOTH);
                 gl::LineWidth(5.0);
-                u.color = Rgba::new(0.5, 0.5, 1.0, 1.0);
+                u.line_color = Rgba::new(0.5, 0.5, 1.0, 1.0);
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
         }
@@ -1838,9 +1839,9 @@ impl GlobalContext {
                 let mt = Matrix3::from_translation(Vector2::new(-page_size_mm.x / 2.0, -page_size_mm.y / 2.0));
                 let u = Uniforms2D {
                     m: ortho * mt,
-                    texture: 0,
+                    tex: 0,
                     frac_dash: 0.5,
-                    color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+                    line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                 };
 
                 gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());

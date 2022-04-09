@@ -49,21 +49,6 @@ impl Plane {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
-pub struct Rgba {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
-}
-
-impl Rgba {
-    pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Rgba {
-        Rgba { r, g, b, a }
-    }
-}
-
 // Each returned tuple is a triangle of indices into the original vector
 pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
     if ps.len() < 3 {

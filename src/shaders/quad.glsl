@@ -1,4 +1,4 @@
-#version 150
+#version 140
 
 in vec2 pos;
 
@@ -8,7 +8,7 @@ void main(void) {
 
 ###
 
-#version 150
+#version 140
 
 uniform vec4 color;
 out vec4 out_frag_color;

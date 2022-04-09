@@ -1,4 +1,4 @@
-#version 150
+#version 140
 
 uniform mat3 m;
 in vec2 pos;
@@ -13,9 +13,9 @@ void main(void) {
 
 ###
 
-#version 150
+#version 140
 
-uniform vec4 color;
+uniform vec4 line_color;
 uniform float frac_dash;
 
 in float v_line_dash;
@@ -23,5 +23,5 @@ out vec4 out_frag_color;
 
 void main(void) {
     float alpha = 1.0 - step(frac_dash, mod(v_line_dash, 1.0));
-    out_frag_color = vec4(color.rgb, color.a * alpha);
+    out_frag_color = vec4(line_color.rgb, line_color.a * alpha);
 }

@@ -1,13 +1,14 @@
-#version 150
+#version 140
 
 uniform mat4 m;
 uniform mat3 mnormal;
-
 uniform vec3 lights[2];
+
 in vec3 pos;
 in vec3 normal;
 in vec2 uv;
 in vec4 color;
+in int top;
 
 out vec2 v_uv;
 out float v_light;
@@ -25,14 +26,14 @@ void main(void) {
     v_light = light;
     v_uv = uv;
     v_color = color;
-    if (color.a != 0.0) {
+    if (top != 0.0) {
         gl_Position.z = 0.0;
     }
 }
 
 ###
 
-#version 150
+#version 140
 
 uniform sampler2D tex;
 

@@ -240,6 +240,21 @@ impl Shader {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct Rgba {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
+impl Rgba {
+    pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Rgba {
+        Rgba { r, g, b, a }
+    }
+}
+
 #[derive(Debug)]
 pub struct Uniform {
     name: String,
@@ -344,7 +359,7 @@ unsafe impl AttribField for i32 {
         (1, gl::INT)
     }
 }
-unsafe impl AttribField for crate::Rgba {
+unsafe impl AttribField for Rgba {
     fn detail() -> (usize, GLenum) {
         (4, gl::FLOAT)
     }
@@ -387,11 +402,11 @@ macro_rules! attrib {
                 )*
             }
             unsafe impl crate::glr::AttribProvider for $name {
-                fn apply(a: &glr::Attribute) -> Option<(usize, gl::types::GLenum, usize)> {
+                fn apply(a: &crate::glr::Attribute) -> Option<(usize, gl::types::GLenum, usize)> {
                     let name = a.name();
                     $(
                         if name == stringify!($f) {
-                            let (n, t) = <$ft as glr::AttribField>::detail();
+                            let (n, t) = <$ft as crate::glr::AttribField>::detail();
                             return Some((n, t, memoffset::offset_of!($name, $f)));
                         }
                     )*
@@ -400,6 +415,101 @@ macro_rules! attrib {
             }
         )*
     }
+}
+
+pub unsafe trait UniformField {
+    fn apply(&self, count: i32, location: GLint);
+}
+
+unsafe impl UniformField for cgmath::Matrix4<f32> {
+    fn apply(&self, count: i32, location: GLint) {
+        unsafe {
+            gl::UniformMatrix4fv(location, count, gl::FALSE, &self[0][0]);
+        }
+    }
+}
+
+unsafe impl UniformField for cgmath::Matrix3<f32> {
+    fn apply(&self, count: i32, location: GLint) {
+        unsafe {
+            gl::UniformMatrix3fv(location, count, gl::FALSE, &self[0][0]);
+        }
+    }
+}
+
+unsafe impl UniformField for cgmath::Vector3<f32> {
+    fn apply(&self, count: i32, location: GLint) {
+        unsafe {
+            gl::Uniform3fv(location, count, &self[0]);
+        }
+    }
+}
+
+unsafe impl UniformField for i32 {
+    fn apply(&self, count: i32, location: GLint) {
+        unsafe {
+            gl::Uniform1iv(location, count, self);
+        }
+    }
+}
+
+unsafe impl UniformField for f32 {
+    fn apply(&self, count: i32, location: GLint) {
+        unsafe {
+            gl::Uniform1fv(location, count, self);
+        }
+    }
+}
+
+unsafe impl UniformField for Rgba {
+    fn apply(&self, count: i32, location: GLint) {
+        unsafe {
+            gl::Uniform4fv(location, count, &self.r);
+        }
+    }
+}
+
+unsafe impl<T: UniformField, const N: usize> UniformField for [T; N] {
+    fn apply(&self, count: i32, location: GLint) {
+        T::apply(&self[0], count * N as i32, location);
+    }
+}
+
+
+#[macro_export]
+macro_rules! uniform {
+    (
+        $(
+            $(#[$a:meta])* $v:vis struct $name:ident {
+                $(
+                    $fv:vis $f:ident : $ft:tt
+                ),*
+                $(,)?
+            }
+        )*
+    ) => {
+        $(
+            $(#[$a])* $v struct $name {
+                $(
+                    $fv $f: $ft ,
+                )*
+            }
+            impl crate::glr::UniformProvider for $name {
+                fn apply(&self, u: &crate::glr::Uniform) {
+                    let name = u.name();
+                    $(
+                        if name == crate::uniform!{ @NAME $f: $ft }  {
+                            <$ft as crate::glr::UniformField>::apply(&self.$f, 1, u.location());
+                            return;
+                        }
+                    )*
+                    dbg!(name);
+                }
+            }
+        )*
+    };
+    (@NAME $f:ident : [ $ft:ty; $n:literal ]) => { concat!(stringify!($f), "[0]") };
+    (@NAME $f:ident : $ft:ty) => { stringify!($f) };
 }
 
 impl<A0: AttribProviderList, A1: AttribProviderList> AttribProviderList for (A0, A1) {

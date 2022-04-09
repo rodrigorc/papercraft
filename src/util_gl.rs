@@ -68,6 +68,7 @@ pub struct Uniforms2D {
     pub m: Matrix3,
     pub texture: i32,
     pub frac_dash: f32,
+    pub color: Rgba,
 }
 
 impl glr::UniformProvider for Uniforms2D {
@@ -86,6 +87,11 @@ impl glr::UniformProvider for Uniforms2D {
             "tex" => {
                 unsafe {
                     gl::Uniform1i(u.location(), 0);
+                }
+            }
+            "color" => {
+                unsafe {
+                    gl::Uniform4fv(u.location(), 1, &self.color.r);
                 }
             }
             _ => {}
@@ -120,6 +126,12 @@ crate::attrib! {
         pub pos: Vector2,
         pub uv: Vector2,
         pub color: Rgba,
+    }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MVertex2DLine {
+        pub pos: Vector2,
+        pub line_dash: f32,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]

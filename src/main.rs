@@ -21,7 +21,7 @@ mod util_gl;
 use paper::Papercraft;
 
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2, Rgba};
-use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor};
+use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine};
 
 pub trait SizeAsVector {
     fn size_as_vector(&self) -> Vector2;
@@ -726,10 +726,10 @@ struct GLObjects {
 
     paper_vertices: Vec<glr::DynamicVertexArray<MVertex2D>>,
     paper_vertices_sel: glr::DynamicVertexArray<MStatus>,
-    paper_vertices_edge: glr::DynamicVertexArray<MVertex2D>,
-    paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices_edge: glr::DynamicVertexArray<MVertex2DLine>,
+    paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
     paper_vertices_tab: Vec<glr::DynamicVertexArray<MVertex2DColor>>,
-    paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2D>,
+    paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2DLine>,
 
     // Similar to face_index but for paper_vertices
     paper_face_index: Vec<u32>,
@@ -838,9 +838,9 @@ enum ClickResult {
 
 struct PaperDrawFaceArgs {
     vertices: Vec<Vec<MVertex2D>>,
-    vertices_edge: Vec<MVertex2D>,
+    vertices_edge: Vec<MVertex2DLine>,
     vertices_tab: Vec<Vec<MVertex2DColor>>,
-    vertices_tab_edge: Vec<MVertex2D>,
+    vertices_tab_edge: Vec<MVertex2DLine>,
     face_index: Vec<(paper::MaterialIndex, u32)>,
     edge_index: Vec<(u32, Option<u32>)>,
 }
@@ -1081,23 +1081,23 @@ impl PapercraftContext {
                     false
                 };
                 let v = pos1 - pos0;
-                let mut v0 = MVertex2D {
+                let mut v0 = MVertex2DLine {
                     pos: pos0,
-                    uv: Vector2::zero(),
+                    line_dash: 0.0,
                 };
-                let mut v1 = MVertex2D {
+                let mut v1 = MVertex2DLine {
                     pos: pos1,
-                    uv: Vector2::zero(),
+                    line_dash: 0.0,
                 };
                 if false && edge_status == paper::EdgeStatus::Joined {
                     let vn = v.normalize_to(0.01);
                     v0.pos -= vn;
                     v1.pos += vn;
                     let x = (0.015 / 2.0) / v.magnitude();
-                    v0.uv.x = 0.5 - x;
-                    v1.uv.x = 1.0 + x;
+                    v0.line_dash = 0.5 - x;
+                    v1.line_dash = 1.0 + x;
                 } else if dotted {
-                    v1.uv.x = v.magnitude();
+                    v1.line_dash = v.magnitude();
                 }
                 let edge_pos = args.vertices_edge.len() as u32 / 2;
                 let edge_index = &mut args.edge_index[usize::from(i_edge)];
@@ -1147,25 +1147,21 @@ impl PapercraftContext {
                     let v_1 = v * (tab_h_1 / v_len);
                     let n = Vector2::new(-v_0.y, v_0.x) / tan_0;
                     let mut p = [
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: pos0,
-                            uv: Vector2::zero(),
-                            //color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+                            line_dash: 0.0,
                         },
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: pos0 + n + v_0,
-                            uv: Vector2::zero(),
-                            //color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+                            line_dash: 0.0,
                         },
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: pos1 + n - v_1,
-                            uv: Vector2::zero(),
-                            //color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+                            line_dash: 0.0,
                         },
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: pos1,
-                            uv: Vector2::zero(),
-                            //color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+                            line_dash: 0.0,
                         },
                     ];
                     let p = if just_one_tri {
@@ -1194,36 +1190,26 @@ impl PapercraftContext {
                     // mxx do both convertions at once
                     let mxx = Matrix3::from(mx_basis) * mx_b_inv;
 
-                    for px in p.iter_mut() {
+                    let uvs: Vec<Vector2> = p.iter().map(|px| {
                         //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
                         let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
                         let uv0 = vs_b[0].0.uv();
                         let uv1 = vs_b[1].0.uv();
                         let uv2 = vs_b[2].0.uv();
-                        px.uv = uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0);
-                    }
+                        uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
+                    }).collect();
 
                     let vs_tab = &mut args.vertices_tab[usize::from(face_b.material())];
                     if just_one_tri {
-                        vs_tab.extend(p[..3]
-                            .iter()
-                            .zip([
-                                Rgba::new(1.0, 1.0, 1.0, 0.0),
-                                Rgba::new(1.0, 1.0, 1.0, 1.0),
-                                Rgba::new(1.0, 1.0, 1.0, 0.0)
-                            ])
-                            .map(|(v, color)| MVertex2DColor {
-                                pos: v.pos,
-                                uv: v.uv,
-                                color,
-                            }
-                        ));
+                        vs_tab.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], color: Rgba::new(1.0, 1.0, 1.0, 0.0)});
+                        vs_tab.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], color: Rgba::new(1.0, 1.0, 1.0, 1.0)});
+                        vs_tab.push(MVertex2DColor { pos: p[2].pos, uv: uvs[2], color: Rgba::new(1.0, 1.0, 1.0, 0.0)});
                     } else {
                         let pp = [
-                            MVertex2DColor { pos: p[0].pos, uv: p[0].uv, color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
-                            MVertex2DColor { pos: p[1].pos, uv: p[1].uv, color: Rgba::new(1.0, 1.0, 1.0, 1.0) },
-                            MVertex2DColor { pos: p[2].pos, uv: p[2].uv, color: Rgba::new(1.0, 1.0, 1.0, 1.0) },
-                            MVertex2DColor { pos: p[3].pos, uv: p[3].uv, color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
+                            MVertex2DColor { pos: p[0].pos, uv: uvs[0], color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
+                            MVertex2DColor { pos: p[1].pos, uv: uvs[1], color: Rgba::new(1.0, 1.0, 1.0, 1.0) },
+                            MVertex2DColor { pos: p[2].pos, uv: uvs[2], color: Rgba::new(1.0, 1.0, 1.0, 1.0) },
+                            MVertex2DColor { pos: p[3].pos, uv: uvs[3], color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
                         ];
                         vs_tab.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
                     }
@@ -1342,36 +1328,36 @@ impl PapercraftContext {
                 let pos = 2 * pos as usize;
                 let mut edge_sel = Vec::with_capacity(6);
                 edge_sel.extend_from_slice(&[
-                    MVertex2D {
+                    MVertex2DLine {
                         pos: gl_objs.paper_vertices_edge[pos].pos,
-                        uv: Vector2::zero(),
+                        line_dash: 0.0,
                     },
-                    MVertex2D {
+                    MVertex2DLine {
                         pos: gl_objs.paper_vertices_edge[pos + 1].pos,
-                        uv: Vector2::zero(),
+                        line_dash: 0.0,
                     },
                 ]);
                 if let Some(pos) = gl_objs.paper_edge_index[usize::from(i_sel_edge)].1 {
                     let pos = 2 * pos as usize;
                     edge_sel.extend_from_slice(&[
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: gl_objs.paper_vertices_edge[pos].pos,
-                            uv: Vector2::zero(),
+                            line_dash: 0.0,
                         },
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: gl_objs.paper_vertices_edge[pos + 1].pos,
-                            uv: Vector2::zero(),
+                            line_dash: 0.0,
                         },
                     ]);
 
                     let link_line = [
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: (edge_sel[0].pos + edge_sel[1].pos) / 2.0,
-                            uv: Vector2::zero(),
+                            line_dash: 0.0,
                         },
-                        MVertex2D {
+                        MVertex2DLine {
                             pos: (edge_sel[2].pos + edge_sel[3].pos) / 2.0,
-                            uv: Vector2::zero(),
+                            line_dash: 0.0,
                         },
                     ];
                     edge_sel.extend_from_slice(&link_line);
@@ -1762,10 +1748,12 @@ impl GlobalContext {
         let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = self.gl_fixs.as_ref().unwrap();
 
-        let u = Uniforms2D {
+        let mut u = Uniforms2D {
             m: self.data.trans_paper.ortho * self.data.trans_paper.mx,
             texture: 0,
             frac_dash: 0.5,
+            //color is for the lines, faces have the color in the status buffer
+            color: Rgba::new(0.0, 0.0, 0.0, 1.0),
         };
 
         unsafe {
@@ -1793,8 +1781,6 @@ impl GlobalContext {
                 vi += verts.len();
             }
 
-            gl::VertexAttrib4f(gl_fixs.prg_paper_line.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 1.0);
-
             // Line Tabs
             gl::Disable(gl::LINE_SMOOTH);
             gl::LineWidth(1.0);
@@ -1809,7 +1795,7 @@ impl GlobalContext {
             if self.data.selected_edge.is_some() {
                 gl::Enable(gl::LINE_SMOOTH);
                 gl::LineWidth(5.0);
-                gl::VertexAttrib4f(gl_fixs.prg_paper_line.attrib_by_name("color").unwrap().location() as u32, 0.5, 0.5, 1.0, 1.0);
+                u.color = Rgba::new(0.5, 0.5, 1.0, 1.0);
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
         }
@@ -1854,13 +1840,13 @@ impl GlobalContext {
                     m: ortho * mt,
                     texture: 0,
                     frac_dash: 0.5,
+                    color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                 };
 
                 gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
                 gl::ActiveTexture(gl::TEXTURE0);
 
                 gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
-
 
                 for ((verts, verts_tab), tex) in gl_objs.paper_vertices.iter().zip(&gl_objs.paper_vertices_tab).zip(&gl_objs.textures) {
                     gl::BindTexture(gl::TEXTURE_2D, if self.data.show_textures { tex.id() } else { gl_objs.textures.last().unwrap().id() });
@@ -1872,7 +1858,7 @@ impl GlobalContext {
                         gl_fixs.prg_paper_solid.draw(&u, verts_tab, gl::TRIANGLES);
                     }
                 }
-                gl::VertexAttrib4f(gl_fixs.prg_paper_line.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 1.0);
+
                 // Line Tabs
                 gl::Enable(gl::LINE_SMOOTH);
                 gl::LineWidth(1.0);

@@ -52,6 +52,8 @@ crate::attrib! {
     pub struct MVertex2DLine {
         pub pos: Vector2,
         pub line_dash: f32,
+        pub width_left: f32,
+        pub width_right: f32,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -81,7 +83,17 @@ pub fn program_from_source(shaders: &str) -> glr::Program {
     let vertex = &shaders[.. split];
     let frag = &shaders[split ..];
     let split_2 = frag.find('\n').unwrap();
-    let frag = &frag[split_2 ..];
 
-    glr::Program::from_source(vertex, frag).unwrap()
+    let mut frag = &frag[split_2 ..];
+
+    let geom = if let Some(split) = frag.find("###") {
+        let geom = &frag[split ..];
+        frag = &frag[.. split];
+        let split_2 = geom.find('\n').unwrap();
+        Some(&geom[split_2 ..])
+    } else {
+        None
+    };
+
+    glr::Program::from_source(vertex, frag, geom).unwrap()
 }

@@ -1,4 +1,6 @@
-use std::{ffi::CString, cell::Cell};
+#![allow(dead_code)]
+
+use std::{ffi::CString, cell::Cell, marker::PhantomData};
 
 use gl::types::*;
 use smallvec::SmallVec;
@@ -88,11 +90,14 @@ impl Drop for Program {
 }
 
 impl Program {
-    pub fn from_source(vertex: &str, fragment: &str) -> Result<Program> {
+    pub fn from_source(vertex: &str, fragment: &str, geometry: Option<&str>) -> Result<Program> {
         unsafe {
             let vsh = Shader::compile(gl::VERTEX_SHADER, vertex)?;
             let fsh = Shader::compile(gl::FRAGMENT_SHADER, fragment)?;
-
+            let gsh = match geometry {
+                Some(source) => Some(Shader::compile(gl::GEOMETRY_SHADER, source)?),
+                None => None,
+            };
             let id = gl::CreateProgram();
             if id == 0 {
                 return Err(Error);
@@ -104,6 +109,9 @@ impl Program {
             };
             gl::AttachShader(prg.id, vsh.id);
             gl::AttachShader(prg.id, fsh.id);
+            if let Some(id) = gsh {
+                gl::AttachShader(prg.id, id.id);
+            }
             gl::LinkProgram(prg.id);
 
             let mut st = 0;
@@ -531,7 +539,6 @@ pub struct DynamicVertexArray<A> {
 }
 
 impl<A: AttribProvider> DynamicVertexArray<A> {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::from(Vec::new())
     }
@@ -542,7 +549,6 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
         self.dirty.set(true);
         self.data = data.into();
     }
-    #[allow(dead_code)]
     pub fn data(&self) -> &[A] {
         &self.data[..]
     }
@@ -714,20 +720,30 @@ impl Renderbuffer {
     pub fn id(&self) -> u32 {
         self.id
     }
-    pub fn bind(&self, target: GLenum) -> BinderRenderbufer {
-        unsafe {
-            gl::BindRenderbuffer(target, self.id);
-        }
-        BinderRenderbufer(target)
-    }
 }
 
-pub struct BinderRenderbufer(GLenum);
+pub struct BinderRenderbuffer(());
 
-impl Drop for BinderRenderbufer {
+impl BinderRenderbuffer {
+    pub fn bind(rb: &Renderbuffer) -> BinderRenderbuffer {
+        unsafe {
+            gl::BindRenderbuffer(gl::RENDERBUFFER, rb.id);
+        }
+        BinderRenderbuffer(())
+    }
+    pub fn target(&self) -> GLenum {
+        gl::RENDERBUFFER
+    }
+    pub fn rebind(&self, rb: &Renderbuffer) {
+        unsafe {
+            gl::BindRenderbuffer(gl::RENDERBUFFER, rb.id);
+        }
+    }
+}
+impl Drop for BinderRenderbuffer {
     fn drop(&mut self) {
         unsafe {
-            gl::BindRenderbuffer(self.0, 0);
+            gl::BindRenderbuffer(gl::RENDERBUFFER, 0);
         }
     }
 }
@@ -757,21 +773,70 @@ impl Framebuffer {
     pub fn id(&self) -> u32 {
         self.id
     }
-    pub fn bind(&self, target: GLenum) -> BinderFramebufer {
+}
+
+
+pub trait BinderFBOTarget {
+    const TARGET: GLenum;
+    const GET_BINDING: GLenum;
+}
+
+pub struct BinderFramebuffer<TGT: BinderFBOTarget>(u32, PhantomData<TGT>);
+
+impl<TGT: BinderFBOTarget> BinderFramebuffer<TGT> {
+    pub fn new() -> Self {
+        let mut id = 0;
         unsafe {
-            gl::BindFramebuffer(target, self.id);
+            gl::GetIntegerv(TGT::GET_BINDING, &mut id);
         }
-        BinderFramebufer(target)
+        BinderFramebuffer(id as u32, PhantomData)
+    }
+    pub fn target(&self) -> GLenum {
+        TGT::TARGET
+    }
+    pub fn bind(rb: &Framebuffer) -> Self {
+        unsafe {
+            gl::BindFramebuffer(TGT::TARGET, rb.id);
+        }
+        BinderFramebuffer(0, PhantomData)
+    }
+    pub fn rebind(&self, rb: &Framebuffer) {
+        unsafe {
+            gl::BindFramebuffer(TGT::TARGET, rb.id);
+        }
     }
 }
 
-pub struct BinderFramebufer(GLenum);
-
-impl Drop for BinderFramebufer {
+impl<TGT: BinderFBOTarget> Drop for BinderFramebuffer<TGT> {
     fn drop(&mut self) {
         unsafe {
-            gl::BindFramebuffer(self.0, 0);
+            gl::BindFramebuffer(TGT::TARGET, self.0);
         }
     }
 }
 
+pub struct BinderFBODraw;
+
+impl BinderFBOTarget for BinderFBODraw {
+    const TARGET: GLenum = gl::DRAW_FRAMEBUFFER;
+    const GET_BINDING: GLenum = gl::DRAW_FRAMEBUFFER_BINDING;
+}
+
+pub type BinderDrawFramebuffer = BinderFramebuffer<BinderFBODraw>;
+
+pub struct BinderFBORead;
+
+impl BinderFBOTarget for BinderFBORead {
+    const TARGET: GLenum = gl::READ_FRAMEBUFFER;
+    const GET_BINDING: GLenum = gl::READ_FRAMEBUFFER_BINDING;
+}
+
+pub type BinderReadFramebuffer = BinderFramebuffer<BinderFBORead>;
+
+pub fn max_multisamples(target: GLenum, internalformat: GLenum) -> GLint {
+    unsafe {
+        let mut samples = 0;
+        gl::GetInternalformativ(target, internalformat, gl::SAMPLES, 1, &mut samples);
+        samples
+    }
+}

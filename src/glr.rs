@@ -219,6 +219,7 @@ impl Shader {
         unsafe {
             let id = gl::CreateShader(ty);
             if id == 0 {
+                dbg!(gl::GetError());
                 return Err(Error);
             }
             let sh = Shader{id};
@@ -315,6 +316,8 @@ pub trait AttribProviderList {
     fn bind(&self, p: &Program) -> Self::KeepType;
 }
 
+// This is quite inefficient, but easy to use
+#[cfg(xxx)]
 impl<A: AttribProvider> AttribProviderList for &[A] {
     type KeepType = (Buffer, SmallVec<[EnablerVertexAttribArray; 8]>);
 
@@ -535,6 +538,7 @@ impl<A0: AttribProviderList, A1: AttribProviderList> AttribProviderList for (A0,
 pub struct DynamicVertexArray<A> {
     data: Vec<A>,
     buf: Buffer,
+    buf_len: Cell<usize>,
     dirty: Cell<bool>,
 }
 
@@ -559,10 +563,26 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
         }
     }
     pub fn bind_buffer(&self) {
+        if self.data.is_empty() {
+            return;
+        }
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.buf.id());
             if self.dirty.get() {
-                gl::BufferData(gl::ARRAY_BUFFER, (std::mem::size_of::<A>() * self.len()) as isize, self.data.as_ptr() as *const A as *const _, gl::DYNAMIC_DRAW);
+                if self.data.len() > self.buf_len.get() {
+                    gl::BufferData(gl::ARRAY_BUFFER,
+                        (std::mem::size_of::<A>() * self.data.len()) as isize,
+                        self.data.as_ptr() as *const A as *const _,
+                        gl::DYNAMIC_DRAW
+                    );
+                    self.buf_len.set(self.data.len());
+                } else {
+                    gl::BufferSubData(gl::ARRAY_BUFFER,
+                        0,
+                        (std::mem::size_of::<A>() * self.data.len()) as isize,
+                        self.data.as_ptr() as *const A as *const _
+                    );
+                }
                 self.dirty.set(false);
             }
         }
@@ -574,6 +594,7 @@ impl<A: AttribProvider > From<Vec<A>> for DynamicVertexArray<A> {
         DynamicVertexArray {
             data,
             buf: Buffer::generate().unwrap(),
+            buf_len: Cell::new(0),
             dirty: Cell::new(true),
         }
     }

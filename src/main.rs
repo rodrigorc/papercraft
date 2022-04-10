@@ -34,7 +34,7 @@ const CREASE_LINE_WIDTH: f32 = 0.05;
 const LINE_SEL_WIDTH: f32 = 5.0;
 
 // In PPI
-const PDF_RESOLUTION: f32 = 600.0;
+const PDF_RESOLUTION: f32 = 300.0;
 
 pub trait SizeAsVector {
     fn size_as_vector(&self) -> Vector2;
@@ -174,7 +174,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             );
             dlg.set_current_folder(".");
             let filter = gtk::FileFilter::new();
-            filter.set_name(Some("Craft models"));
+            filter.set_name(Some("PDF files"));
             filter.add_pattern("*.pdf");
             dlg.add_filter(&filter);
             let filter = gtk::FileFilter::new();
@@ -478,16 +478,22 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             let mut ctx = ctx.borrow_mut();
             ctx.data.trans_paper.ortho = util_3d::ortho2d(width as f32, height as f32);
             ctx.wpaper.make_current();
-            let gl_fixs = ctx.gl_fixs.as_ref().unwrap();
-            let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
+            let gl_fixs = ctx.gl_fixs.as_mut().unwrap();
+
             let rbo = gl_fixs.rbo_paper.as_ref().unwrap();
-            let fb_binder = BinderDrawFramebuffer::new();
-            fb_binder.rebind(&fbo);
-            unsafe {
-                let rb_binder = BinderRenderbuffer::bind(&rbo);
-                let samples = glr::max_multisamples(rb_binder.target(), gl::RGBA8);
-                gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, width, height);
-                gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rbo.id());
+            let rb_binder = BinderRenderbuffer::bind(&rbo);
+            let multisamples = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::RGBA8, width, height);
+            if multisamples.is_some() {
+                let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
+                let fb_binder = BinderDrawFramebuffer::new();
+                fb_binder.rebind(&fbo);
+                unsafe {
+                    gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rbo.id());
+                }
+            } else {
+                println!("Disable multisample!");
+                gl_fixs.fbo_paper = None;
+                gl_fixs.rbo_paper = None;
             }
         }
     ));
@@ -681,7 +687,12 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
 }
 
 fn main() {
-    std::env::set_var("GTK_CSD", "0");
+    if cfg!(windows) {
+        // If you have this variable in Windows (Wine?) it will break the GSchemas
+        std::env::set_var("XDG_DATA_DIRS", "");
+        // The CSD is Windows is a bad idea
+        std::env::set_var("GTK_CSD", "0");
+    }
 
     let app = gtk::Application::new(None,
         gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE
@@ -1849,9 +1860,13 @@ impl GlobalContext {
         let height = alloc.height();
 
         unsafe {
-            let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
-            let draw_fb_binder = BinderDrawFramebuffer::new();
-            draw_fb_binder.rebind(&fbo);
+             let mut draw_fb_binder = if let Some(fbo) = &gl_fixs.fbo_paper {
+                let binder = BinderDrawFramebuffer::new();
+                binder.rebind(&fbo);
+                Some(binder)
+            } else {
+                None
+            };
 
             gl::ClearColor(0.7, 0.7, 0.7, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
@@ -1897,9 +1912,11 @@ impl GlobalContext {
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
 
-            drop(draw_fb_binder);
-            let _read_fb_binder = BinderReadFramebuffer::bind(&fbo);
-            gl::BlitFramebuffer(0, 0, width, height, 0, 0, width, height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+            if draw_fb_binder.take().is_some() { // check and drop
+                let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
+                let _read_fb_binder = BinderReadFramebuffer::bind(&fbo);
+                gl::BlitFramebuffer(0, 0, width, height, 0, 0, width, height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+            }
         }
     }
 
@@ -1921,8 +1938,13 @@ impl GlobalContext {
             let rbo = glr::Renderbuffer::generate().unwrap();
             let rb_binder = BinderRenderbuffer::bind(&rbo);
 
-            let samples = glr::max_multisamples(rb_binder.target(), gl::RGBA8);
-            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+
+            let samples = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+            if samples.is_none() {
+                println!("No multisample!");
+                gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+            }
+
             gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rbo.id());
 
             gl::ClearColor(1.0, 1.0, 1.0, 0.0);
@@ -1979,21 +2001,23 @@ impl GlobalContext {
             }
             // End render
 
-            // Now copy the multisampled buffer into a regular one that can be read back to user memory
             let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
+            let rb2;
+            let fb2;
+            if samples.is_some() {
+                // multisample buffers cannot be read directly, it has to be copied to a regular one.
+                rb2 = glr::Renderbuffer::generate().unwrap();
+                rb_binder.rebind(&rb2);
+                gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
 
-            let rb2 = glr::Renderbuffer::generate().unwrap();
-            rb_binder.rebind(&rb2);
-            gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                fb2 = glr::Framebuffer::generate().unwrap();
+                draw_fb_binder.rebind(&fb2);
+                gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rb2.id());
 
-            let fb2 = glr::Framebuffer::generate().unwrap();
-            draw_fb_binder.rebind(&fb2);
+                gl::BlitFramebuffer(0, 0, page_size_pixels.x, page_size_pixels.y, 0, 0, page_size_pixels.x, page_size_pixels.y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
 
-            gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rb2.id());
-
-            gl::BlitFramebuffer(0, 0, page_size_pixels.x, page_size_pixels.y, 0, 0, page_size_pixels.x, page_size_pixels.y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-
-            read_fb_binder.rebind(&fb2);
+                read_fb_binder.rebind(&fb2);
+            }
 
             gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
             pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y).unwrap();
@@ -2011,7 +2035,8 @@ impl GlobalContext {
         let scale = PDF_RESOLUTION / 72.0;
         mc.scale(scale as f64, scale as f64);
         pat.set_matrix(mc);
-        cr.paint().unwrap();
+        let _ = cr.paint();
+        let _ = pixbuf.savev("test.png", "png", &[]);
         drop(cr);
         drop(pdf);
     }

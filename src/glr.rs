@@ -833,10 +833,29 @@ impl BinderFBOTarget for BinderFBORead {
 
 pub type BinderReadFramebuffer = BinderFramebuffer<BinderFBORead>;
 
-pub fn max_multisamples(target: GLenum, internalformat: GLenum) -> GLint {
+pub fn available_multisamples(target: GLenum, internalformat: GLenum) -> Vec<GLint> {
     unsafe {
-        let mut samples = 0;
-        gl::GetInternalformativ(target, internalformat, gl::SAMPLES, 1, &mut samples);
+        let mut num = 0;
+        gl::GetInternalformativ(target, internalformat, gl::NUM_SAMPLE_COUNTS, 1, &mut num);
+        let mut samples = vec![0; num as usize];
+        gl::GetInternalformativ(target, internalformat, gl::SAMPLES, samples.len() as i32, samples.as_mut_ptr());
         samples
     }
+}
+
+pub fn try_renderbuffer_storage_multisample(target: GLenum, internalformat: GLenum, width: i32, height: i32) -> Option<GLint> {
+    let all_samples = available_multisamples(target, internalformat);
+    unsafe {
+        for samples in all_samples {
+            // purge the gl error
+            gl::GetError();
+            gl::RenderbufferStorageMultisample(target, samples, internalformat, width, height);
+            if gl::GetError() == 0 {
+                eprintln!("Multisamples = {samples}");
+                return Some(samples);
+            }
+            eprintln!("Multisamples {samples} failed");
+        }
+    }
+    None
 }

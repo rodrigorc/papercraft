@@ -38,31 +38,21 @@ void main(void) {
 layout(lines) in;
 layout(triangle_strip, max_vertices = 4) out;
 
-in gl_PerVertex
-{
-  vec2 gl_Position;
-} gl_in[];
-
-out gl_PerVertex
-{
-  vec3 gl_Position;
-};
-
 uniform mat3 m;
 in float v_width_left[];
 in float v_width_right[];
 in float v_line_dash[];
 out float v_line_dash_;
 
-
-vec3 mx(vec2 p)
+vec4 mx(vec2 p)
 {
-    return m * vec3(p, 1.0);
+    vec3 t = m * vec3(p, 1.0);
+    return vec4(t.xy, 0.0, 1.0);
 }
 
 void main(void) {
-    vec2 p0 = gl_in[0].gl_Position;
-    vec2 p1 = gl_in[1].gl_Position;
+    vec2 p0 = gl_in[0].gl_Position.xy;
+    vec2 p1 = gl_in[1].gl_Position.xy;
 
     vec2 v = p1 - p0;
     v /= length(v);

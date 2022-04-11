@@ -47,6 +47,30 @@ impl<T: glib::IsA<gtk::Widget>> SizeAsVector for T {
     }
 }
 
+pub trait PositionAsVector {
+    fn position_as_vector(&self) -> Vector2;
+}
+
+impl PositionAsVector for gdk::EventButton {
+    fn position_as_vector(&self) -> Vector2 {
+        let pos = self.position();
+        Vector2::new(pos.0 as f32, pos.1 as f32)
+    }
+}
+impl PositionAsVector for gdk::EventMotion {
+    fn position_as_vector(&self) -> Vector2 {
+        let pos = self.position();
+        Vector2::new(pos.0 as f32, pos.1 as f32)
+    }
+}
+
+impl PositionAsVector for gdk::EventScroll {
+    fn position_as_vector(&self) -> Vector2 {
+        let pos = self.position();
+        Vector2::new(pos.0 as f32, pos.1 as f32)
+    }
+}
+
 fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("mode").unwrap().change_state(&"face".to_variant());
     app.lookup_action("view_textures").unwrap().change_state(&true.to_variant());
@@ -379,8 +403,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             w.grab_focus();
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
-            let pos = ev.position();
-            let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
+            let pos = ev.position_as_vector();
             ctx.data.last_cursor_pos = pos;
 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
@@ -437,8 +460,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
         move |_w, ev|  {
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
-            let pos = ev.position();
-            let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
+            let pos = ev.position_as_vector();
 
             ctx.data.scene_motion_notify_event(ctx.wscene.size_as_vector(), pos, ev);
             ctx.wscene.queue_render();
@@ -524,8 +546,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             w.grab_focus();
             let mut ctx = ctx.borrow_mut();
             let ctx = &mut *ctx;
-            let pos = ev.position();
-            let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
+            let pos = ev.position_as_vector();
             ctx.data.last_cursor_pos = pos;
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
                 let selection = ctx.data.paper_analyze_click(ctx.data.mode, ctx.wpaper.size_as_vector(), pos);
@@ -577,8 +598,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
         @strong ctx =>
         move |w, ev| {
             let size = w.size_as_vector();
-            let pos = ev.position();
-            let pos = Vector2::new(pos.0 as f32, pos.1 as f32);
+            let pos = ev.position_as_vector();
             let state = ev.state();
 
             let grabbed = {
@@ -626,14 +646,15 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
     ));
     wpaper.connect_scroll_event(clone!(
         @strong ctx =>
-        move |_w, ev|  {
+        move |w, ev|  {
             let mut ctx = ctx.borrow_mut();
             let dz = match ev.direction() {
                 gdk::ScrollDirection::Up => 1.1,
                 gdk::ScrollDirection::Down => 1.0 / 1.1,
                 _ => 1.0,
             };
-            ctx.data.trans_paper.mx = Matrix3::from_scale(dz) * ctx.data.trans_paper.mx;
+            let pos = ev.position_as_vector() - w.size_as_vector() / 2.0;
+            ctx.data.trans_paper.mx = Matrix3::from_translation(pos) * Matrix3::from_scale(dz) * Matrix3::from_translation(-pos) * ctx.data.trans_paper.mx;
             ctx.wpaper.queue_render();
             Inhibit(true)
         }
@@ -1525,7 +1546,7 @@ impl PapercraftContext {
                         },
                     ]);
 
-                    let link_line = [
+                    let mut link_line = [
                         MVertex2DLine {
                             pos: (edge_sel[0].pos + edge_sel[1].pos) / 2.0,
                             line_dash: 0.0,
@@ -1539,6 +1560,7 @@ impl PapercraftContext {
                             width_right: line_width,
                         },
                     ];
+                    link_line[1].line_dash = (link_line[1].pos - link_line[0].pos).magnitude();
                     edge_sel.extend_from_slice(&link_line);
                 }
                 gl_objs.paper_vertices_edge_sel.set(edge_sel);
@@ -1634,8 +1656,10 @@ impl PapercraftContext {
 
         let mut hit_edge = None;
         for (i_edge, edge) in self.papercraft.model().edges() {
-            if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
-                continue;
+            match (self.papercraft.edge_status(i_edge), mode) {
+                (paper::EdgeStatus::Hidden, _) => continue,
+                (paper::EdgeStatus::Joined, MouseMode::Tab) => continue,
+                _ => (),
             }
             let v1 = self.papercraft.model()[edge.v0()].pos();
             let v2 = self.papercraft.model()[edge.v1()].pos();
@@ -1707,8 +1731,10 @@ impl PapercraftContext {
                         MouseMode::Face => { }
                         MouseMode::Edge | MouseMode::Tab => {
                             for i_edge in face.index_edges() {
-                                if self.papercraft.edge_status(i_edge) == paper::EdgeStatus::Hidden {
-                                    continue;
+                                match (self.papercraft.edge_status(i_edge), mode) {
+                                    (paper::EdgeStatus::Hidden, _) => continue,
+                                    (paper::EdgeStatus::Joined, MouseMode::Tab) => continue,
+                                    _ => (),
                                 }
                                 let edge = &self.papercraft.model()[i_edge];
                                 let v0 = self.papercraft.model()[edge.v0()].pos();
@@ -1935,7 +1961,7 @@ impl GlobalContext {
             m: self.data.trans_paper.ortho * self.data.trans_paper.mx,
             tex: 0,
             frac_dash: 0.5,
-            line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+            line_color: Rgba::new(0.0, 0.0, 0.0, 0.0),
         };
 
         let alloc = self.wpaper.allocation();
@@ -1973,7 +1999,11 @@ impl GlobalContext {
 
             gl::Disable(gl::STENCIL_TEST);
 
+            u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
+
             gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_margin, gl::LINES);
+
+            u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
 
             // Line Tabs
             if self.data.show_tabs {

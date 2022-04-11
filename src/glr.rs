@@ -569,9 +569,10 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.buf.id());
             if self.dirty.get() {
+                let len = (std::mem::size_of::<A>() * self.data.len()) as isize;
                 if self.data.len() > self.buf_len.get() {
                     gl::BufferData(gl::ARRAY_BUFFER,
-                        (std::mem::size_of::<A>() * self.data.len()) as isize,
+                        len,
                         self.data.as_ptr() as *const A as *const _,
                         gl::DYNAMIC_DRAW
                     );
@@ -579,7 +580,7 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
                 } else {
                     gl::BufferSubData(gl::ARRAY_BUFFER,
                         0,
-                        (std::mem::size_of::<A>() * self.data.len()) as isize,
+                        len,
                         self.data.as_ptr() as *const A as *const _
                     );
                 }

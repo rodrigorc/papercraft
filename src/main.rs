@@ -764,10 +764,8 @@ struct GLFixedObjects {
     prg_scene_line: glr::Program,
     prg_paper_solid: glr::Program,
     prg_paper_line: glr::Program,
-    #[allow(dead_code)]
     prg_quad: glr::Program,
 
-    #[allow(dead_code)]
     quad_vertices: glr::DynamicVertexArray<MVertexQuad>,
 }
 
@@ -800,6 +798,7 @@ struct GLObjects {
     paper_edge_index: Vec<(EdgeIndexRef, u32, Option<u32>)>,
 
     paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
+    paper_vertices_margin: glr::DynamicVertexArray<MVertex2DLine>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -1058,27 +1057,8 @@ impl PapercraftContext {
             let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
             let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
 
-            let page_0 = MVertex2DColor {
-                pos: Vector2::new(0.0, 0.0),
-                uv: Vector2::zero(),
-                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
-            };
-            let page_2 = MVertex2DColor {
-                pos: Vector2::new(210.0, 297.0),
-                uv: Vector2::zero(),
-                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
-            };
-            let page_1 = MVertex2DColor {
-                pos: Vector2::new(page_2.pos.x, 0.0),
-                uv: Vector2::zero(),
-                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
-            };
-            let page_3 = MVertex2DColor {
-                pos: Vector2::new(0.0, page_2.pos.y),
-                uv: Vector2::zero(),
-                color: Rgba::new(1.0, 1.0, 1.0, 1.0),
-            };
-            let paper_vertices_page = glr::DynamicVertexArray::from(vec![page_0, page_2, page_1, page_0, page_3, page_2]);
+            let paper_vertices_page = glr::DynamicVertexArray::new();
+            let paper_vertices_margin = glr::DynamicVertexArray::new();
 
             self.gl_objs = Some(GLObjects {
                 textures,
@@ -1100,8 +1080,10 @@ impl PapercraftContext {
                 paper_edge_index: vec![(EdgeIndexRef::Border, 0, None); self.papercraft.model().num_edges()],
 
                 paper_vertices_page,
+                paper_vertices_margin,
             });
 
+            self.pages_build();
             self.scene_edge_build();
             self.paper_build();
             self.update_selection();
@@ -1352,6 +1334,90 @@ impl PapercraftContext {
         }
     }
 
+    fn pages_build(&mut self) {
+        if let Some(gl_objs) = &mut self.gl_objs {
+            let color = Rgba::new(1.0, 1.0, 1.0, 1.0);
+            let page_size = Vector2::new(210.0, 297.0);
+            let margin = (10.0, 10.0, 10.0, 10.0);
+            let mut page_vertices = Vec::new();
+            let mut margin_vertices = Vec::new();
+            let margin_line_width = 0.5;
+
+            let page_count = 7;
+            let page_cols = 3;
+            'pages:
+            for page_row in 0 .. {
+                for page_col in 0 .. page_cols {
+                    let page_pos = Vector2::new((page_col as f32) * (page_size.x + 10.0), (page_row as f32) * (page_size.y + 10.0));
+
+                    let page_0 = MVertex2DColor {
+                        pos: page_pos,
+                        uv: Vector2::zero(),
+                        color,
+                    };
+                    let page_2 = MVertex2DColor {
+                        pos: page_pos + page_size,
+                        uv: Vector2::zero(),
+                        color,
+                    };
+                    let page_1 = MVertex2DColor {
+                        pos: Vector2::new(page_2.pos.x, page_0.pos.y),
+                        uv: Vector2::zero(),
+                        color,
+                    };
+                    let page_3 = MVertex2DColor {
+                        pos: Vector2::new(page_0.pos.x, page_2.pos.y),
+                        uv: Vector2::zero(),
+                        color,
+                    };
+                    page_vertices.extend_from_slice(&[page_0, page_2, page_1, page_0, page_3, page_2]);
+
+                    let mut margin_0 = MVertex2DLine {
+                        pos: page_0.pos + Vector2::new(margin.0, margin.1),
+                        line_dash: 0.0,
+                        width_left: margin_line_width,
+                        width_right: 0.0,
+                    };
+                    let mut margin_1 = MVertex2DLine {
+                        pos: page_3.pos + Vector2::new(margin.0, -margin.3),
+                        line_dash: 0.0,
+                        width_left: margin_line_width,
+                        width_right: 0.0,
+                    };
+                    let mut margin_2 = MVertex2DLine {
+                        pos: page_2.pos + Vector2::new(-margin.2, -margin.3),
+                        line_dash: 0.0,
+                        width_left: margin_line_width,
+                        width_right: 0.0,
+                    };
+                    let mut margin_3 = MVertex2DLine {
+                        pos: page_1.pos + Vector2::new(-margin.2, margin.1),
+                        line_dash: 0.0,
+                        width_left: margin_line_width,
+                        width_right: 0.0,
+                    };
+                    margin_0.line_dash = 0.0;
+                    margin_1.line_dash = page_size.y / 10.0;
+                    margin_vertices.extend_from_slice(&[margin_0, margin_1]);
+                    margin_1.line_dash = 0.0;
+                    margin_2.line_dash = page_size.x / 10.0;
+                    margin_vertices.extend_from_slice(&[margin_1, margin_2]);
+                    margin_2.line_dash = 0.0;
+                    margin_3.line_dash = page_size.y / 10.0;
+                    margin_vertices.extend_from_slice(&[margin_2, margin_3]);
+                    margin_3.line_dash = 0.0;
+                    margin_0.line_dash = page_size.x / 10.0;
+                    margin_vertices.extend_from_slice(&[margin_3, margin_0]);
+
+                    if page_row * page_cols + page_col >= page_count {
+                        break 'pages;
+                    }
+                }
+            }
+            gl_objs.paper_vertices_page.set(page_vertices);
+            gl_objs.paper_vertices_margin.set(margin_vertices);
+        }
+    }
     fn scene_edge_build(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let mut edges_joint = Vec::new();
@@ -1911,6 +1977,8 @@ impl GlobalContext {
             gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
 
             gl::Disable(gl::STENCIL_TEST);
+
+            gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_margin, gl::LINES);
 
             // Line Tabs
             if self.data.show_tabs {

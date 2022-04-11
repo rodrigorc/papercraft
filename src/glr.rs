@@ -872,10 +872,8 @@ pub fn try_renderbuffer_storage_multisample(target: GLenum, internalformat: GLen
             gl::GetError();
             gl::RenderbufferStorageMultisample(target, samples, internalformat, width, height);
             if gl::GetError() == 0 {
-                eprintln!("Multisamples = {samples}");
                 return Some(samples);
             }
-            eprintln!("Multisamples {samples} failed");
         }
     }
     None

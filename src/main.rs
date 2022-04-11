@@ -930,7 +930,8 @@ impl PaperDrawFaceArgs {
 }
 
 impl PapercraftContext {
-    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2) -> (Transformation3D, TransformationPaper) {
+    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2, ops: &paper::Options) -> (Transformation3D, TransformationPaper) {
+        let page = Vector2::from(ops.page_size);
         let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
         let mut trans_scene = Transformation3D::new(
             Vector3::new(0.0, 0.0, -30.0),
@@ -942,7 +943,7 @@ impl PapercraftContext {
         trans_scene.set_ratio(ratio);
 
         let trans_paper = {
-            let mt = Matrix3::from_translation(Vector2::new(-210.0/2.0, -297.0/2.0));
+            let mt = Matrix3::from_translation(Vector2::new(-page.x / 2.0, -page.y / 2.0));
             let ms = Matrix3::from_scale(1.0);
             let ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
             TransformationPaper {
@@ -953,7 +954,7 @@ impl PapercraftContext {
         (trans_scene, trans_paper)
     }
     fn from_papercraft(papercraft: Papercraft, file_name: Option<&Path>, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
-        let (trans_scene, trans_paper) = Self::default_transformations(sz_scene, sz_paper);
+        let (trans_scene, trans_paper) = Self::default_transformations(sz_scene, sz_paper, papercraft.options());
 
         PapercraftContext {
             file_name: file_name.map(|f| f.to_owned()),
@@ -1091,7 +1092,7 @@ impl PapercraftContext {
     }
 
     fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
-        (self.trans_scene, self.trans_paper) = Self::default_transformations(sz_scene, sz_paper);
+        (self.trans_scene, self.trans_paper) = Self::default_transformations(sz_scene, sz_paper, self.papercraft.options());
     }
 
     fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
@@ -1191,21 +1192,22 @@ impl PapercraftContext {
                     _ => None
                 };
                 if let Some(i_face_b) = i_face_b {
+                    let tab = self.papercraft.options().tab_width;
+                    let tab_angle = Rad::from(Deg(self.papercraft.options().tab_angle));
                     let face_b = &self.papercraft.model()[i_face_b];
 
                     //swap the angles because this is from the POV of the other face
                     let (angle_1, angle_0) = self.papercraft.flat_face_angles(i_face_b, i_edge);
-                    let angle_0 = Rad(angle_0.0.min(Rad::from(Deg(45.0)).0));
-                    let angle_1 = Rad(angle_1.0.min(Rad::from(Deg(45.0)).0));
+                    let angle_0 = Rad(angle_0.0.min(tab_angle.0));
+                    let angle_1 = Rad(angle_1.0.min(tab_angle.0));
 
-                    const TAB: f32 = 3.0;
                     let v = pos1 - pos0;
                     let tan_0 = angle_0.cot();
                     let tan_1 = angle_1.cot();
                     let v_len = v.magnitude();
 
-                    let mut tab_h_0 = tan_0 * TAB;
-                    let mut tab_h_1 = tan_1 * TAB;
+                    let mut tab_h_0 = tan_0 * tab;
+                    let mut tab_h_1 = tan_1 * tab;
                     let just_one_tri = v_len - tab_h_0 - tab_h_1 <= 0.0;
                     if just_one_tri {
                         let sum = tab_h_0 + tab_h_1;
@@ -1259,7 +1261,7 @@ impl PapercraftContext {
                         let p = plane_b.project(&v.pos());
                         (v, p)
                     });
-                    let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.scale(), edge, face, face_b);
+                    let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
                     let mx_b_inv = mx_b.invert().unwrap();
                     let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 
@@ -1337,82 +1339,75 @@ impl PapercraftContext {
     fn pages_build(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let color = Rgba::new(1.0, 1.0, 1.0, 1.0);
-            let page_size = Vector2::new(210.0, 297.0);
-            let margin = (10.0, 10.0, 10.0, 10.0);
             let mut page_vertices = Vec::new();
             let mut margin_vertices = Vec::new();
             let margin_line_width = 0.5;
 
-            let page_count = 7;
-            let page_cols = 3;
-            'pages:
-            for page_row in 0 .. {
-                for page_col in 0 .. page_cols {
-                    let page_pos = Vector2::new((page_col as f32) * (page_size.x + 10.0), (page_row as f32) * (page_size.y + 10.0));
+            let page_size = Vector2::from(self.papercraft.options().page_size);
+            let margin = self.papercraft.options().margin;
+            let page_count = self.papercraft.options().pages;
 
-                    let page_0 = MVertex2DColor {
-                        pos: page_pos,
-                        uv: Vector2::zero(),
-                        color,
-                    };
-                    let page_2 = MVertex2DColor {
-                        pos: page_pos + page_size,
-                        uv: Vector2::zero(),
-                        color,
-                    };
-                    let page_1 = MVertex2DColor {
-                        pos: Vector2::new(page_2.pos.x, page_0.pos.y),
-                        uv: Vector2::zero(),
-                        color,
-                    };
-                    let page_3 = MVertex2DColor {
-                        pos: Vector2::new(page_0.pos.x, page_2.pos.y),
-                        uv: Vector2::zero(),
-                        color,
-                    };
-                    page_vertices.extend_from_slice(&[page_0, page_2, page_1, page_0, page_3, page_2]);
+            for page in 0 .. page_count {
+                let page_pos = self.papercraft.page_position(page);
 
-                    let mut margin_0 = MVertex2DLine {
-                        pos: page_0.pos + Vector2::new(margin.0, margin.1),
-                        line_dash: 0.0,
-                        width_left: margin_line_width,
-                        width_right: 0.0,
-                    };
-                    let mut margin_1 = MVertex2DLine {
-                        pos: page_3.pos + Vector2::new(margin.0, -margin.3),
-                        line_dash: 0.0,
-                        width_left: margin_line_width,
-                        width_right: 0.0,
-                    };
-                    let mut margin_2 = MVertex2DLine {
-                        pos: page_2.pos + Vector2::new(-margin.2, -margin.3),
-                        line_dash: 0.0,
-                        width_left: margin_line_width,
-                        width_right: 0.0,
-                    };
-                    let mut margin_3 = MVertex2DLine {
-                        pos: page_1.pos + Vector2::new(-margin.2, margin.1),
-                        line_dash: 0.0,
-                        width_left: margin_line_width,
-                        width_right: 0.0,
-                    };
-                    margin_0.line_dash = 0.0;
-                    margin_1.line_dash = page_size.y / 10.0;
-                    margin_vertices.extend_from_slice(&[margin_0, margin_1]);
-                    margin_1.line_dash = 0.0;
-                    margin_2.line_dash = page_size.x / 10.0;
-                    margin_vertices.extend_from_slice(&[margin_1, margin_2]);
-                    margin_2.line_dash = 0.0;
-                    margin_3.line_dash = page_size.y / 10.0;
-                    margin_vertices.extend_from_slice(&[margin_2, margin_3]);
-                    margin_3.line_dash = 0.0;
-                    margin_0.line_dash = page_size.x / 10.0;
-                    margin_vertices.extend_from_slice(&[margin_3, margin_0]);
+                let page_0 = MVertex2DColor {
+                    pos: page_pos,
+                    uv: Vector2::zero(),
+                    color,
+                };
+                let page_2 = MVertex2DColor {
+                    pos: page_pos + page_size,
+                    uv: Vector2::zero(),
+                    color,
+                };
+                let page_1 = MVertex2DColor {
+                    pos: Vector2::new(page_2.pos.x, page_0.pos.y),
+                    uv: Vector2::zero(),
+                    color,
+                };
+                let page_3 = MVertex2DColor {
+                    pos: Vector2::new(page_0.pos.x, page_2.pos.y),
+                    uv: Vector2::zero(),
+                    color,
+                };
+                page_vertices.extend_from_slice(&[page_0, page_2, page_1, page_0, page_3, page_2]);
 
-                    if page_row * page_cols + page_col >= page_count {
-                        break 'pages;
-                    }
-                }
+                let mut margin_0 = MVertex2DLine {
+                    pos: page_0.pos + Vector2::new(margin.1, margin.0),
+                    line_dash: 0.0,
+                    width_left: margin_line_width,
+                    width_right: 0.0,
+                };
+                let mut margin_1 = MVertex2DLine {
+                    pos: page_3.pos + Vector2::new(margin.1, -margin.3),
+                    line_dash: 0.0,
+                    width_left: margin_line_width,
+                    width_right: 0.0,
+                };
+                let mut margin_2 = MVertex2DLine {
+                    pos: page_2.pos + Vector2::new(-margin.2, -margin.3),
+                    line_dash: 0.0,
+                    width_left: margin_line_width,
+                    width_right: 0.0,
+                };
+                let mut margin_3 = MVertex2DLine {
+                    pos: page_1.pos + Vector2::new(-margin.2, margin.0),
+                    line_dash: 0.0,
+                    width_left: margin_line_width,
+                    width_right: 0.0,
+                };
+                margin_0.line_dash = 0.0;
+                margin_1.line_dash = page_size.y / 10.0;
+                margin_vertices.extend_from_slice(&[margin_0, margin_1]);
+                margin_1.line_dash = 0.0;
+                margin_2.line_dash = page_size.x / 10.0;
+                margin_vertices.extend_from_slice(&[margin_1, margin_2]);
+                margin_2.line_dash = 0.0;
+                margin_3.line_dash = page_size.y / 10.0;
+                margin_vertices.extend_from_slice(&[margin_2, margin_3]);
+                margin_3.line_dash = 0.0;
+                margin_0.line_dash = page_size.x / 10.0;
+                margin_vertices.extend_from_slice(&[margin_3, margin_0]);
             }
             gl_objs.paper_vertices_page.set(page_vertices);
             gl_objs.paper_vertices_margin.set(margin_vertices);
@@ -2049,55 +2044,77 @@ impl GlobalContext {
     }
 
     fn export_pdf(&self, filename: impl AsRef<Path>) {
-        let page_size_mm = Vector2::new(210.0, 297.0);
+        let page_size_mm = Vector2::from(self.data.papercraft.options().page_size);
         let page_size_inches = page_size_mm / 25.4;
         let page_size_dots = page_size_inches * 72.0;
         let page_size_pixels = page_size_inches * PDF_RESOLUTION;
         let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
-        let pixbuf;
+        let pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y).unwrap();
+        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, filename).unwrap();
+        let title = match &self.data.file_name {
+            Some(f) => f.file_stem().map(|s| s.to_string_lossy()).unwrap_or("".into()),
+            None => "untitled".into()
+        };
+        let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
+        let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, "Papercraft (url:TODO)");
+        let cr = cairo::Context::new(&pdf).unwrap();
 
         unsafe {
             self.wpaper.make_current();
 
-            let fbo = glr::Framebuffer::generate().unwrap();
-            let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
+            gl::PixelStorei(gl::PACK_ROW_LENGTH, pixbuf.rowstride() / 4);
 
+            let fbo = glr::Framebuffer::generate().unwrap();
             let rbo = glr::Renderbuffer::generate().unwrap();
+
+            let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
+            let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
             let rb_binder = BinderRenderbuffer::bind(&rbo);
 
-
             let samples = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
-            if samples.is_none() {
+            let rbo_fbo_no_aa = if samples.is_none() {
                 println!("No multisample!");
                 gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
-            }
+                None
+            } else {
+                // multisample buffers cannot be read directly, it has to be copied to a regular one.
+                let rbo2 = glr::Renderbuffer::generate().unwrap();
+                rb_binder.rebind(&rbo2);
+                gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
 
-            gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rbo.id());
+                let fbo2 = glr::Framebuffer::generate().unwrap();
+                read_fb_binder.rebind(&fbo2);
+                gl::FramebufferRenderbuffer(read_fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo2.id());
+                Some((rbo2, fbo2))
+            };
+            gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo.id());
+            let _vp = glr::PushViewport::push(0, 0, page_size_pixels.x, page_size_pixels.y);
 
             gl::ClearColor(1.0, 1.0, 1.0, 0.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-            // Start render
-            {
-                let _vp = glr::PushViewport::push(0, 0, page_size_pixels.x, page_size_pixels.y);
+            let gl_objs = self.data.gl_objs.as_ref().unwrap();
+            let gl_fixs = self.gl_fixs.as_ref().unwrap();
 
-                let gl_objs = self.data.gl_objs.as_ref().unwrap();
-                let gl_fixs = self.gl_fixs.as_ref().unwrap();
+            gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
+            gl::ActiveTexture(gl::TEXTURE0);
 
-                let ortho = util_3d::ortho2d(page_size_mm.x, -page_size_mm.y);
-                let mt = Matrix3::from_translation(Vector2::new(-page_size_mm.x / 2.0, -page_size_mm.y / 2.0));
+            let ortho = util_3d::ortho2d_zero(page_size_mm.x, -page_size_mm.y);
+
+            let page_count = self.data.papercraft.options().pages;
+            for page in 0..page_count {
+                // Start render
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+                let page_pos = self.data.papercraft.page_position(page);
+                let mt = Matrix3::from_translation(-page_pos);
                 let u = Uniforms2D {
                     m: ortho * mt,
                     tex: 0,
                     frac_dash: 0.5,
                     line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                 };
-
-                gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
-                gl::ActiveTexture(gl::TEXTURE0);
 
                 // Line Tabs
                 if self.data.show_tabs {
@@ -2117,56 +2134,42 @@ impl GlobalContext {
 
                 // Textured faces
                 gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
-                let mut vi = 0;
                 for (verts, tex) in gl_objs.paper_vertices.iter().zip(&gl_objs.textures) {
                     gl::BindTexture(gl::TEXTURE_2D, if self.data.show_textures { tex.id() } else { gl_objs.textures.last().unwrap().id() });
-                    gl_fixs.prg_paper_solid.draw(&u, (verts, gl_objs.paper_vertices_sel.sub(vi .. vi + verts.len())) , gl::TRIANGLES);
-                    vi += verts.len();
+                    gl_fixs.prg_paper_solid.draw(&u, verts , gl::TRIANGLES);
                 }
 
                 // Creases
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_crease, gl::LINES);
+                // End render
+
+                if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
+                    read_fb_binder.rebind(&fbo);
+                    draw_fb_binder.rebind(&fbo_no_aa);
+                    gl::BlitFramebuffer(0, 0, page_size_pixels.x, page_size_pixels.y, 0, 0, page_size_pixels.x, page_size_pixels.y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+                    read_fb_binder.rebind(&fbo_no_aa);
+                    draw_fb_binder.rebind(&fbo);
+                }
+
+                gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
+                let data = pixbuf.pixels();
+                gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::RGBA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
+
+                cr.set_source_pixbuf(&pixbuf, 0.0, 0.0);
+                let pat = cr.source();
+                let mut mc = cairo::Matrix::identity();
+                let scale = PDF_RESOLUTION / 72.0;
+                mc.scale(scale as f64, scale as f64);
+                pat.set_matrix(mc);
+
+                let _ = cr.paint();
+                let _ = cr.show_page();
+                //let _ = pixbuf.savev("test.png", "png", &[]);
             }
-            // End render
-
-            let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
-            let rb2;
-            let fb2;
-            if samples.is_some() {
-                // multisample buffers cannot be read directly, it has to be copied to a regular one.
-                rb2 = glr::Renderbuffer::generate().unwrap();
-                rb_binder.rebind(&rb2);
-                gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
-
-                fb2 = glr::Framebuffer::generate().unwrap();
-                draw_fb_binder.rebind(&fb2);
-                gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rb2.id());
-
-                gl::BlitFramebuffer(0, 0, page_size_pixels.x, page_size_pixels.y, 0, 0, page_size_pixels.x, page_size_pixels.y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-
-                read_fb_binder.rebind(&fb2);
-            }
-
-            gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
-            pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y).unwrap();
-            gl::PixelStorei(gl::PACK_ROW_LENGTH, pixbuf.rowstride() / 4);
-            let data = pixbuf.pixels();
-            gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::RGBA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
+            drop(cr);
+            drop(pdf);
         }
-
-        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, filename).unwrap();
-        let cr = cairo::Context::new(&pdf).unwrap();
-        cr.set_source_pixbuf(&pixbuf, 0.0, 0.0);
-        let pat = cr.source();
-        let mut mc = cairo::Matrix::identity();
-        let scale = PDF_RESOLUTION / 72.0;
-        mc.scale(scale as f64, scale as f64);
-        pat.set_matrix(mc);
-        let _ = cr.paint();
-        let _ = pixbuf.savev("test.png", "png", &[]);
-        drop(cr);
-        drop(pdf);
     }
 }
 

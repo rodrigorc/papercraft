@@ -9,7 +9,7 @@ edition = "2021"
 gtk = { version = "*", features = ["v3_22"] }
 glib = "*"
 gio = "*"
-cairo-rs = { version = "*", features = ["pdf"] }
+cairo-rs = { version = "*", features = ["pdf", "v1_16"] }
 gl_loader = "*"
 cgmath = "*"
 anyhow = "*"

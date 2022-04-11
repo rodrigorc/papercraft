@@ -290,3 +290,12 @@ pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
     )
 }
 
+// Like ortho2d but aligned to the (0,0)
+pub fn ortho2d_zero(width: f32, height: f32) -> Matrix3 {
+    Matrix3::new(
+        2.0 / width, 0.0, 0.0,
+        0.0, -2.0 / height, 0.0,
+        -1.0, -1.0, 1.0
+    )
+}
+

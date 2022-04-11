@@ -104,7 +104,6 @@ impl Papercraft {
         }
 
         let mut pending_faces: HashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
-        let scale = 100.0;
 
         let mut islands = SlotMap::with_key();
         while let Some(root) = pending_faces.iter().copied().next() {
@@ -128,7 +127,7 @@ impl Papercraft {
 
         let mut papercraft = Papercraft {
             model,
-            scale,
+            options: Options::default(),
             edges,
             islands,
         };

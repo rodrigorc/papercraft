@@ -20,9 +20,35 @@ new_key_type! {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct Options {
+    pub scale: f32,
+    pub page_size: (f32, f32),
+    pub pages: u32,
+    pub page_cols: u32,
+    pub margin: (f32, f32, f32, f32), //top, left, right, bottom
+    pub tab_width: f32,
+    pub tab_angle: f32, //degrees
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            scale: 100.0,
+            page_size: (210.0, 297.0),
+            pages: 3,
+            page_cols: 2,
+            margin: (10.0, 10.0, 10.0, 10.0),
+            tab_width: 5.0,
+            tab_angle: 45.0,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct Papercraft {
     model: Model,
-    scale: f32,
+    #[serde(default)] //TODO: default not actually needed
+    options: Options,
     edges: Vec<EdgeStatus>, //parallel to EdgeIndex
     #[serde(with="super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
@@ -32,7 +58,7 @@ impl Papercraft {
     pub fn empty() -> Papercraft {
         Papercraft {
             model: Model::empty(),
-            scale: 1.0,
+            options: Options::default(),
             edges: Vec::new(),
             islands: SlotMap::with_key(),
         }
@@ -41,11 +67,11 @@ impl Papercraft {
     pub fn model(&self) -> &Model {
         &self.model
     }
-    pub fn scale(&self) -> f32 {
-        self.scale
+    pub fn options(&self) -> &Options {
+        &self.options
     }
     pub fn face_plane(&self, face: &Face) -> Plane {
-        face.plane(&self.model, self.scale)
+        face.plane(&self.model, self.options.scale)
     }
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
@@ -127,7 +153,7 @@ impl Papercraft {
                 );
                 let (face_mx, new_root, i_face_old) = data_found.unwrap();
 
-                let medge = self.model.face_to_face_edge_matrix(self.scale, edge, &self.model[i_face_old], &self.model[new_root]);
+                let medge = self.model.face_to_face_edge_matrix(self.options.scale, edge, &self.model[i_face_old], &self.model[new_root]);
                 let mx = face_mx * medge;
 
                 let mut new_island = Island {
@@ -272,7 +298,7 @@ impl Papercraft {
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
     {
-        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self.model, &self.edges, self.scale), visit_face)
+        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self.model, &self.edges, self.options.scale), visit_face)
     }
     pub fn traverse_faces_no_matrix<F>(&self, island: &Island, mut visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex) -> ControlFlow<()>
@@ -376,6 +402,14 @@ impl Papercraft {
             island.loc += pos;
             island.recompute_matrix();
         }
+    }
+    pub fn page_position(&self, page: u32) -> Vector2 {
+        let page_cols = self.options().page_cols;
+        let page_size = Vector2::from(self.options().page_size);
+        const SEP: f32 = 10.0; // Currently not configurable
+        let row = page / page_cols;
+        let col = page % page_cols;
+        Vector2::new((col as f32) * (page_size.x + SEP), (row as f32) * (page_size.y + SEP))
     }
 }
 
@@ -484,7 +518,7 @@ impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
 
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
         let next_face = &self.0.model[i_next_face];
-        let medge = self.0.model.face_to_face_edge_matrix(self.0.scale, edge, face, next_face);
+        let medge = self.0.model.face_to_face_edge_matrix(self.0.options.scale, edge, face, next_face);
         st * medge
     }
 }

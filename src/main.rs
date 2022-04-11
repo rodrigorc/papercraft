@@ -21,7 +21,7 @@ mod util_gl;
 use paper::Papercraft;
 use glr::Rgba;
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
-use util_gl::{Uniforms2D, Uniforms3D, MVertex3D, MVertex2D, MVertexQuad, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
+use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MVertexQuad, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 
 use crate::glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
@@ -51,6 +51,7 @@ fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("mode").unwrap().change_state(&"face".to_variant());
     app.lookup_action("view_textures").unwrap().change_state(&true.to_variant());
     app.lookup_action("view_tabs").unwrap().change_state(&true.to_variant());
+    app.lookup_action("overlap").unwrap().change_state(&false.to_variant());
 }
 
 fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>) {
@@ -347,6 +348,20 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
         }
     ));
 
+    let aoverlap = gio::SimpleAction::new_stateful("overlap", None, &false.to_variant());
+    app.add_action(&aoverlap);
+    aoverlap.connect_change_state(clone!(
+        @strong ctx =>
+        move |a, v| {
+            if let Some(v)  = v {
+                a.set_state(v);
+                let mut ctx = ctx.borrow_mut();
+                ctx.data.highlight_overlaps = v.get().unwrap();
+                ctx.wpaper.queue_render();
+            }
+        }
+    ));
+
     top_window.set_default_size(800, 600);
     top_window.connect_destroy(clone!(
         @strong app =>
@@ -480,20 +495,25 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             ctx.wpaper.make_current();
             let gl_fixs = ctx.gl_fixs.as_mut().unwrap();
 
-            let rbo = gl_fixs.rbo_paper.as_ref().unwrap();
-            let rb_binder = BinderRenderbuffer::bind(&rbo);
-            let multisamples = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::RGBA8, width, height);
-            if multisamples.is_some() {
-                let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
-                let fb_binder = BinderDrawFramebuffer::new();
-                fb_binder.rebind(&fbo);
-                unsafe {
-                    gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, rb_binder.target(), rbo.id());
+            if let Some((rbo_color, rbo_stencil)) = &gl_fixs.rbo_paper {
+                let rb_binder = BinderRenderbuffer::bind(&rbo_color);
+                let multisamples_color = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::RGBA8, width, height);
+                rb_binder.rebind(&rbo_stencil);
+                let multisamples_stencil = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::STENCIL_INDEX8, width, height);
+                if multisamples_color.is_some() && multisamples_color == multisamples_stencil {
+                    let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
+                    let fb_binder = BinderDrawFramebuffer::new();
+                    fb_binder.rebind(&fbo);
+                    unsafe {
+                        gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo_color.id());
+                        gl::FramebufferRenderbuffer(fb_binder.target(), gl::STENCIL_ATTACHMENT, gl::RENDERBUFFER, rbo_stencil.id());
+                    }
+
+                } else {
+                    println!("Disable multisample!");
+                    gl_fixs.fbo_paper = None;
+                    gl_fixs.rbo_paper = None;
                 }
-            } else {
-                println!("Disable multisample!");
-                gl_fixs.fbo_paper = None;
-                gl_fixs.rbo_paper = None;
             }
         }
     ));
@@ -730,7 +750,7 @@ fn paper_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     let gl_fixs = ctx.gl_fixs.as_mut().unwrap();
     gl_fixs.vao_paper = Some(glr::VertexArray::generate().unwrap());
     gl_fixs.fbo_paper = Some(glr::Framebuffer::generate().unwrap());
-    gl_fixs.rbo_paper = Some(glr::Renderbuffer::generate().unwrap());
+    gl_fixs.rbo_paper = Some((glr::Renderbuffer::generate().unwrap(), glr::Renderbuffer::generate().unwrap()));
 }
 
 struct GLFixedObjects {
@@ -738,7 +758,7 @@ struct GLFixedObjects {
     vao_scene: Option<glr::VertexArray>,
     vao_paper: Option<glr::VertexArray>,
     fbo_paper: Option<glr::Framebuffer>,
-    rbo_paper: Option<glr::Renderbuffer>,
+    rbo_paper: Option<(glr::Renderbuffer, glr::Renderbuffer)>, //color, stencil
 
     prg_scene_solid: glr::Program,
     prg_scene_line: glr::Program,
@@ -815,6 +835,7 @@ struct PapercraftContext {
     mode: MouseMode,
     show_textures: bool,
     show_tabs: bool,
+    highlight_overlaps: bool,
     trans_scene: Transformation3D,
     trans_paper: TransformationPaper,
 }
@@ -948,6 +969,7 @@ impl PapercraftContext {
             mode: MouseMode::Face,
             show_textures: true,
             show_tabs: true,
+            highlight_overlaps: false,
             trans_scene,
             trans_paper,
         }
@@ -1869,7 +1891,13 @@ impl GlobalContext {
             };
 
             gl::ClearColor(0.7, 0.7, 0.7, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
+            gl::ClearStencil(1);
+            gl::StencilMask(0xff);
+            gl::StencilFunc(gl::ALWAYS, 0, 0);
+            gl::Disable(gl::STENCIL_TEST);
+
+            gl::Clear(gl::COLOR_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
+
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
@@ -1877,12 +1905,20 @@ impl GlobalContext {
             gl::ActiveTexture(gl::TEXTURE0);
 
             // The paper
+            gl::Enable(gl::STENCIL_TEST);
+            gl::StencilOp(gl::KEEP, gl::KEEP, gl::ZERO);
+
             gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
+
+            gl::Disable(gl::STENCIL_TEST);
 
             // Line Tabs
             if self.data.show_tabs {
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
             }
+
+            gl::Enable(gl::STENCIL_TEST);
+            gl::StencilOp(gl::KEEP, gl::KEEP, gl::INCR);
 
             // Solid Tabs
             if self.data.show_tabs {
@@ -1891,9 +1927,12 @@ impl GlobalContext {
                     gl_fixs.prg_paper_solid.draw(&u, verts_tab, gl::TRIANGLES);
                 }
             }
+            gl::Disable(gl::STENCIL_TEST);
 
             // Borders
             gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_border, gl::LINES);
+
+            gl::Enable(gl::STENCIL_TEST);
 
             // Textured faces
             let mut vi = 0;
@@ -1902,6 +1941,7 @@ impl GlobalContext {
                 gl_fixs.prg_paper_solid.draw(&u, (verts, gl_objs.paper_vertices_sel.sub(vi .. vi + verts.len())) , gl::TRIANGLES);
                 vi += verts.len();
             }
+            gl::Disable(gl::STENCIL_TEST);
 
             // Creases
             gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_crease, gl::LINES);
@@ -1912,6 +1952,26 @@ impl GlobalContext {
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
 
+            // Draw the highlight overlap if "1 < STENCIL"
+            gl::Enable(gl::STENCIL_TEST);
+            gl::StencilOp(gl::KEEP, gl::KEEP, gl::KEEP);
+            gl::StencilFunc(gl::LESS, 1, 0xff);
+
+            let mut uq = UniformQuad {
+                color: Rgba::new(1.0, 0.0, 1.0, 0.9),
+            };
+            gl_fixs.prg_quad.draw(&uq, &gl_fixs.quad_vertices, gl::TRIANGLES);
+
+            if self.data.highlight_overlaps {
+                // Draw the highlight dim if "1 >= STENCIL"
+                uq.color = Rgba::new(1.0, 1.0, 1.0, 0.9);
+                gl::StencilFunc(gl::GEQUAL, 1, 0xff);
+                gl_fixs.prg_quad.draw(&uq, &gl_fixs.quad_vertices, gl::TRIANGLES);
+            }
+
+            gl::Disable(gl::STENCIL_TEST);
+
+            // If there is an FBO, blit to the real FB
             if draw_fb_binder.take().is_some() { // check and drop
                 let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
                 let _read_fb_binder = BinderReadFramebuffer::bind(&fbo);

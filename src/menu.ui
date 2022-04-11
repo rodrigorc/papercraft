@@ -87,6 +87,10 @@
                         <attribute name='label' translatable='yes'>Ta_bs</attribute>
                         <attribute name='action'>app.view_tabs</attribute>
                     </item>
+                    <item>
+                        <attribute name='label' translatable='yes'>Highlight _Overlaps</attribute>
+                        <attribute name='action'>app.overlap</attribute>
+                    </item>
                 </section>
             </submenu>
         </section>

@@ -88,6 +88,10 @@
                         <attribute name='action'>app.view_tabs</attribute>
                     </item>
                     <item>
+                        <attribute name='label' translatable='yes'>_X-ray selection</attribute>
+                        <attribute name='action'>app.xray_selection</attribute>
+                    </item>
+                    <item>
                         <attribute name='label' translatable='yes'>Highlight _Overlaps</attribute>
                         <attribute name='action'>app.overlap</attribute>
                     </item>

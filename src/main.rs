@@ -75,6 +75,7 @@ fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("mode").unwrap().change_state(&"face".to_variant());
     app.lookup_action("view_textures").unwrap().change_state(&true.to_variant());
     app.lookup_action("view_tabs").unwrap().change_state(&true.to_variant());
+    app.lookup_action("xray_selection").unwrap().change_state(&true.to_variant());
     app.lookup_action("overlap").unwrap().change_state(&false.to_variant());
 }
 
@@ -367,6 +368,21 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_tabs = v.get().unwrap();
                 ctx.wpaper.queue_render();
+                ctx.wscene.queue_render();
+            }
+        }
+    ));
+
+    let axraysel = gio::SimpleAction::new_stateful("xray_selection", None, &true.to_variant());
+    app.add_action(&axraysel);
+    axraysel.connect_change_state(clone!(
+        @strong ctx =>
+        move |a, v| {
+            if let Some(v)  = v {
+                a.set_state(v);
+                let mut ctx = ctx.borrow_mut();
+                ctx.data.xray_selection = v.get().unwrap();
+                ctx.data.update_selection();
                 ctx.wscene.queue_render();
             }
         }
@@ -855,6 +871,7 @@ struct PapercraftContext {
     mode: MouseMode,
     show_textures: bool,
     show_tabs: bool,
+    xray_selection: bool,
     highlight_overlaps: bool,
     trans_scene: Transformation3D,
     trans_paper: TransformationPaper,
@@ -990,6 +1007,7 @@ impl PapercraftContext {
             mode: MouseMode::Face,
             show_textures: true,
             show_tabs: true,
+            xray_selection: true,
             highlight_overlaps: false,
             trans_scene,
             trans_paper,
@@ -1467,12 +1485,13 @@ impl PapercraftContext {
                 gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
                 gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_UNSEL.color };
             }
+            let top = self.xray_selection as u8;
             for &sel_island in &self.selected_islands {
                 if let Some(island) = self.papercraft.island_by_key(sel_island) {
                     self.papercraft.traverse_faces_no_matrix(island, |i_face_2| {
                         let pos = 3 * gl_objs.face_index[usize::from(i_face_2)];
                         for i in pos .. pos + 3 {
-                            gl_objs.vertices_sel[i as usize] = MSTATUS_SEL;
+                            gl_objs.vertices_sel[i as usize] = MStatus3D { color: MSTATUS_SEL.color, top };
                         }
                         let pos = 3 * gl_objs.paper_face_index[usize::from(i_face_2)];
                         for i in pos .. pos + 3 {
@@ -1486,7 +1505,7 @@ impl PapercraftContext {
                 for i_face_2 in self.papercraft.get_flat_faces(i_sel_face) {
                     let pos = 3 * gl_objs.face_index[usize::from(i_face_2)];
                     for i in pos .. pos + 3 {
-                        gl_objs.vertices_sel[i as usize] = MSTATUS_HI;
+                        gl_objs.vertices_sel[i as usize] = MStatus3D { color: MSTATUS_HI.color, top };
                     }
                     let pos = 3 * gl_objs.paper_face_index[usize::from(i_face_2)];
                     for i in pos .. pos + 3 {
@@ -1946,7 +1965,9 @@ impl GlobalContext {
             if self.data.selected_edge.is_some() {
                 gl::LineWidth(5.0);
                 gl::Enable(gl::LINE_SMOOTH);
-                u.line_top = 1;
+                if self.data.xray_selection {
+                    u.line_top = 1;
+                }
                 gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_sel, gl::LINES);
             }
         }

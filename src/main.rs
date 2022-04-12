@@ -367,6 +367,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
                 a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_tabs = v.get().unwrap();
+                ctx.data.paper_build();
                 ctx.wpaper.queue_render();
                 ctx.wscene.queue_render();
             }
@@ -1179,7 +1180,7 @@ impl PapercraftContext {
                 };
                 let v = pos1 - pos0;
                 let fold_faces = edge_status == paper::EdgeStatus::Joined;
-                let fold_tab = edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face));
+                let fold_tab = edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) && self.show_tabs;
                 let mut v0 = MVertex2DLine {
                     pos: pos0,
                     line_dash: 0.0,
@@ -1190,16 +1191,40 @@ impl PapercraftContext {
                     pos: pos1,
                     .. v0
                 };
-                if false && edge_status == paper::EdgeStatus::Joined {
-                    let vn = v.normalize_to(0.01);
-                    v0.pos -= vn;
-                    v1.pos += vn;
-                    let x = (0.015 / 2.0) / v.magnitude();
-                    v0.line_dash = 0.5 - x;
-                    v1.line_dash = 1.0 + x;
-                } else if dotted {
-                    v1.line_dash = v.magnitude();
-                }
+
+                //TODO: configurable
+                let visible_line_len = self.papercraft.options().fold_line_len;
+
+                let (new_lines_, new_lines_2_);
+                let new_lines: &[_] = if visible_line_len.is_some() && (edge_status == paper::EdgeStatus::Joined || fold_tab) {
+                    let visible_line_len = visible_line_len.unwrap();
+                    let vn = v.normalize_to(visible_line_len);
+                    let dash_delta = if dotted { 1.5 } else { 0.5 };
+                    v0.line_dash = 0.51;
+                    v1.line_dash = 0.99;
+                    let v00 = MVertex2DLine {
+                        pos: v0.pos + vn,
+                        line_dash: v0.line_dash - dash_delta,
+                        .. v0
+                    };
+                    let v11 = MVertex2DLine {
+                        pos: v1.pos - vn,
+                        line_dash: v1.line_dash + dash_delta,
+                        .. v1
+                    };
+                    new_lines_ = if visible_line_len > 0.0 {
+                        [v0, v1, v0, v00, v11, v1]
+                    } else {
+                        [v0, v1, v00, v0, v1, v11]
+                    };
+                    &new_lines_
+                } else {
+                    if dotted {
+                        v1.line_dash = v.magnitude();
+                    }
+                    new_lines_2_ = [v0, v1];
+                    &new_lines_2_
+                };
 
                 let edge_index = &mut args.edge_index[usize::from(i_edge)];
                 let edge_container = if fold_faces {
@@ -1221,7 +1246,7 @@ impl PapercraftContext {
                     edge_index.1 = edge_pos;
                     edge_index.2 = None;
                 }
-                edge_container.extend_from_slice(&[v0, v1]);
+                edge_container.extend_from_slice(new_lines);
             }
 
             if edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) {

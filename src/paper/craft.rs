@@ -28,6 +28,7 @@ pub struct Options {
     pub margin: (f32, f32, f32, f32), //top, left, right, bottom
     pub tab_width: f32,
     pub tab_angle: f32, //degrees
+    pub fold_line_len: Option<f32>, //None means fully visible, negative is outwards, positive inwards, Some(0) is invisible
 }
 
 impl Default for Options {
@@ -40,6 +41,7 @@ impl Default for Options {
             margin: (10.0, 10.0, 10.0, 10.0),
             tab_width: 5.0,
             tab_angle: 45.0,
+            fold_line_len: Some(2.0),
         }
     }
 }

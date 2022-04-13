@@ -98,7 +98,10 @@ impl Papercraft {
                 ControlFlow::Continue(())
             }
         );
-        crate::util_3d::bounding_box_2d(vx)
+        let (a, b) = crate::util_3d::bounding_box_2d(vx);
+        let m = self.options.tab_width;
+        let mm = Vector2::new(m, m);
+        (a - mm, b + mm)
     }
 
     pub fn island_by_face(&self, i_face: FaceIndex) -> IslandKey {
@@ -408,6 +411,15 @@ impl Papercraft {
         let mut row_height = 0.0f32;
         let mut pos_x = 0.0;
         let mut pos_y = 0.0;
+        let mut num_in_row = 0;
+
+        let mut page = 0;
+        let page_margin = Vector2::new(self.options.margin.1, self.options.margin.0);
+        let page_size = Vector2::new(
+            self.options.page_size.0 - self.options.margin.1 - self.options.margin.2,
+            self.options.page_size.1 - self.options.margin.0 - self.options.margin.3,
+        );
+        let mut zero = self.page_position(page) + page_margin;
 
         // The island position cannot be updated while iterating
         let mut positions = slotmap::SecondaryMap::<IslandKey, Vector2>::new();
@@ -426,16 +438,25 @@ impl Papercraft {
         });
 
         for (i_island, bbox) in ordered_islands {
-            let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
-            pos_x += bbox.1.x - bbox.0.x + 5.0;
-            row_height = row_height.max(bbox.1.y - bbox.0.y);
-
-            if pos_x > 210.0 {
-                pos_y += row_height + 5.0;
-                row_height = 0.0;
+            let mut next_pos_x = pos_x + bbox.1.x - bbox.0.x;
+            if next_pos_x > page_size.x && num_in_row > 0 {
+                next_pos_x -= pos_x;
                 pos_x = 0.0;
+                pos_y += row_height;
+                row_height = 0.0;
+                num_in_row = 0;
+                if pos_y > page_size.y {
+                    pos_y = 0.0;
+                    page += 1;
+                    zero = self.page_position(page) + page_margin;
+                }
             }
-            positions.insert(i_island, pos);
+            let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
+            pos_x = next_pos_x;
+            row_height = row_height.max(bbox.1.y - bbox.0.y);
+            num_in_row += 1;
+
+            positions.insert(i_island, zero + pos);
         }
         for (i_island, pos) in positions {
             let island = self.island_by_key_mut(i_island).unwrap();

@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path};
+use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, ffi::OsStr};
 
 use cgmath::{One, EuclideanSpace, Transform, Rad, Zero};
 use gdk_pixbuf::traits::PixbufLoaderExt;
@@ -19,8 +19,8 @@ impl Papercraft {
             if let Some(pixbuf) = tex.pixbuf() {
                 let file_name = tex.file_name();
                 zip.start_file(&format!("tex/{file_name}"), options)?;
-                let ext = Path::new(file_name).extension().and_then(|s| s.to_str()).unwrap_or("png").to_ascii_lowercase();
-                let data = pixbuf.save_to_bufferv(&ext, &[]).unwrap();
+                let format = gdk_format_from_extension(Path::new(file_name).extension());
+                let data = pixbuf.save_to_bufferv(&format, &[]).unwrap();
                 zip.write_all(&data[..])?;
             }
         }
@@ -133,5 +133,18 @@ impl Papercraft {
         };
         papercraft.pack_islands();
         papercraft
+    }
+}
+
+fn gdk_format_from_extension(ext: Option<&OsStr>) -> &str {
+    //TODO: use gdk_pixbuf_format_get_extensions?
+    let ext = match ext.and_then(|s| s.to_str()) {
+        None => return "png",
+        Some(e) => e.to_ascii_lowercase(),
+    };
+    match ext.as_str() {
+        "png" => "png",
+        "jpg" | "jpeg" | "jfif" => "jpeg",
+        _ => "png",
     }
 }

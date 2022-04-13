@@ -290,6 +290,18 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         }
     ));
 
+    let aundo = gio::SimpleAction::new("undo", None);
+    app.add_action(&aundo);
+    aundo.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let mut ctx = ctx.borrow_mut();
+            ctx.data.undo_action();
+            ctx.wscene.queue_render();
+            ctx.wpaper.queue_render();
+            }
+    ));
+
     let amode = gio::SimpleAction::new_stateful("mode", Some(glib::VariantTy::STRING), &"face".to_variant());
     app.add_action(&amode);
     amode.connect_change_state(clone!(
@@ -336,9 +348,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         @strong ctx =>
         move |_, _| {
             let mut ctx = ctx.borrow_mut();
-            ctx.data.papercraft.pack_islands();
-            ctx.data.paper_build();
-            ctx.data.update_selection();
+            ctx.data.pack_islands();
             ctx.wpaper.queue_render();
         }
     ));
@@ -426,17 +436,19 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
                 let selection = ctx.data.scene_analyze_click(ctx.data.mode, ctx.wscene.size_as_vector(), pos);
                 match (ctx.data.mode, selection) {
-                    (MouseMode::Edge, ClickResult::Edge(i_edge, priority_face)) => {
+                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
+
                         if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
                             ctx.data.try_join_strip(i_edge);
                         } else {
-                            ctx.data.edge_toggle_cut(i_edge, priority_face);
+                            ctx.data.edge_toggle_cut(i_edge, i_face);
                         }
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
                         ctx.data.update_selection();
                     }
                     (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                        ctx.data.undo_stack.push(vec![UndoAction::TabToggle { i_edge } ]);
                         ctx.data.papercraft.edge_toggle_tab(i_edge);
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
@@ -565,11 +577,11 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let ctx = &mut *ctx;
             let pos = ev.position_as_vector();
             ctx.data.last_cursor_pos = pos;
+
             if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
                 let selection = ctx.data.paper_analyze_click(ctx.data.mode, ctx.wpaper.size_as_vector(), pos);
                 match (ctx.data.mode, selection) {
                     (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                        //ctx.papercraft.edge_toggle_cut(i_edge, priority_face);
                         ctx.data.grabbed_island = false;
                         if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
                             ctx.data.try_join_strip(i_edge);
@@ -581,6 +593,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         ctx.data.update_selection();
                     }
                     (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                        ctx.data.undo_stack.push(vec![UndoAction::TabToggle { i_edge } ]);
                         ctx.data.papercraft.edge_toggle_tab(i_edge);
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
@@ -588,6 +601,14 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                     }
                     (_, ClickResult::Face(f)) => {
                         ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        let undo_action = ctx.data.selected_islands
+                            .iter()
+                            .map(|&i_island| {
+                                let island = ctx.data.papercraft.island_by_key(i_island).unwrap();
+                                UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
+                            })
+                            .collect();
+                        ctx.data.undo_stack.push(undo_action);
                         ctx.data.grabbed_island = true;
                     }
                     (_, ClickResult::None) => {
@@ -853,11 +874,22 @@ enum MouseMode {
     Tab,
 }
 
+
+//UndoItem cannot store IslandKey, because they are dynamic, use the root of the island instead
+#[derive(Debug)]
+enum UndoAction {
+    IslandMove { i_root: paper::FaceIndex, prev_rot: Rad<f32>, prev_loc: Vector2 },
+    TabToggle { i_edge: paper::EdgeIndex },
+    EdgeCut { i_edge: paper::EdgeIndex },
+    EdgeJoin(paper::JoinResult),
+}
+
 //Objects that are recreated when a new model is loaded
 struct PapercraftContext {
     // The model
     file_name: Option<PathBuf>,
     papercraft: Papercraft,
+    undo_stack: Vec<Vec<UndoAction>>,
 
     gl_objs: Option<GLObjects>,
 
@@ -1012,6 +1044,7 @@ impl PapercraftContext {
         PapercraftContext {
             file_name: file_name.map(|f| f.to_owned()),
             papercraft,
+            undo_stack: Vec::new(),
             gl_objs: None,
             selected_face: None,
             selected_edge: None,
@@ -1663,19 +1696,51 @@ impl PapercraftContext {
     }
 
     fn edge_toggle_cut(&mut self, i_edge: paper::EdgeIndex, priority_face: Option<paper::FaceIndex>) {
-        let renames = self.papercraft.edge_toggle_cut(i_edge, priority_face);
-        self.islands_renamed(&renames);
+        match self.papercraft.edge_status(i_edge) {
+            paper::EdgeStatus::Hidden => { return; }
+            paper::EdgeStatus::Joined => {
+                let offset = self.papercraft.options().tab_width * 2.0;
+                self.papercraft.edge_cut(i_edge, Some(offset));
+                let undo_actions = vec![UndoAction::EdgeCut { i_edge }];
+                self.undo_stack.push(undo_actions);
+            }
+            paper::EdgeStatus::Cut(_) => {
+                let renames = self.papercraft.edge_join(i_edge, priority_face);
+                if renames.is_empty() {
+                    return;
+                }
+                let undo_actions = renames
+                    .iter()
+                    .map(|(_, join_result)| {
+                        UndoAction::EdgeJoin(*join_result)
+                    })
+                    .collect();
+                self.undo_stack.push(undo_actions);
+                self.islands_renamed(&renames);
+            }
+        }
     }
 
     fn try_join_strip(&mut self, i_edge: paper::EdgeIndex) {
         let renames = self.papercraft.try_join_strip(i_edge);
+        if renames.is_empty() {
+            return;
+        }
+
+        let undo_actions = renames
+            .iter()
+            .map(|(_, join_result)| {
+                UndoAction::EdgeJoin(*join_result)
+            })
+            .collect();
+        self.undo_stack.push(undo_actions);
         self.islands_renamed(&renames);
     }
 
-    fn islands_renamed(&mut self, renames: &HashMap<paper::IslandKey, paper::IslandKey>) {
+    fn islands_renamed(&mut self, renames: &HashMap<paper::IslandKey, paper::JoinResult>) {
         for x in &mut self.selected_islands {
-            while let Some(n) = renames.get(x) {
-                *x = *n;
+            while let Some(paper::JoinResult { i_island, .. }) = renames.get(x) {
+                *x = *i_island;
             }
         }
     }
@@ -1894,7 +1959,50 @@ impl PapercraftContext {
             self.set_selection(selection, false, false);
         }
     }
+    fn pack_islands(&mut self) {
+        let undo_actions = self.papercraft.islands()
+            .map(|(_, island)| {
+                UndoAction::IslandMove{ i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
+            })
+            .collect();
+        self.undo_stack.push(undo_actions);
+        self.papercraft.pack_islands();
+        self.paper_build();
+        self.update_selection();
+    }
+    fn undo_action(&mut self) {
+        let action_pack = match self.undo_stack.pop() {
+            None => return,
+            Some(a) => a,
+        };
 
+        for action in action_pack.into_iter().rev() {
+            match action {
+                UndoAction::IslandMove { i_root, prev_rot, prev_loc } => {
+                    if let Some(i_island) = self.papercraft.island_by_root(i_root) {
+                        let island = self.papercraft.island_by_key_mut(i_island).unwrap();
+                        island.reset_transformation(i_root, prev_rot, prev_loc);
+                    }
+                }
+                UndoAction::TabToggle { i_edge } => {
+                    self.papercraft.edge_toggle_tab(i_edge);
+                }
+                UndoAction::EdgeCut { i_edge } => {
+                    self.papercraft.edge_join(i_edge, None);
+                }
+                UndoAction::EdgeJoin(paper::JoinResult { i_edge, i_island: _, prev_root, prev_rot, prev_loc }) => {
+                    self.papercraft.edge_cut(i_edge, None);
+                    let i_island = self.papercraft.island_by_face(prev_root);
+                    let island = self.papercraft.island_by_key_mut(i_island).unwrap();
+
+                    island.reset_transformation(prev_root, prev_rot, prev_loc);
+                }
+            }
+        }
+        self.paper_build();
+        self.scene_edge_build();
+        self.update_selection();
+    }
 }
 
 impl GlobalContext {

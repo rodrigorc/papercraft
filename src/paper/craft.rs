@@ -8,7 +8,6 @@ use serde::{Serialize, Deserialize};
 use super::*;
 mod file;
 
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EdgeStatus {
     Hidden,
@@ -17,6 +16,15 @@ pub enum EdgeStatus {
 }
 new_key_type! {
     pub struct IslandKey;
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct JoinResult {
+    pub i_edge: EdgeIndex,
+    pub i_island: IslandKey,
+    pub prev_root: FaceIndex,
+    pub prev_rot: Rad<f32>,
+    pub prev_loc: Vector2,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -101,6 +109,14 @@ impl Papercraft {
         }
         panic!("Island not found");
     }
+    pub fn island_by_root(&self, i_face: FaceIndex) -> Option<IslandKey> {
+        for (i_island, island) in &self.islands {
+            if island.root == i_face {
+                return Some(i_island);
+            }
+        }
+        None
+    }
     // Islands come and go, so this kay may not exist.
     pub fn island_by_key(&self, key: IslandKey) -> Option<&Island> {
         self.islands.get(key)
@@ -113,7 +129,6 @@ impl Papercraft {
         self.edges[usize::from(edge)]
     }
 
-    #[allow(dead_code)]
     pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex) {
         // brim edges cannot have a tab
         if let (_, None) = self.model()[i_edge].faces() {
@@ -124,86 +139,103 @@ impl Papercraft {
         }
     }
 
-    //Returns renames of IslandKeys
-    pub fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> HashMap<IslandKey, IslandKey> {
+    pub fn edge_cut(&mut self, i_edge: EdgeIndex, offset: Option<f32>) {
+        match self.edges[usize::from(i_edge)] {
+            EdgeStatus::Joined => {}
+            _ => { return; }
+        }
         let edge = &self.model[i_edge];
-        let mut renames = HashMap::new();
-
         let (i_face_a, i_face_b) = match edge.faces() {
             (fa, Some(fb)) => (fa, fb),
-            _ => return renames,
+            _ => { return; }
         };
 
-        let edge_status = self.edges[usize::from(i_edge)];
-        match edge_status {
-            EdgeStatus::Joined => {
-                //one of the edge faces will be the root of the new island, but we do not know which one, yet
-                let i_island = self.island_by_face(i_face_a);
+        //one of the edge faces will be the root of the new island, but we do not know which one, yet
+        let i_island = self.island_by_face(i_face_a);
 
-                self.edges[usize::from(i_edge)] = EdgeStatus::Cut(false);
+        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(false);
 
-                let mut data_found = None;
-                self.traverse_faces(&self.islands[i_island],
-                    |i_face, _, fmx| {
-                        if i_face == i_face_a {
-                            data_found = Some((*fmx, i_face_b, i_face_a));
-                        } else if i_face == i_face_b {
-                            data_found = Some((*fmx, i_face_a, i_face_b));
-                        }
-                        ControlFlow::Continue(())
-                    }
-                );
-                let (face_mx, new_root, i_face_old) = data_found.unwrap();
-
-                let medge = self.model.face_to_face_edge_matrix(self.options.scale, edge, &self.model[i_face_old], &self.model[new_root]);
-                let mx = face_mx * medge;
-
-                let mut new_island = Island {
-                    root: new_root,
-                    loc: Vector2::new(mx[2][0], mx[2][1]),
-                    rot: Rad(mx[0][1].atan2(mx[0][0])),
-                    mx: Matrix3::one(),
-                };
-                new_island.recompute_matrix();
-
-                //Compute the offset
-                let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
-                let new_root = &self.model[new_root];
-                let new_root_plane = self.face_plane(new_root);
-                let v0 = new_root_plane.project(&self.model[edge.v0()].pos());
-                let v1 = new_root_plane.project(&self.model[edge.v1()].pos());
-                let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
-                let v1 = mx.transform_point(Point2::from_vec(v1)).to_vec();
-                let v = (v1 - v0).normalize_to(5.0);
-
-                //priority_face makes no sense when doing a split, so pass None here unconditionally
-                if self.compare_islands(&self.islands[i_island], &new_island, None) {
-                    let island = &mut self.islands[i_island];
-                    island.translate(-sign * Vector2::new(-v.y, v.x));
-                } else {
-                    new_island.translate(sign * Vector2::new(-v.y, v.x));
+        let mut data_found = None;
+        self.traverse_faces(&self.islands[i_island],
+            |i_face, _, fmx| {
+                if i_face == i_face_a {
+                    data_found = Some((*fmx, i_face_b, i_face_a));
+                } else if i_face == i_face_b {
+                    data_found = Some((*fmx, i_face_a, i_face_b));
                 }
-                self.islands.insert(new_island);
+                ControlFlow::Continue(())
             }
-            EdgeStatus::Cut(_) => {
-                let i_island_b = self.island_by_face(i_face_b);
-                if self.contains_face(&self.islands[i_island_b], i_face_a) {
-                    // Same island on both sides, nothing to do
-                } else {
-                    // Join both islands
-                    let mut island_b = self.islands.remove(i_island_b).unwrap();
-                    let i_island_a = self.island_by_face(i_face_a);
+        );
+        let (face_mx, new_root, i_face_old) = data_found.unwrap();
 
-                    // Keep position of a or b?
-                    if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
-                        std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
-                    }
-                    renames.insert (i_island_b, i_island_a);
-                    self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
-                }
-            }
-            EdgeStatus::Hidden => {}
+        let medge = self.model.face_to_face_edge_matrix(self.options.scale, edge, &self.model[i_face_old], &self.model[new_root]);
+        let mx = face_mx * medge;
+
+        let mut new_island = Island {
+            root: new_root,
+            loc: Vector2::new(mx[2][0], mx[2][1]),
+            rot: Rad(mx[0][1].atan2(mx[0][0])),
+            mx: Matrix3::one(),
         };
+        new_island.recompute_matrix();
+
+        //Compute the offset
+        if let Some(offset_on_cut) = offset {
+            let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
+            let new_root = &self.model[new_root];
+            let new_root_plane = self.face_plane(new_root);
+            let v0 = new_root_plane.project(&self.model[edge.v0()].pos());
+            let v1 = new_root_plane.project(&self.model[edge.v1()].pos());
+            let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
+            let v1 = mx.transform_point(Point2::from_vec(v1)).to_vec();
+            let v = (v1 - v0).normalize_to(offset_on_cut);
+
+            //priority_face makes no sense when doing a split, so pass None here unconditionally
+            if self.compare_islands(&self.islands[i_island], &new_island, None) {
+                let island = &mut self.islands[i_island];
+                island.translate(-sign * Vector2::new(-v.y, v.x));
+            } else {
+                new_island.translate(sign * Vector2::new(-v.y, v.x));
+            }
+        }
+        self.islands.insert(new_island);
+    }
+
+    //Retuns a map from the island that disappears into the extra join data.
+    pub fn edge_join(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> HashMap<IslandKey, JoinResult> {
+        let mut renames = HashMap::new();
+        match self.edges[usize::from(i_edge)] {
+            EdgeStatus::Cut(_) => {}
+            _ => { return renames; }
+        }
+        let edge = &self.model[i_edge];
+        let (i_face_a, i_face_b) = match edge.faces() {
+            (fa, Some(fb)) => (fa, fb),
+            _ => { return renames; }
+        };
+
+        let i_island_b = self.island_by_face(i_face_b);
+        if self.contains_face(&self.islands[i_island_b], i_face_a) {
+            // Same island on both sides, nothing to do
+            return renames;
+        }
+
+        // Join both islands
+        let mut island_b = self.islands.remove(i_island_b).unwrap();
+        let i_island_a = self.island_by_face(i_face_a);
+
+        // Keep position of a or b?
+        if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
+            std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
+        }
+        renames.insert(i_island_b, JoinResult {
+            i_edge,
+            i_island: i_island_a,
+            prev_root: island_b.root_face(),
+            prev_rot: island_b.rotation(),
+            prev_loc: island_b.location(),
+        });
+        self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
         renames
     }
 
@@ -218,7 +250,13 @@ impl Papercraft {
         }
         let weight_a = self.island_face_count(a);
         let weight_b = self.island_face_count(b);
-        weight_b > weight_a
+        if weight_b > weight_a {
+            return true;
+        }
+        if weight_b < weight_a {
+            return false;
+        }
+        usize::from(a.root) > usize::from(b.root)
     }
     pub fn contains_face(&self, island: &Island, face: FaceIndex) -> bool {
         let mut found = false;
@@ -307,7 +345,7 @@ impl Papercraft {
     {
         traverse_faces_ex(&self.model, island.root_face(), (), NoMatrixTraverseFace(&self.model, &self.edges), |i, _, ()| visit_face(i))
     }
-    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> HashMap<IslandKey, IslandKey> {
+    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> HashMap<IslandKey, JoinResult> {
         let mut renames = HashMap::new();
         let mut i_edges = vec![i_edge];
         while let Some(i_edge) = i_edges.pop() {
@@ -327,7 +365,7 @@ impl Papercraft {
                 continue;
             }
 
-            let r = self.edge_toggle_cut(i_edge, None);
+            let r = self.edge_join(i_edge, None);
             if r.is_empty() {
                 continue;
             }
@@ -539,8 +577,21 @@ impl Island {
     pub fn root_face(&self) -> FaceIndex {
         self.root
     }
+    pub fn rotation(&self) -> Rad<f32> {
+        self.rot
+    }
+    pub fn location(&self) -> Vector2 {
+        self.loc
+    }
     pub fn matrix(&self) -> Matrix3 {
         self.mx
+    }
+    pub fn reset_transformation(&mut self, root_face: FaceIndex, rot: Rad<f32>, loc: Vector2) {
+        //WARNING: root_face should be already of this island
+        self.root = root_face;
+        self.rot = rot;
+        self.loc = loc;
+        self.recompute_matrix();
     }
     pub fn translate(&mut self, delta: Vector2) {
         self.loc += delta;

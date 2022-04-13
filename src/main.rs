@@ -79,7 +79,7 @@ fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("overlap").unwrap().change_state(&false.to_variant());
 }
 
-fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>) {
+fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
@@ -607,6 +607,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
         move |_w, _ev|  {
             let mut ctx = ctx.borrow_mut();
             ctx.data.grabbed_island = false;
+            ctx.data.rotation_center = None;
             ctx.set_scroll_timer(None);
             Inhibit(true)
         }
@@ -755,14 +756,14 @@ fn main() {
     let app = gtk::Application::new(None,
         gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE
     );
-    app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::Filename, "Import a WaveOBJ file", None);
+    app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::String, "Import a WaveOBJ file", None);
     let imports = Rc::new(RefCell::new(None));
     app.connect_handle_local_options(clone!(
         @strong imports =>
         move |_app, dict| {
             dbg!("local_option");
-            //It should be a OsString but that gets an \0 at the end that breaks everything
-            let s: Option<PathBuf> = dict.lookup("import").unwrap();
+            //It should be a OptionArg::Filename and a PathBuf but that gets an \0 at the end that breaks everything
+            let s: Option<String> = dict.lookup("import").unwrap();
             *imports.borrow_mut() = dbg!(s);
             -1
         }
@@ -868,6 +869,7 @@ struct PapercraftContext {
     scroll_timer: Option<glib::SourceId>,
 
     last_cursor_pos: Vector2,
+    rotation_center: Option<Vector2>,
 
     mode: MouseMode,
     show_textures: bool,
@@ -935,6 +937,18 @@ impl Transformation3D {
 struct TransformationPaper {
     ortho: Matrix3,
     mx: Matrix3,
+}
+
+impl TransformationPaper {
+    fn paper_click(&self, size: Vector2, pos: Vector2) -> Vector2 {
+        let x = (pos.x / size.x) * 2.0 - 1.0;
+        let y = -((pos.y / size.y) * 2.0 - 1.0);
+        let click = Point2::new(x, y);
+
+        let mx = self.ortho * self.mx;
+        let mx_inv = mx.invert().unwrap();
+        mx_inv.transform_point(click).to_vec()
+    }
 }
 
 #[derive(Debug)]
@@ -1005,6 +1019,7 @@ impl PapercraftContext {
             grabbed_island: false,
             scroll_timer: None,
             last_cursor_pos: Vector2::zero(),
+            rotation_center: None,
             mode: MouseMode::Face,
             show_textures: true,
             show_tabs: true,
@@ -1744,15 +1759,9 @@ impl PapercraftContext {
             (None, None) => ClickResult::None,
         }
     }
-
     fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
-        let x = (pos.x / size.x) * 2.0 - 1.0;
-        let y = -((pos.y / size.y) * 2.0 - 1.0);
-        let click = Point2::new(x, y);
-
+        let click = self.trans_paper.paper_click(size, pos);
         let mx = self.trans_paper.ortho * self.trans_paper.mx;
-        let mx_inv = mx.invert().unwrap();
-        let click = mx_inv.transform_point(click).to_vec();
 
         let mut hit_edge = None;
         let mut hit_face = None;
@@ -1850,12 +1859,28 @@ impl PapercraftContext {
             self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
         } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.grabbed_island {
             if !self.selected_islands.is_empty() {
+                let rotating = ev_state.contains(gdk::ModifierType::SHIFT_MASK);
+
+                if !rotating {
+                    if let Some(c) = &mut self.rotation_center {
+                        *c += delta;
+                    }
+                }
+
                 for &i_island in &self.selected_islands {
                     if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
                         let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
-                        if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
+                        if rotating {
                             // Rotate island
-                            island.rotate(Deg(delta.y));
+                            let center = *self.rotation_center.get_or_insert(pos);
+                            //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
+                            if (pos - center).magnitude() > 10.0 {
+                                let pcenter = self.trans_paper.paper_click(size, center);
+                                let ppos_prev = self.trans_paper.paper_click(size, pos - delta);
+                                let ppos = self.trans_paper.paper_click(size, pos);
+                                let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
+                                island.rotate(angle, pcenter);
+                            }
                         } else {
                             // Move island
                             island.translate(delta_scaled);

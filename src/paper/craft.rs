@@ -546,8 +546,11 @@ impl Island {
         self.loc += delta;
         self.recompute_matrix();
     }
-    pub fn rotate(&mut self, angle: impl Into<Rad<f32>>) {
-        self.rot = (self.rot + angle.into()).normalize();
+    pub fn rotate(&mut self, angle: impl Into<Rad<f32>>, center: Vector2) {
+        let angle = angle.into();
+        self.rot = (self.rot + angle).normalize();
+        self.loc = center + Matrix2::from_angle(angle) * (self.loc - center);
+
         self.recompute_matrix();
     }
     fn recompute_matrix(&mut self) {

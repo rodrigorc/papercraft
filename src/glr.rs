@@ -428,6 +428,9 @@ macro_rules! attrib {
     }
 }
 
+/// # Safety
+///
+/// This trait returns pointers and size information to OpenGL, if it is wrong it will read out of bounds
 pub unsafe trait UniformField {
     fn apply(&self, count: i32, location: GLint);
 }

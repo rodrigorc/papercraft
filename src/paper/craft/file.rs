@@ -20,7 +20,7 @@ impl Papercraft {
                 let file_name = tex.file_name();
                 zip.start_file(&format!("tex/{file_name}"), options)?;
                 let format = gdk_format_from_extension(Path::new(file_name).extension());
-                let data = pixbuf.save_to_bufferv(&format, &[]).unwrap();
+                let data = pixbuf.save_to_bufferv(format, &[]).unwrap();
                 zip.write_all(&data[..])?;
             }
         }

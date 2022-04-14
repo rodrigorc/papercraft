@@ -547,14 +547,14 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let gl_fixs = ctx.gl_fixs.as_mut().unwrap();
 
             if let Some((rbo_color, rbo_stencil)) = &gl_fixs.rbo_paper {
-                let rb_binder = BinderRenderbuffer::bind(&rbo_color);
+                let rb_binder = BinderRenderbuffer::bind(rbo_color);
                 let multisamples_color = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::RGBA8, width, height);
-                rb_binder.rebind(&rbo_stencil);
+                rb_binder.rebind(rbo_stencil);
                 let multisamples_stencil = glr::try_renderbuffer_storage_multisample(rb_binder.target(), gl::STENCIL_INDEX8, width, height);
                 if multisamples_color.is_some() && multisamples_color == multisamples_stencil {
                     let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
                     let fb_binder = BinderDrawFramebuffer::new();
-                    fb_binder.rebind(&fbo);
+                    fb_binder.rebind(fbo);
                     unsafe {
                         gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo_color.id());
                         gl::FramebufferRenderbuffer(fb_binder.target(), gl::STENCIL_ATTACHMENT, gl::RENDERBUFFER, rbo_stencil.id());
@@ -1697,7 +1697,7 @@ impl PapercraftContext {
 
     fn edge_toggle_cut(&mut self, i_edge: paper::EdgeIndex, priority_face: Option<paper::FaceIndex>) {
         match self.papercraft.edge_status(i_edge) {
-            paper::EdgeStatus::Hidden => { return; }
+            paper::EdgeStatus::Hidden => { }
             paper::EdgeStatus::Joined => {
                 let offset = self.papercraft.options().tab_width * 2.0;
                 self.papercraft.edge_cut(i_edge, Some(offset));
@@ -2150,7 +2150,7 @@ impl GlobalContext {
         unsafe {
              let mut draw_fb_binder = if let Some(fbo) = &gl_fixs.fbo_paper {
                 let binder = BinderDrawFramebuffer::new();
-                binder.rebind(&fbo);
+                binder.rebind(fbo);
                 Some(binder)
             } else {
                 None
@@ -2246,7 +2246,7 @@ impl GlobalContext {
             // If there is an FBO, blit to the real FB
             if draw_fb_binder.take().is_some() { // check and drop
                 let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
-                let _read_fb_binder = BinderReadFramebuffer::bind(&fbo);
+                let _read_fb_binder = BinderReadFramebuffer::bind(fbo);
                 gl::BlitFramebuffer(0, 0, width, height, 0, 0, width, height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
             }
         }
@@ -2262,7 +2262,7 @@ impl GlobalContext {
         let pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y).unwrap();
         let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, filename).unwrap();
         let title = match &self.data.file_name {
-            Some(f) => f.file_stem().map(|s| s.to_string_lossy()).unwrap_or("".into()),
+            Some(f) => f.file_stem().map(|s| s.to_string_lossy()).unwrap_or_else(|| "".into()),
             None => "untitled".into()
         };
         let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
@@ -2354,9 +2354,9 @@ impl GlobalContext {
 
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
                     read_fb_binder.rebind(&fbo);
-                    draw_fb_binder.rebind(&fbo_no_aa);
+                    draw_fb_binder.rebind(fbo_no_aa);
                     gl::BlitFramebuffer(0, 0, page_size_pixels.x, page_size_pixels.y, 0, 0, page_size_pixels.x, page_size_pixels.y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-                    read_fb_binder.rebind(&fbo_no_aa);
+                    read_fb_binder.rebind(fbo_no_aa);
                     draw_fb_binder.rebind(&fbo);
                 }
 

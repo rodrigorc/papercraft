@@ -134,7 +134,7 @@ impl Papercraft {
             }
             angle2 += delta_a;
         }
-        return (best_angle, best_bb);
+        (best_angle, best_bb)
     }
 
     pub fn island_by_face(&self, i_face: FaceIndex) -> IslandKey {

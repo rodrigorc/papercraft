@@ -91,6 +91,10 @@
                         <attribute name='action'>app.view_textures</attribute>
                     </item>
                     <item>
+                        <attribute name='label' translatable='yes'>_3D lines</attribute>
+                        <attribute name='action'>app.3d_lines</attribute>
+                    </item>
+                    <item>
                         <attribute name='label' translatable='yes'>Ta_bs</attribute>
                         <attribute name='action'>app.view_tabs</attribute>
                     </item>

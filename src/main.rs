@@ -75,6 +75,7 @@ fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("mode").unwrap().change_state(&"face".to_variant());
     app.lookup_action("view_textures").unwrap().change_state(&true.to_variant());
     app.lookup_action("view_tabs").unwrap().change_state(&true.to_variant());
+    app.lookup_action("3d_lines").unwrap().change_state(&true.to_variant());
     app.lookup_action("xray_selection").unwrap().change_state(&true.to_variant());
     app.lookup_action("overlap").unwrap().change_state(&false.to_variant());
 }
@@ -363,6 +364,20 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_textures = v.get().unwrap();
                 ctx.wpaper.queue_render();
+                ctx.wscene.queue_render();
+            }
+        }
+    ));
+
+    let view_3d_lines = gio::SimpleAction::new_stateful("3d_lines", None, &true.to_variant());
+    app.add_action(&view_3d_lines);
+    view_3d_lines.connect_change_state(clone!(
+        @strong ctx =>
+        move |a, v| {
+            if let Some(v)  = v {
+                a.set_state(v);
+                let mut ctx = ctx.borrow_mut();
+                ctx.data.show_3d_lines = v.get().unwrap();
                 ctx.wscene.queue_render();
             }
         }
@@ -906,6 +921,7 @@ struct PapercraftContext {
     mode: MouseMode,
     show_textures: bool,
     show_tabs: bool,
+    show_3d_lines: bool,
     xray_selection: bool,
     highlight_overlaps: bool,
     trans_scene: Transformation3D,
@@ -1056,6 +1072,7 @@ impl PapercraftContext {
             mode: MouseMode::Face,
             show_textures: true,
             show_tabs: true,
+            show_3d_lines: true,
             xray_selection: true,
             highlight_overlaps: false,
             trans_scene,
@@ -2112,14 +2129,19 @@ impl GlobalContext {
                 vi += verts.len();
             }
 
-            gl::LineWidth(1.0);
-            gl::Disable(gl::LINE_SMOOTH);
-            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_joint, gl::LINES);
+            if self.data.show_3d_lines {
+                //Joined edges
+                gl::LineWidth(1.0);
+                gl::Disable(gl::LINE_SMOOTH);
+                gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_joint, gl::LINES);
 
-            gl::LineWidth(3.0);
-            gl::Enable(gl::LINE_SMOOTH);
-            gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_cut, gl::LINES);
+                //Cut edges
+                gl::LineWidth(3.0);
+                gl::Enable(gl::LINE_SMOOTH);
+                gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_cut, gl::LINES);
+            }
 
+            //Selected edge
             if self.data.selected_edge.is_some() {
                 gl::LineWidth(5.0);
                 gl::Enable(gl::LINE_SMOOTH);

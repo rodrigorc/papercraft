@@ -86,9 +86,12 @@ impl Papercraft {
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
     }
-    pub fn island_bounding_box(&self, island: &Island) -> (Vector2, Vector2) {
+    pub fn island_bounding_box_angle(&self, island: &Island, angle: Rad<f32>) -> (Vector2, Vector2) {
+        let mx = island.matrix() * Matrix3::from(Matrix2::from_angle(angle));
         let mut vx = Vec::new();
-        self.traverse_faces(island,
+        traverse_faces_ex(&self.model, island.root_face(),
+            mx,
+            NormalTraverseFace(&self.model, &self.edges, self.options.scale),
             |_, face, mx| {
                 let vs = face.index_vertices().map(|v| {
                     let normal = self.face_plane(face);
@@ -98,10 +101,40 @@ impl Papercraft {
                 ControlFlow::Continue(())
             }
         );
+
         let (a, b) = crate::util_3d::bounding_box_2d(vx);
         let m = self.options.tab_width;
         let mm = Vector2::new(m, m);
         (a - mm, b + mm)
+    }
+    pub fn island_best_bounding_box(&self, island: &Island) -> (Rad<f32>, (Vector2, Vector2)) {
+
+        const TRIES: i32 = 60;
+
+        fn bbox_weight(bb: (Vector2, Vector2)) -> f32 {
+            let d = bb.1 - bb.0;
+            d.y
+        }
+
+        let delta_a = Rad::full_turn() / TRIES as f32;
+
+        let mut best_angle = Rad::zero();
+        let mut best_bb = self.island_bounding_box_angle(island, best_angle);
+        let mut best_width = bbox_weight(best_bb);
+
+        let mut angle2 = delta_a;
+        for _ in 1 .. TRIES {
+            let bb2 = self.island_bounding_box_angle(island, angle2);
+            let width2 = bbox_weight(bb2);
+
+            if width2 < best_width {
+                best_width = width2;
+                best_angle = angle2;
+                best_bb = bb2;
+            }
+            angle2 += delta_a;
+        }
+        return (best_angle, best_bb);
     }
 
     pub fn island_by_face(&self, i_face: FaceIndex) -> IslandKey {
@@ -422,22 +455,22 @@ impl Papercraft {
         let mut zero = self.page_position(page) + page_margin;
 
         // The island position cannot be updated while iterating
-        let mut positions = slotmap::SecondaryMap::<IslandKey, Vector2>::new();
+        let mut positions = slotmap::SecondaryMap::<IslandKey, (Rad<f32>, Vector2)>::new();
 
         let mut ordered_islands: Vec<_> = self.islands
             .iter()
             .map(|(i_island, island)| {
-                let bbox = self.island_bounding_box(island);
-                (i_island, bbox)
+                let (angle, bbox) = self.island_best_bounding_box(island);
+                (i_island, angle, bbox)
             })
             .collect();
-        ordered_islands.sort_by_key(|(_, bbox)| {
+        ordered_islands.sort_by_key(|(_, _, bbox)| {
             let w = bbox.1.x - bbox.0.x;
             let h = bbox.1.y - bbox.0.y;
             -(w * h) as i64
         });
 
-        for (i_island, bbox) in ordered_islands {
+        for (i_island, angle, bbox) in ordered_islands {
             let mut next_pos_x = pos_x + bbox.1.x - bbox.0.x;
             if next_pos_x > page_size.x && num_in_row > 0 {
                 next_pos_x -= pos_x;
@@ -456,11 +489,12 @@ impl Papercraft {
             row_height = row_height.max(bbox.1.y - bbox.0.y);
             num_in_row += 1;
 
-            positions.insert(i_island, zero + pos);
+            positions.insert(i_island, (angle, zero + pos));
         }
-        for (i_island, pos) in positions {
+        for (i_island, (angle, pos)) in positions {
             let island = self.island_by_key_mut(i_island).unwrap();
             island.loc += pos;
+            island.rot += angle;
             island.recompute_matrix();
         }
     }

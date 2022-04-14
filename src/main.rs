@@ -1739,8 +1739,8 @@ impl PapercraftContext {
 
     fn islands_renamed(&mut self, renames: &HashMap<paper::IslandKey, paper::JoinResult>) {
         for x in &mut self.selected_islands {
-            while let Some(paper::JoinResult { i_island, .. }) = renames.get(x) {
-                *x = *i_island;
+            while let Some(jr) = renames.get(x) {
+                *x = jr.i_island;
             }
         }
     }
@@ -1990,12 +1990,12 @@ impl PapercraftContext {
                 UndoAction::EdgeCut { i_edge } => {
                     self.papercraft.edge_join(i_edge, None);
                 }
-                UndoAction::EdgeJoin(paper::JoinResult { i_edge, i_island: _, prev_root, prev_rot, prev_loc }) => {
-                    self.papercraft.edge_cut(i_edge, None);
-                    let i_island = self.papercraft.island_by_face(prev_root);
-                    let island = self.papercraft.island_by_key_mut(i_island).unwrap();
+                UndoAction::EdgeJoin(jr) => {
+                    self.papercraft.edge_cut(jr.i_edge, None);
+                    let i_prev_island = self.papercraft.island_by_face(jr.prev_root);
+                    let island = self.papercraft.island_by_key_mut(i_prev_island).unwrap();
 
-                    island.reset_transformation(prev_root, prev_rot, prev_loc);
+                    island.reset_transformation(jr.prev_root, jr.prev_rot, jr.prev_loc);
                 }
             }
         }

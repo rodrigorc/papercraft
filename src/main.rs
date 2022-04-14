@@ -1588,7 +1588,7 @@ impl PapercraftContext {
             }
             if let Some(i_sel_edge) = self.selected_edge {
                 let mut edges_sel = Vec::new();
-                let color = Rgba::new(0.5, 0.5, 1.0, 1.0);
+                let color = if self.mode == MouseMode::Edge { Rgba::new(0.5, 0.5, 1.0, 1.0) } else { Rgba::new(0.0, 0.5, 0.0, 1.0) };
                 let edge = &self.papercraft.model()[i_sel_edge];
                 let p0 = self.papercraft.model()[edge.v0()].pos();
                 let p1 = self.papercraft.model()[edge.v1()].pos();
@@ -2220,7 +2220,7 @@ impl GlobalContext {
 
             // Selected edge
             if self.data.selected_edge.is_some() {
-                u.line_color = Rgba::new(0.5, 0.5, 1.0, 1.0);
+                u.line_color = if self.data.mode == MouseMode::Edge { Rgba::new(0.5, 0.5, 1.0, 1.0) } else { Rgba::new(0.0, 0.5, 0.0, 1.0) };
                 gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
 

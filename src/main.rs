@@ -104,13 +104,31 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
 
     let aquit = gio::SimpleAction::new("quit", None);
     app.add_action(&aquit);
-    aquit.connect_activate(clone!(@strong app => move |_, _| app.quit() ));
+    aquit.connect_activate(clone!(
+        @strong app, @strong ctx =>
+        move |_, _| {
+            let w = ctx.borrow().top_window.clone();
+            w.close();
+    }));
+
+    top_window.connect_delete_event(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let ok = GlobalContext::confirm_if_modified(&ctx, "Quit?");
+            gtk::Inhibit(!ok)
+        }
+    ));
 
     let aopen = gio::SimpleAction::new("open", None);
     app.add_action(&aopen);
     aopen.connect_activate(clone!(
-        @strong  top_window, @strong app =>
+        @strong ctx =>
         move |_, _| {
+            if !GlobalContext::confirm_if_modified(&ctx, "Load model") {
+                return;
+            }
+            let top_window = ctx.borrow().top_window.clone();
+            let app = top_window.application().unwrap();
             let dlg = gtk::FileChooserDialog::with_buttons(
                 Some("Open model"),
                 Some(&top_window),
@@ -150,6 +168,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     aimport.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
+            if !GlobalContext::confirm_if_modified(&ctx, "Import model") {
+                return;
+            }
             let top_window = ctx.borrow().top_window.clone();
             let dlg = gtk::FileChooserDialog::with_buttons(
                 Some("Import OBJ"),
@@ -232,16 +253,17 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     asave.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
-            let ctx = ctx.borrow();
+            let mut ctx = ctx.borrow_mut();
             if let Some(name) = &ctx.data.file_name {
                 ctx.save(name);
-                ctx.set_title(false, Some(&name.display().to_string()));
+                let title = name.display().to_string();
+                ctx.data.modified = false;
+                ctx.set_title(Some(&title));
                 return;
             }
             let app = ctx.top_window.application().unwrap();
             drop(ctx);
             app.lookup_action("save_as").unwrap().activate(None);
-
         }
     ));
 
@@ -285,7 +307,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 }
                 let mut ctx = ctx.borrow_mut();
                 ctx.save(&name);
-                ctx.set_title(false, Some(&name));
+                ctx.data.modified = false;
+                ctx.set_title(Some(&name));
                 ctx.data.file_name = Some(name);
             }
         }
@@ -463,7 +486,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         ctx.data.update_selection();
                     }
                     (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                        ctx.data.undo_stack.push(vec![UndoAction::TabToggle { i_edge } ]);
+                        ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                         ctx.data.papercraft.edge_toggle_tab(i_edge);
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
@@ -608,7 +631,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                         ctx.data.update_selection();
                     }
                     (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                        ctx.data.undo_stack.push(vec![UndoAction::TabToggle { i_edge } ]);
+                        ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                         ctx.data.papercraft.edge_toggle_tab(i_edge);
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
@@ -623,7 +646,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                                 UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
                             })
                             .collect();
-                        ctx.data.undo_stack.push(undo_action);
+                        ctx.push_undo_action(undo_action);
                         ctx.data.grabbed_island = true;
                     }
                     (_, ClickResult::None) => {
@@ -765,7 +788,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 let mut ctx = ctx.borrow_mut();
                 let file_name = f.path();
                 ctx.data = PapercraftContext::from_papercraft(papercraft, file_name.as_deref(), ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
-                ctx.set_title(false, file_name.as_ref());
+                ctx.set_title(file_name.as_ref());
                 ctx.top_window.clone()
             };
             app_set_default_options(&w.application().unwrap());
@@ -905,6 +928,7 @@ struct PapercraftContext {
     file_name: Option<PathBuf>,
     papercraft: Papercraft,
     undo_stack: Vec<Vec<UndoAction>>,
+    modified: bool,
 
     gl_objs: Option<GLObjects>,
 
@@ -1054,6 +1078,7 @@ impl PapercraftContext {
         };
         (trans_scene, trans_paper)
     }
+
     fn from_papercraft(papercraft: Papercraft, file_name: Option<&Path>, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
         let (trans_scene, trans_paper) = Self::default_transformations(sz_scene, sz_paper, papercraft.options());
 
@@ -1061,6 +1086,7 @@ impl PapercraftContext {
             file_name: file_name.map(|f| f.to_owned()),
             papercraft,
             undo_stack: Vec::new(),
+            modified: false,
             gl_objs: None,
             selected_face: None,
             selected_edge: None,
@@ -1542,6 +1568,7 @@ impl PapercraftContext {
             gl_objs.paper_vertices_margin.set(margin_vertices);
         }
     }
+
     fn scene_edge_build(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let mut edges_joint = Vec::new();
@@ -1841,6 +1868,7 @@ impl PapercraftContext {
             (None, None) => ClickResult::None,
         }
     }
+
     fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
         let click = self.trans_paper.paper_click(size, pos);
         let mx = self.trans_paper.ortho * self.trans_paper.mx;
@@ -1976,6 +2004,7 @@ impl PapercraftContext {
             self.set_selection(selection, false, false);
         }
     }
+
     fn pack_islands(&mut self) {
         let undo_actions = self.papercraft.islands()
             .map(|(_, island)| {
@@ -1987,6 +2016,7 @@ impl PapercraftContext {
         self.paper_build();
         self.update_selection();
     }
+
     fn undo_action(&mut self) {
         let action_pack = match self.undo_stack.pop() {
             None => return,
@@ -2030,7 +2060,8 @@ impl GlobalContext {
         let sz_paper = self.wpaper.size_as_vector();
         let file_name = file_name.as_ref().file_name();
         self.data = PapercraftContext::from_papercraft(papercraft, None, sz_scene, sz_paper);
-        self.set_title(true, file_name);
+        self.data.modified = true;
+        self.set_title(file_name);
         self.wscene.queue_render();
         self.wpaper.queue_render();
     }
@@ -2041,8 +2072,8 @@ impl GlobalContext {
         self.data.papercraft.save(f).unwrap();
     }
 
-    fn set_title(&self, unsaved: bool, file_name: Option<impl AsRef<Path>>) {
-        let unsaved = if unsaved { "*" } else { "" };
+    fn set_title(&self, file_name: Option<impl AsRef<Path>>) {
+        let unsaved = if self.data.modified { "*" } else { "" };
         let app_name = "Papercraft";
         let title = match &file_name {
             Some(f) =>
@@ -2053,11 +2084,34 @@ impl GlobalContext {
         self.top_window.set_title(&title);
     }
 
+    fn confirm_if_modified(ctx: &RefCell<GlobalContext>, title: &str) -> bool {
+        if !ctx.borrow().data.modified {
+            return true;
+        }
+        let dlg = gtk::MessageDialog::builder()
+            .title(title)
+            .text("The model has not been save, continue anyway?")
+            .message_type(gtk::MessageType::Question)
+            .buttons(gtk::ButtonsType::OkCancel)
+            .build();
+        let res = dlg.run();
+        unsafe { dlg.destroy(); }
+        res == gtk::ResponseType::Ok
+    }
+
     fn set_scroll_timer(&mut self, tmr: Option<glib::SourceId>) {
         if let Some(t) = self.data.scroll_timer.take() {
             t.remove();
         }
         self.data.scroll_timer = tmr;
+    }
+
+    fn push_undo_action(&mut self, action: Vec<UndoAction>) {
+        self.data.undo_stack.push(action);
+        if !self.data.modified {
+            self.data.modified = true;
+            self.set_title(self.data.file_name.as_ref());
+        }
     }
 
     fn build_gl_fixs(&mut self) {

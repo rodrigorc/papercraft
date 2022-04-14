@@ -1240,13 +1240,13 @@ impl PapercraftContext {
                     .. v0
                 };
 
-                //TODO: configurable
+                let v_len = v.magnitude();
                 let visible_line_len = self.papercraft.options().fold_line_len;
 
                 let (new_lines_, new_lines_2_);
                 let new_lines: &[_] = if visible_line_len.is_some() && (edge_status == paper::EdgeStatus::Joined || fold_tab) {
-                    let visible_line_len = visible_line_len.unwrap();
-                    let vn = v.normalize_to(visible_line_len);
+                    let visible_line_len = visible_line_len.unwrap().min(v_len / 2.0);
+                    let vn = v * visible_line_len / v_len;
                     let dash_delta = if dotted { 1.5 } else { 0.5 };
                     v0.line_dash = 0.51;
                     v1.line_dash = 0.99;

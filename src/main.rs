@@ -1,3 +1,4 @@
+use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
     Deg, Rad,
@@ -200,8 +201,10 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             unsafe { dlg.destroy(); }
 
             if let Some(name) = name {
-                ctx.borrow_mut().import_waveobj(name);
-                app_set_default_options(&top_window.application().unwrap());
+                let e = ctx.borrow_mut().import_waveobj(name);
+                if show_error(e) {
+                    app_set_default_options(&top_window.application().unwrap());
+                }
             }
         }
     ));
@@ -243,7 +246,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 if name.extension().is_none() {
                     name.set_extension("pdf");
                 }
-                ctx.borrow().export_pdf(name);
+                let e = ctx.borrow().export_pdf(&name)
+                    .with_context(|| format!("Error exporting to {}", name.display()));
+                show_error(e);
             }
         }
     ));
@@ -255,10 +260,12 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         move |_, _| {
             let mut ctx = ctx.borrow_mut();
             if let Some(name) = &ctx.data.file_name {
-                ctx.save(name);
-                let title = name.display().to_string();
-                ctx.data.modified = false;
-                ctx.set_title(Some(&title));
+                let e = ctx.save(name);
+                if show_error(e) {
+                    let title = name.display().to_string();
+                    ctx.data.modified = false;
+                    ctx.set_title(Some(&title));
+                }
                 return;
             }
             let app = ctx.top_window.application().unwrap();
@@ -306,10 +313,12 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                     name.set_extension("craft");
                 }
                 let mut ctx = ctx.borrow_mut();
-                ctx.save(&name);
-                ctx.data.modified = false;
-                ctx.set_title(Some(&name));
-                ctx.data.file_name = Some(name);
+                let e = ctx.save(&name);
+                if show_error(e) {
+                    ctx.data.modified = false;
+                    ctx.set_title(Some(&name));
+                    ctx.data.file_name = Some(name);
+                }
             }
         }
     ));
@@ -772,36 +781,57 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         move |_app| {
             dbg!("activate");
             let w = ctx.borrow().top_window.clone();
-
             w.show_all();
             w.present();
+            app_set_default_options(&w.application().unwrap());
     	}
     ));
+
+    fn app_open(ctx: &RefCell<GlobalContext>, file: &gio::File) -> Result<()> {
+        let (data, _) = file.load_contents(gio::Cancellable::NONE)?;
+        let papercraft = Papercraft::load(std::io::Cursor::new(&data[..]))?;
+        let mut ctx = ctx.borrow_mut();
+        let file_name = file.path();
+        ctx.data = PapercraftContext::from_papercraft(papercraft, file_name.as_deref(), ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
+        ctx.set_title(file_name.as_ref());
+        Ok(())
+    }
+
 	app.connect_open(clone!(
         @strong ctx =>
         move |_app, files, _hint| {
-            dbg!("open");
-            let f = &files[0];
-            let (data, _) = f.load_contents(gio::Cancellable::NONE).unwrap();
-            let papercraft = Papercraft::load(std::io::Cursor::new(&data[..])).unwrap();
-            let w = {
-                let mut ctx = ctx.borrow_mut();
-                let file_name = f.path();
-                ctx.data = PapercraftContext::from_papercraft(papercraft, file_name.as_deref(), ctx.wscene.size_as_vector(), ctx.wpaper.size_as_vector());
-                ctx.set_title(file_name.as_ref());
-                ctx.top_window.clone()
-            };
-            app_set_default_options(&w.application().unwrap());
-
+            let w = ctx.borrow().top_window.clone();
             w.show_all();
             w.present();
+            app_set_default_options(&w.application().unwrap());
+
+            let e = app_open(&ctx, &files[0]);
+            show_error(e);
         }
 	));
 
     let imports = imports.borrow();
     if let Some(args) = &*imports {
-        ctx.borrow_mut().import_waveobj(args);
+        let e = ctx.borrow_mut().import_waveobj(args);
+        show_error(e);
     }
+}
+
+fn show_error(e: Result<()>) -> bool {
+    let e = match e {
+        Ok(()) => return true,
+        Err(e) => e,
+    };
+
+    let dlg = gtk::MessageDialog::builder()
+        .title("Error")
+        .text(&format!("{:?}", e))
+        .message_type(gtk::MessageType::Error)
+        .buttons(gtk::ButtonsType::Ok)
+        .build();
+    dlg.run();
+    unsafe { dlg.destroy(); }
+    false
 }
 
 fn main() {
@@ -839,16 +869,16 @@ fn main() {
 fn scene_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
     ctx.build_gl_fixs();
-    ctx.gl_fixs.as_mut().unwrap().vao_scene = Some(glr::VertexArray::generate().unwrap());
+    ctx.gl_fixs.as_mut().unwrap().vao_scene = Some(glr::VertexArray::generate());
 }
 
 fn paper_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
     ctx.build_gl_fixs();
     let gl_fixs = ctx.gl_fixs.as_mut().unwrap();
-    gl_fixs.vao_paper = Some(glr::VertexArray::generate().unwrap());
-    gl_fixs.fbo_paper = Some(glr::Framebuffer::generate().unwrap());
-    gl_fixs.rbo_paper = Some((glr::Renderbuffer::generate().unwrap(), glr::Renderbuffer::generate().unwrap()));
+    gl_fixs.vao_paper = Some(glr::VertexArray::generate());
+    gl_fixs.fbo_paper = Some(glr::Framebuffer::generate());
+    gl_fixs.rbo_paper = Some((glr::Renderbuffer::generate(), glr::Renderbuffer::generate()));
 }
 
 struct GLFixedObjects {
@@ -1117,7 +1147,7 @@ impl PapercraftContext {
                     match pixbuf {
                         None => {
                             // Empty texture is just a single white texel
-                            let empty = glr::Texture::generate().unwrap();
+                            let empty = glr::Texture::generate();
                             unsafe {
                                 gl::BindTexture(gl::TEXTURE_2D, empty.id());
                                 gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGB8 as i32, 1, 1, 0, gl::RGB, gl::UNSIGNED_BYTE, [0x80u8, 0x80u8, 0x80u8].as_ptr() as *const _);
@@ -1135,7 +1165,7 @@ impl PapercraftContext {
                                 _ => gl::RED,
                             };
 
-                            let tex = glr::Texture::generate().unwrap();
+                            let tex = glr::Texture::generate();
                             unsafe {
                                 gl::BindTexture(gl::TEXTURE_2D, tex.id());
                                 gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
@@ -1284,11 +1314,19 @@ impl PapercraftContext {
                 };
 
                 let v_len = v.magnitude();
-                let visible_line_len = self.papercraft.options().fold_line_len;
-
                 let (new_lines_, new_lines_2_);
-                let new_lines: &[_] = if visible_line_len.is_some() && (edge_status == paper::EdgeStatus::Joined || fold_tab) {
-                    let visible_line_len = visible_line_len.unwrap().min(v_len / 2.0);
+
+                let (has_visible_line_len, visible_line_len) =
+                    if edge_status == paper::EdgeStatus::Joined || fold_tab {
+                        match self.papercraft.options().fold_line_len {
+                            Some(x) => (true, x.min(v_len / 2.0)),
+                            None => (false, 0.0),
+                        }
+                    } else {
+                        (false, 0.0)
+                    };
+
+                let new_lines: &[_] = if has_visible_line_len {
                     let vn = v * visible_line_len / v_len;
                     let dash_delta = if dotted { 1.5 } else { 0.5 };
                     v0.line_dash = 0.51;
@@ -2053,8 +2091,9 @@ impl PapercraftContext {
 }
 
 impl GlobalContext {
-    fn import_waveobj(&mut self, file_name: impl AsRef<Path>) {
-        let papercraft = Papercraft::import_waveobj(&file_name);
+    fn import_waveobj(&mut self, file_name: impl AsRef<Path>) -> Result<()> {
+        let papercraft = Papercraft::import_waveobj(&file_name)
+            .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
 
         let sz_scene = self.wscene.size_as_vector();
         let sz_paper = self.wpaper.size_as_vector();
@@ -2064,12 +2103,17 @@ impl GlobalContext {
         self.set_title(file_name);
         self.wscene.queue_render();
         self.wpaper.queue_render();
+        Ok(())
     }
 
-    fn save(&self, filename: impl AsRef<Path>) {
-        let f = std::fs::File::create(filename).unwrap();
+    fn save(&self, file_name: impl AsRef<Path>) -> Result<()> {
+        let f = std::fs::File::create(&file_name)
+            .with_context(|| format!("Error creating file {}", file_name.as_ref().display()))?;
+
         let f = std::io::BufWriter::new(f);
-        self.data.papercraft.save(f).unwrap();
+        self.data.papercraft.save(f)
+            .with_context(|| format!("Error saving file {}", file_name.as_ref().display()))?;
+        Ok(())
     }
 
     fn set_title(&self, file_name: Option<impl AsRef<Path>>) {
@@ -2328,30 +2372,31 @@ impl GlobalContext {
         }
     }
 
-    fn export_pdf(&self, filename: impl AsRef<Path>) {
+    fn export_pdf(&self, file_name: impl AsRef<Path>) -> Result<()> {
         let page_size_mm = Vector2::from(self.data.papercraft.options().page_size);
         let page_size_inches = page_size_mm / 25.4;
         let page_size_dots = page_size_inches * 72.0;
         let page_size_pixels = page_size_inches * PDF_RESOLUTION;
         let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
-        let pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y).unwrap();
-        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, filename).unwrap();
+        let pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y)
+            .ok_or_else(|| anyhow!("Unable to create output pixbuf"))?;
+        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
         let title = match &self.data.file_name {
             Some(f) => f.file_stem().map(|s| s.to_string_lossy()).unwrap_or_else(|| "".into()),
             None => "untitled".into()
         };
         let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
         let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, "Papercraft (url:TODO)");
-        let cr = cairo::Context::new(&pdf).unwrap();
+        let cr = cairo::Context::new(&pdf)?;
 
         unsafe {
             self.wpaper.make_current();
 
             gl::PixelStorei(gl::PACK_ROW_LENGTH, pixbuf.rowstride() / 4);
 
-            let fbo = glr::Framebuffer::generate().unwrap();
-            let rbo = glr::Renderbuffer::generate().unwrap();
+            let fbo = glr::Framebuffer::generate();
+            let rbo = glr::Renderbuffer::generate();
 
             let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
             let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
@@ -2364,11 +2409,11 @@ impl GlobalContext {
                 None
             } else {
                 // multisample buffers cannot be read directly, it has to be copied to a regular one.
-                let rbo2 = glr::Renderbuffer::generate().unwrap();
+                let rbo2 = glr::Renderbuffer::generate();
                 rb_binder.rebind(&rbo2);
                 gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
 
-                let fbo2 = glr::Framebuffer::generate().unwrap();
+                let fbo2 = glr::Framebuffer::generate();
                 read_fb_binder.rebind(&fbo2);
                 gl::FramebufferRenderbuffer(read_fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo2.id());
                 Some((rbo2, fbo2))
@@ -2455,6 +2500,7 @@ impl GlobalContext {
             drop(cr);
             drop(pdf);
         }
+        Ok(())
     }
 }
 

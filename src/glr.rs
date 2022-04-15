@@ -5,10 +5,18 @@ use std::{ffi::CString, cell::Cell, marker::PhantomData};
 use gl::types::*;
 use smallvec::SmallVec;
 
-#[derive(Debug)]
-pub struct Error;
+#[derive(Debug, Clone)]
+pub struct GLError(GLuint);
+pub type Result<T> = std::result::Result<T, GLError>;
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub fn check_gl() -> Result<()> {
+    let err = unsafe { gl::GetError() };
+    if err == gl::NO_ERROR {
+        Ok(())
+    } else {
+        Err(GLError(err))
+    }
+}
 
 pub struct Texture {
     id: u32,
@@ -23,11 +31,11 @@ impl Drop for Texture {
 }
 
 impl Texture {
-    pub fn generate() -> Result<Texture> {
+    pub fn generate() -> Texture {
         unsafe {
             let mut id = 0;
             gl::GenTextures(1, &mut id);
-            Ok(Texture { id })
+            Texture { id }
         }
     }
     pub fn id(&self) -> u32 {
@@ -99,9 +107,6 @@ impl Program {
                 None => None,
             };
             let id = gl::CreateProgram();
-            if id == 0 {
-                return Err(Error);
-            }
             let mut prg = Program {
                 id,
                 uniforms: Vec::new(),
@@ -123,7 +128,7 @@ impl Program {
                 let bmsg = &buf[0..len_msg as usize];
                 let msg = String::from_utf8_lossy(bmsg);
                 eprintln!("{msg}");
-                return Err(Error);
+                return Err(GLError(gl::GetError()));
             }
 
             let mut nu = 0;
@@ -188,6 +193,9 @@ impl Program {
             U: UniformProvider,
             AS: AttribProviderList,
     {
+        if attribs.is_empty() {
+            return;
+        }
         unsafe {
             gl::UseProgram(self.id);
 
@@ -197,7 +205,9 @@ impl Program {
 
             let _bufs = attribs.bind(self);
             gl::DrawArrays(primitive, 0, attribs.len() as i32);
-            //dbg!(gl::GetError());
+            if let Err(e) = check_gl() {
+                eprintln!("Error {:?}", e);
+            }
         }
     }
 }
@@ -218,10 +228,7 @@ impl Shader {
     fn compile(ty: GLenum, source: &str) -> Result<Shader> {
         unsafe {
             let id = gl::CreateShader(ty);
-            if id == 0 {
-                dbg!(gl::GetError());
-                return Err(Error);
-            }
+            check_gl()?;
             let sh = Shader{id};
             let mut lines = Vec::new();
             let mut lens = Vec::new();
@@ -242,7 +249,7 @@ impl Shader {
                 let bmsg = &buf[0..len_msg as usize];
                 let msg = String::from_utf8_lossy(bmsg);
                 eprintln!("{msg}");
-                return Err(Error);
+                return Err(GLError(gl::GetError()));
             }
             Ok(sh)
         }
@@ -314,6 +321,9 @@ pub trait AttribProviderList {
     type KeepType;
     fn len(&self) -> usize;
     fn bind(&self, p: &Program) -> Self::KeepType;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 // This is quite inefficient, but easy to use
@@ -325,7 +335,7 @@ impl<A: AttribProvider> AttribProviderList for &[A] {
         <[A]>::len(self)
     }
     fn bind(&self, p: &Program) -> (Buffer, SmallVec<[EnablerVertexAttribArray; 8]>) {
-        let buf = Buffer::generate().unwrap();
+        let buf = Buffer::generate();
         let mut vas = SmallVec::new();
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, buf.id());
@@ -597,7 +607,7 @@ impl<A: AttribProvider > From<Vec<A>> for DynamicVertexArray<A> {
     fn from(data: Vec<A>) -> Self {
         DynamicVertexArray {
             data,
-            buf: Buffer::generate().unwrap(),
+            buf: Buffer::generate(),
             buf_len: Cell::new(0),
             dirty: Cell::new(true),
         }
@@ -685,11 +695,11 @@ impl Drop for Buffer {
 }
 
 impl Buffer {
-    pub fn generate() -> Result<Buffer> {
+    pub fn generate() -> Buffer {
         unsafe {
             let mut id = 0;
             gl::GenBuffers(1, &mut id);
-            Ok(Buffer { id })
+            Buffer { id }
         }
     }
     pub fn id(&self) -> u32 {
@@ -710,11 +720,11 @@ impl Drop for VertexArray {
 }
 
 impl VertexArray {
-    pub fn generate() -> Result<VertexArray> {
+    pub fn generate() -> VertexArray {
         unsafe {
             let mut id = 0;
             gl::GenVertexArrays(1, &mut id);
-            Ok(VertexArray { id })
+            VertexArray { id }
         }
     }
     pub fn id(&self) -> u32 {
@@ -735,11 +745,11 @@ impl Drop for Renderbuffer {
 }
 
 impl Renderbuffer {
-    pub fn generate() -> Result<Renderbuffer> {
+    pub fn generate() -> Renderbuffer {
         unsafe {
             let mut id = 0;
             gl::GenRenderbuffers(1, &mut id);
-            Ok(Renderbuffer { id })
+            Renderbuffer { id }
         }
     }
     pub fn id(&self) -> u32 {
@@ -787,11 +797,11 @@ impl Drop for Framebuffer {
 }
 
 impl Framebuffer {
-    pub fn generate() -> Result<Framebuffer> {
+    pub fn generate() -> Framebuffer {
         unsafe {
             let mut id = 0;
             gl::GenFramebuffers(1, &mut id);
-            Ok(Framebuffer { id })
+            Framebuffer { id }
         }
     }
     #[allow(unused)]

@@ -3,6 +3,7 @@ use std::collections::{HashSet, HashMap};
 use cgmath::{InnerSpace, Rad, Angle};
 use gdk_pixbuf::Pixbuf;
 use serde::{Serialize, Deserialize};
+use anyhow::Result;
 
 use crate::waveobj;
 use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3};
@@ -325,10 +326,16 @@ impl Model {
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()
     }
-    pub fn reload_textures<F: FnMut(&str) -> Option<Pixbuf>>(&mut self, mut f: F) {
+    pub fn reload_textures<F: FnMut(&str) -> Result<Pixbuf>>(&mut self, mut f: F) -> Result<()> {
         for tex in &mut self.textures {
-            tex.pixbuf = f(&tex.file_name);
+            tex.pixbuf = if tex.file_name.is_empty() {
+                None
+            } else {
+                let img = f(&tex.file_name)?;
+                Some(img)
+            };
         }
+        Ok(())
     }
     pub fn face_to_face_edge_matrix(&self, scale: f32, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
         let v0 = self[edge.v0()].pos();

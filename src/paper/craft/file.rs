@@ -4,11 +4,12 @@ use cgmath::{One, EuclideanSpace, Transform, Rad, Zero};
 use gdk_pixbuf::traits::PixbufLoaderExt;
 use slotmap::SlotMap;
 use crate::{waveobj, util_3d};
+use anyhow::{Result, anyhow, Context};
 
 use super::*;
 
 impl Papercraft {
-    pub fn save<W: Write + Seek>(&self, w: W) -> std::io::Result<()> {
+    pub fn save<W: Write + Seek>(&self, w: W) -> Result<()> {
         let mut zip = zip::ZipWriter::new(w);
         let options = zip::write::FileOptions::default();
 
@@ -20,7 +21,7 @@ impl Papercraft {
                 let file_name = tex.file_name();
                 zip.start_file(&format!("tex/{file_name}"), options)?;
                 let format = gdk_format_from_extension(Path::new(file_name).extension());
-                let data = pixbuf.save_to_bufferv(format, &[]).unwrap();
+                let data = pixbuf.save_to_bufferv(format, &[])?;
                 zip.write_all(&data[..])?;
             }
         }
@@ -28,46 +29,56 @@ impl Papercraft {
         Ok(())
     }
 
-    pub fn load<R: Read + Seek>(r: R) -> std::io::Result<Papercraft> {
+    pub fn load<R: Read + Seek>(r: R) -> Result<Papercraft> {
         let mut zip = zip::ZipArchive::new(r)?;
         let mut zmodel = zip.by_name("model.json")?;
         let mut papercraft: Papercraft = serde_json::from_reader(&mut zmodel)?;
         drop(zmodel);
 
         papercraft.model.reload_textures(|file_name| {
-            let mut ztex = zip.by_name(&format!("tex/{file_name}")).ok()?;
+            let mut ztex = zip.by_name(&format!("tex/{file_name}"))?;
             let mut data = Vec::new();
-            ztex.read_to_end(&mut data).ok()?;
+            ztex.read_to_end(&mut data)?;
 
             let pbl = gdk_pixbuf::PixbufLoader::new();
-            pbl.write(&data).ok().unwrap();
-            pbl.close().ok().unwrap();
-            let img = pbl.pixbuf().unwrap();
-            Some(img)
-        });
+            pbl.write(&data)?;
+            pbl.close()?;
+            let img = pbl.pixbuf().ok_or_else(|| anyhow!("Invalid texture image"))?;
+            Ok(img)
+        })?;
         Ok(papercraft)
     }
 
-    pub fn import_waveobj(file_name: impl AsRef<Path>) -> Papercraft {
-        let f = std::fs::File::open(file_name).unwrap();
+    pub fn import_waveobj(file_name: impl AsRef<Path>) -> Result<Papercraft> {
+        let f = std::fs::File::open(file_name.as_ref())?;
         let f = std::io::BufReader::new(f);
-        let (matlib, obj) = waveobj::Model::from_reader(f).unwrap();
+        let (matlib, obj) = waveobj::Model::from_reader(f)?;
 
         let mut texture_map = HashMap::new();
 
         // Textures are read from the .mtl file
-        let f = std::fs::File::open(matlib).unwrap();
+        let err_mtl = || format!("Error reading matlib file {matlib}");
+        let f = std::fs::File::open(&matlib)
+            .with_context(err_mtl)?;
         let f = std::io::BufReader::new(f);
 
-        for lib in waveobj::Material::from_reader(f).unwrap()  {
+        for lib in waveobj::Material::from_reader(f)
+            .with_context(err_mtl)?
+        {
             if let Some(map) = lib.map() {
+                let err_map = || format!("Error reading texture file {map}");
                 let pbl = gdk_pixbuf::PixbufLoader::new();
-                let data = std::fs::read(map).unwrap();
-                pbl.write(&data).ok().unwrap();
-                pbl.close().ok().unwrap();
-                let img = pbl.pixbuf().unwrap();
-                //dbg!(img.width(), img.height(), img.rowstride(), img.bits_per_sample(), img.n_channels());
-                let map_name = Path::new(map).file_name().unwrap().to_str().unwrap();
+
+                let data = std::fs::read(map)
+                    .with_context(err_map)?;
+                pbl.write(&data)
+                    .with_context(err_map)?;
+                pbl.close()
+                    .with_context(err_map)?;
+                let img = pbl.pixbuf().ok_or_else(|| anyhow!(err_map()))?;
+
+                let map_name = Path::new(map).file_name().and_then(|f| f.to_str())
+                    .ok_or_else(|| anyhow!("Invalid texture name"))?;
                 texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
             }
         }
@@ -132,7 +143,7 @@ impl Papercraft {
             islands,
         };
         papercraft.pack_islands();
-        papercraft
+        Ok(papercraft)
     }
 }
 

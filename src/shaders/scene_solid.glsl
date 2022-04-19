@@ -7,10 +7,11 @@ uniform vec3 lights[2];
 in vec3 pos;
 in vec3 normal;
 in vec2 uv;
+in float mat;
 in vec4 color;
 in int top;
 
-out vec2 v_uv;
+out vec3 v_uv;
 out float v_light;
 out vec4 v_color;
 
@@ -24,9 +25,9 @@ void main(void) {
         light += diffuse;
     }
     v_light = light;
-    v_uv = uv;
+    v_uv = vec3(uv, mat);
     v_color = color;
-    if (top != 0.0) {
+    if (top != 0) {
         gl_Position.z = 0.0;
     }
 }
@@ -35,9 +36,10 @@ void main(void) {
 
 #version 140
 
-uniform sampler2D tex;
+uniform bool texturize;
+uniform sampler2DArray tex;
 
-in vec2 v_uv;
+in vec3 v_uv;
 in float v_light;
 in vec4 v_color;
 out vec4 out_frag_color;
@@ -47,7 +49,13 @@ void main(void) {
 
     if (gl_FrontFacing)
     {
-        base = mix(texture2D(tex, v_uv), vec4(v_color.rgb, 1.0), v_color.a);
+        vec4 c;
+        if (texturize) {
+            c = texture(tex, v_uv);
+        } else {
+            c = vec4(0.5, 0.5, 0.5, 1.0);
+        }
+        base = mix(c, vec4(v_color.rgb, 1.0), v_color.a);
     }
     else
     {

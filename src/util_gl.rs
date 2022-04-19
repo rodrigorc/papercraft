@@ -1,5 +1,6 @@
 use crate::glr::{self, Rgba};
 use crate::util_3d::*;
+use crate::paper::MaterialIndex;
 
 //////////////////////////////////////
 // Uniforms and vertices
@@ -11,15 +12,23 @@ crate::uniform! {
         pub mnormal: Matrix3,
         pub tex: i32,
         pub line_top: i32,
+        pub texturize: i32,
     }
     pub struct Uniforms2D {
         pub m: Matrix3,
         pub tex: i32,
         pub frac_dash: f32,
         pub line_color: Rgba,
+        pub texturize: i32,
     }
     pub struct UniformQuad {
         pub color: Rgba,
+    }
+}
+
+unsafe impl glr::AttribField for MaterialIndex {
+    fn detail() -> (usize, gl::types::GLenum) {
+        u32::detail()
     }
 }
 
@@ -30,6 +39,7 @@ crate::attrib! {
         pub pos: Vector3,
         pub normal: Vector3,
         pub uv: Vector2,
+        pub mat: MaterialIndex,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -42,12 +52,14 @@ crate::attrib! {
     pub struct MVertex2D {
         pub pos: Vector2,
         pub uv: Vector2,
+        pub mat: MaterialIndex,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MVertex2DColor {
         pub pos: Vector2,
         pub uv: Vector2,
+        pub mat: MaterialIndex,
         pub color: Rgba,
     }
     #[derive(Copy, Clone, Debug)]

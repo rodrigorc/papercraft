@@ -5,6 +5,7 @@ edition = "2021"
 
 [profile.release]
 strip = "symbols"
+lto = true
 
 [dependencies]
 gtk = { version = "*", features = ["v3_22"] }

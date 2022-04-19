@@ -7,6 +7,15 @@ use smallvec::SmallVec;
 
 #[derive(Debug, Clone)]
 pub struct GLError(GLuint);
+
+impl std::error::Error for GLError {
+}
+impl std::fmt::Display for GLError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
 pub type Result<T> = std::result::Result<T, GLError>;
 
 pub fn check_gl() -> Result<()> {
@@ -323,6 +332,18 @@ pub trait AttribProviderList {
     fn bind(&self, p: &Program) -> Self::KeepType;
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct NilVertexAttrib(pub usize);
+
+impl AttribProviderList for NilVertexAttrib {
+    type KeepType = ();
+    fn len(&self) -> usize {
+        self.0
+    }
+    fn bind(&self, _p: &Program) {
     }
 }
 

@@ -1,9 +1,27 @@
 #version 140
 
-in vec2 pos;
+/*
+A single triangle can cover the whole viewport:
+ 3 *
+   | \
+ 2 +  +
+   |    \
+ 1 +-----+
+   |     | \
+ 0 +  +  |  +
+   |     |    \
+-1 *--+--+--+--*
+  -1  0  1  2  3
+*/
+
+vec2 positions[3] = vec2[](
+    vec2(-1.0, -1.0),
+    vec2(3.0, -1.0),
+    vec2(-1.0, 3.0)
+);
 
 void main(void) {
-    gl_Position = vec4(pos, 0.0, 1.0);
+    gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
 }
 
 ###

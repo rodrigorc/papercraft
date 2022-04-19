@@ -1,6 +1,7 @@
 use crate::glr::{self, Rgba};
 use crate::util_3d::*;
 use crate::paper::MaterialIndex;
+use anyhow::{Result, anyhow};
 
 //////////////////////////////////////
 // Uniforms and vertices
@@ -72,11 +73,6 @@ crate::attrib! {
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
-    pub struct MVertexQuad {
-        pub pos: Vector2,
-    }
-    #[derive(Copy, Clone, Debug)]
-    #[repr(C)]
     pub struct MStatus3D {
         pub color: Rgba,
         pub top: u8,
@@ -93,22 +89,23 @@ pub const MSTATUS_UNSEL: MStatus3D = MStatus3D { color: Rgba::new(0.0, 0.0, 0.0,
 pub const MSTATUS_SEL: MStatus3D = MStatus3D { color: Rgba::new(0.0, 0.0, 1.0, 0.5), top: 1 };
 pub const MSTATUS_HI: MStatus3D = MStatus3D { color: Rgba::new(1.0, 0.0, 0.0, 0.75), top: 1 };
 
-pub fn program_from_source(shaders: &str) -> glr::Program {
-    let split = shaders.find("###").unwrap();
+pub fn program_from_source(shaders: &str) -> Result<glr::Program> {
+    let split = shaders.find("###").ok_or_else(|| anyhow!("shader marker not found"))?;
     let vertex = &shaders[.. split];
     let frag = &shaders[split ..];
-    let split_2 = frag.find('\n').unwrap();
+    let split_2 = frag.find('\n').ok_or_else(|| anyhow!("shader marker not valid"))?;
 
     let mut frag = &frag[split_2 ..];
 
     let geom = if let Some(split) = frag.find("###") {
         let geom = &frag[split ..];
         frag = &frag[.. split];
-        let split_2 = geom.find('\n').unwrap();
+        let split_2 = geom.find('\n').ok_or_else(|| anyhow!("shader marker not valid"))?;
         Some(&geom[split_2 ..])
     } else {
         None
     };
 
-    glr::Program::from_source(vertex, frag, geom).unwrap()
+    let prg = glr::Program::from_source(vertex, frag, geom)?;
+    Ok(prg)
 }

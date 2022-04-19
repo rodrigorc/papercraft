@@ -22,7 +22,7 @@ mod util_gl;
 use paper::Papercraft;
 use glr::Rgba;
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
-use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MVertexQuad, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
+use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 
 use crate::glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
@@ -868,13 +868,13 @@ fn main() {
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
-    ctx.build_gl_fixs();
+    ctx.build_gl_fixs().unwrap();
     ctx.gl_fixs.as_mut().unwrap().vao_scene = Some(glr::VertexArray::generate());
 }
 
 fn paper_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {
     w.attach_buffers();
-    ctx.build_gl_fixs();
+    ctx.build_gl_fixs().unwrap();
     let gl_fixs = ctx.gl_fixs.as_mut().unwrap();
     gl_fixs.vao_paper = Some(glr::VertexArray::generate());
     gl_fixs.fbo_paper = Some(glr::Framebuffer::generate());
@@ -893,8 +893,6 @@ struct GLFixedObjects {
     prg_paper_solid: glr::Program,
     prg_paper_line: glr::Program,
     prg_quad: glr::Program,
-
-    quad_vertices: glr::DynamicVertexArray<MVertexQuad>,
 }
 
 struct GLObjects {
@@ -2159,22 +2157,16 @@ impl GlobalContext {
         }
     }
 
-    fn build_gl_fixs(&mut self) {
+    fn build_gl_fixs(&mut self) -> Result<()> {
         if self.gl_fixs.is_none() {
             gl_loader::init_gl();
             gl::load_with(|s| gl_loader::get_proc_address(s) as _);
 
-            let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl"));
-            let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl"));
-            let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl"));
-            let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl"));
-            let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl"));
-
-            let quad_vertices = glr::DynamicVertexArray::from(vec![
-                MVertexQuad { pos: Vector2::new(-1.0, -1.0) },
-                MVertexQuad { pos: Vector2::new( 3.0, -1.0) },
-                MVertexQuad { pos: Vector2::new(-1.0,  3.0) },
-            ]);
+            let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl")).with_context(|| "scene_solid")?;
+            let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl")).with_context(|| "scene_line")?;
+            let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl")).with_context(|| "paper_solid")?;
+            let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl")).with_context(|| "paper_line")?;
+            let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl")).with_context(|| "quad")?;
 
             self.gl_fixs = Some(GLFixedObjects {
                 vao_scene: None,
@@ -2186,10 +2178,9 @@ impl GlobalContext {
                 prg_paper_solid,
                 prg_paper_line,
                 prg_quad,
-
-                quad_vertices,
             });
         }
+        Ok(())
     }
 
     fn scene_render(&mut self) {
@@ -2352,13 +2343,13 @@ impl GlobalContext {
             let mut uq = UniformQuad {
                 color: Rgba::new(1.0, 0.0, 1.0, 0.9),
             };
-            gl_fixs.prg_quad.draw(&uq, &gl_fixs.quad_vertices, gl::TRIANGLES);
+            gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
 
             if self.data.highlight_overlaps {
                 // Draw the highlight dim if "1 >= STENCIL"
                 uq.color = Rgba::new(1.0, 1.0, 1.0, 0.9);
                 gl::StencilFunc(gl::GEQUAL, 1, 0xff);
-                gl_fixs.prg_quad.draw(&uq, &gl_fixs.quad_vertices, gl::TRIANGLES);
+                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
             }
 
             gl::Disable(gl::STENCIL_TEST);

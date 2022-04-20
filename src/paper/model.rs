@@ -6,10 +6,7 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 
 use crate::waveobj;
-use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3};
-
-// We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
-// 32-bit indices should be enough for everybody ;-)
+use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3, TransparentType};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Texture {
@@ -38,65 +35,37 @@ pub struct Model {
     faces: Vec<Face>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[repr(transparent)]
-#[serde(transparent)]
-pub struct MaterialIndex(u32);
+// We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
+// 32-bit indices should be enough for everybody ;-)
+macro_rules! index_type {
+    ($vis:vis $name:ident : $inner:ty) => {
+        #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+        #[repr(transparent)]
+        #[serde(transparent)]
+        $vis struct $name($inner);
 
-impl From<MaterialIndex> for usize {
-    fn from(idx: MaterialIndex) -> usize {
-        idx.0 as usize
+        impl From<$name> for usize {
+            fn from(idx: $name) -> usize {
+                idx.0 as usize
+            }
+        }
+
+        impl From<usize> for $name {
+            fn from(idx: usize) -> $name {
+                $name(idx as $inner)
+            }
+        }
+
+        impl TransparentType for $name {
+            type Inner = $inner;
+        }
     }
 }
 
-impl From<usize> for MaterialIndex {
-    fn from(idx: usize) -> MaterialIndex {
-        MaterialIndex(idx as u32)
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(transparent)]
-#[serde(transparent)]
-pub struct VertexIndex(u32);
-
-impl From<VertexIndex> for usize {
-    fn from(idx: VertexIndex) -> usize {
-        idx.0 as usize
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(transparent)]
-#[serde(transparent)]
-pub struct EdgeIndex(u32);
-
-impl From<EdgeIndex> for usize {
-    fn from(idx: EdgeIndex) -> usize {
-        idx.0 as usize
-    }
-}
-impl From<usize> for EdgeIndex {
-    fn from(idx: usize) -> EdgeIndex {
-        EdgeIndex(idx as u32)
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(transparent)]
-#[serde(transparent)]
-pub struct FaceIndex(u32);
-
-impl From<FaceIndex> for usize {
-    fn from(idx: FaceIndex) -> usize {
-        idx.0 as usize
-    }
-}
-impl From<usize> for FaceIndex {
-    fn from(idx: usize) -> FaceIndex {
-        FaceIndex(idx as u32)
-    }
-}
+index_type!(pub MaterialIndex: u32);
+index_type!(pub VertexIndex: u32);
+index_type!(pub EdgeIndex: u32);
+index_type!(pub FaceIndex: u32);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Face {

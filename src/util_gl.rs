@@ -27,9 +27,12 @@ crate::uniform! {
     }
 }
 
-unsafe impl glr::AttribField for MaterialIndex {
+unsafe impl<T> glr::AttribField for T
+    where T: TransparentType,
+          T::Inner: glr::AttribField,
+{
     fn detail() -> (usize, gl::types::GLenum) {
-        u32::detail()
+        T::Inner::detail()
     }
 }
 

@@ -19,7 +19,7 @@ mod glr;
 mod util_3d;
 mod util_gl;
 
-use paper::Papercraft;
+use paper::{Papercraft, Model, Options, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex};
 use glr::Rgba;
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
@@ -939,10 +939,10 @@ enum MouseMode {
 //UndoItem cannot store IslandKey, because they are dynamic, use the root of the island instead
 #[derive(Debug)]
 enum UndoAction {
-    IslandMove { i_root: paper::FaceIndex, prev_rot: Rad<f32>, prev_loc: Vector2 },
-    TabToggle { i_edge: paper::EdgeIndex },
-    EdgeCut { i_edge: paper::EdgeIndex },
-    EdgeJoin(paper::JoinResult),
+    IslandMove { i_root: FaceIndex, prev_rot: Rad<f32>, prev_loc: Vector2 },
+    TabToggle { i_edge: EdgeIndex },
+    EdgeCut { i_edge: EdgeIndex },
+    EdgeJoin(JoinResult),
 }
 
 //Objects that are recreated when a new model is loaded
@@ -956,9 +956,9 @@ struct PapercraftContext {
     gl_objs: Option<GLObjects>,
 
     // State
-    selected_face: Option<paper::FaceIndex>,
-    selected_edge: Option<paper::EdgeIndex>,
-    selected_islands: Vec<paper::IslandKey>,
+    selected_face: Option<FaceIndex>,
+    selected_edge: Option<EdgeIndex>,
+    selected_islands: Vec<IslandKey>,
     grabbed_island: bool,
     scroll_timer: Option<glib::SourceId>,
 
@@ -1049,8 +1049,8 @@ impl TransformationPaper {
 #[derive(Debug)]
 enum ClickResult {
     None,
-    Face(paper::FaceIndex),
-    Edge(paper::EdgeIndex, Option<paper::FaceIndex>),
+    Face(FaceIndex),
+    Edge(EdgeIndex, Option<FaceIndex>),
 }
 
 struct PaperDrawFaceArgs {
@@ -1064,7 +1064,7 @@ struct PaperDrawFaceArgs {
 }
 
 impl PaperDrawFaceArgs {
-    fn new(model: &paper::Model) -> PaperDrawFaceArgs {
+    fn new(model: &Model) -> PaperDrawFaceArgs {
         PaperDrawFaceArgs {
             vertices: Vec::new(),
             vertices_edge_border: Vec::new(),
@@ -1078,7 +1078,7 @@ impl PaperDrawFaceArgs {
 }
 
 impl PapercraftContext {
-    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2, ops: &paper::Options) -> (Transformation3D, TransformationPaper) {
+    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2, ops: &Options) -> (Transformation3D, TransformationPaper) {
         let page = Vector2::from(ops.page_size);
         let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
         let mut trans_scene = Transformation3D::new(
@@ -1263,7 +1263,7 @@ impl PapercraftContext {
         (self.trans_scene, self.trans_paper) = Self::default_transformations(sz_scene, sz_paper, self.papercraft.options());
     }
 
-    fn paper_draw_face(&self, face: &paper::Face, i_face: paper::FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
+    fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
         args.face_index[usize::from(i_face)] = args.vertices.len() as u32 / 3;
 
         for i_v in face.index_vertices() {
@@ -1282,9 +1282,9 @@ impl PapercraftContext {
             let edge = &self.papercraft.model()[i_edge];
             let edge_status = self.papercraft.edge_status(i_edge);
             let draw = match edge_status {
-                paper::EdgeStatus::Hidden => false,
-                paper::EdgeStatus::Cut(_) => true,
-                paper::EdgeStatus::Joined => edge.face_sign(i_face),
+                EdgeStatus::Hidden => false,
+                EdgeStatus::Cut(_) => true,
+                EdgeStatus::Joined => edge.face_sign(i_face),
             };
             let plane = self.papercraft.face_plane(face);
             //let selected_edge = self.selected_edge == Some(i_edge);
@@ -1299,16 +1299,16 @@ impl PapercraftContext {
             if draw {
                 //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
                 //cut with a label
-                let dotted = if edge_status == paper::EdgeStatus::Joined ||
-                                edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) {
+                let dotted = if edge_status == EdgeStatus::Joined ||
+                                edge_status == EdgeStatus::Cut(edge.face_sign(i_face)) {
                     let angle_3d = self.papercraft.model().edge_angle(i_edge);
                     angle_3d < Rad(0.0)
                 } else {
                     false
                 };
                 let v = pos1 - pos0;
-                let fold_faces = edge_status == paper::EdgeStatus::Joined;
-                let fold_tab = edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) && self.show_tabs;
+                let fold_faces = edge_status == EdgeStatus::Joined;
+                let fold_tab = edge_status == EdgeStatus::Cut(edge.face_sign(i_face)) && self.show_tabs;
                 let mut v0 = MVertex2DLine {
                     pos: pos0,
                     line_dash: 0.0,
@@ -1324,7 +1324,7 @@ impl PapercraftContext {
                 let (new_lines_, new_lines_2_);
 
                 let (has_visible_line_len, visible_line_len) =
-                    if edge_status == paper::EdgeStatus::Joined || fold_tab {
+                    if edge_status == EdgeStatus::Joined || fold_tab {
                         match self.papercraft.options().fold_line_len {
                             Some(x) => (true, x.min(v_len / 2.0)),
                             None => (false, 0.0),
@@ -1371,7 +1371,7 @@ impl PapercraftContext {
                     &mut args.vertices_edge_border
                 };
                 let edge_pos = edge_container.len() as u32 / 2;
-                if matches!(edge_status, paper::EdgeStatus::Cut(_)) {
+                if matches!(edge_status, EdgeStatus::Cut(_)) {
                     if edge.face_sign(i_face) {
                         edge_index.1 = edge_pos;
                     } else {
@@ -1384,7 +1384,7 @@ impl PapercraftContext {
                 edge_container.extend_from_slice(new_lines);
             }
 
-            if edge_status == paper::EdgeStatus::Cut(edge.face_sign(i_face)) {
+            if edge_status == EdgeStatus::Cut(edge.face_sign(i_face)) {
                 let i_face_b = match edge.faces() {
                     (fa, Some(fb)) if i_face == fb => Some(fa),
                     (fa, Some(fb)) if i_face == fa => Some(fb),
@@ -1525,7 +1525,7 @@ impl PapercraftContext {
     fn pages_build(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let color = Rgba::new(1.0, 1.0, 1.0, 1.0);
-            let mat = paper::MaterialIndex::from(0);
+            let mat = MaterialIndex::from(0);
             let mut page_vertices = Vec::new();
             let mut margin_vertices = Vec::new();
             let margin_line_width = 0.5;
@@ -1611,10 +1611,10 @@ impl PapercraftContext {
             let mut edges_cut = Vec::new();
             for (i_edge, edge) in self.papercraft.model().edges() {
                 let status = self.papercraft.edge_status(i_edge);
-                if status == paper::EdgeStatus::Hidden {
+                if status == EdgeStatus::Hidden {
                     continue;
                 }
-                let cut = matches!(self.papercraft.edge_status(i_edge), paper::EdgeStatus::Cut(_));
+                let cut = matches!(self.papercraft.edge_status(i_edge), EdgeStatus::Cut(_));
                 let p0 = self.papercraft.model()[edge.v0()].pos();
                 let p1 = self.papercraft.model()[edge.v1()].pos();
 
@@ -1776,16 +1776,16 @@ impl PapercraftContext {
         self.update_selection();
     }
 
-    fn edge_toggle_cut(&mut self, i_edge: paper::EdgeIndex, priority_face: Option<paper::FaceIndex>) {
+    fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) {
         match self.papercraft.edge_status(i_edge) {
-            paper::EdgeStatus::Hidden => { }
-            paper::EdgeStatus::Joined => {
+            EdgeStatus::Hidden => { }
+            EdgeStatus::Joined => {
                 let offset = self.papercraft.options().tab_width * 2.0;
                 self.papercraft.edge_cut(i_edge, Some(offset));
                 let undo_actions = vec![UndoAction::EdgeCut { i_edge }];
                 self.undo_stack.push(undo_actions);
             }
-            paper::EdgeStatus::Cut(_) => {
+            EdgeStatus::Cut(_) => {
                 let renames = self.papercraft.edge_join(i_edge, priority_face);
                 if renames.is_empty() {
                     return;
@@ -1802,7 +1802,7 @@ impl PapercraftContext {
         }
     }
 
-    fn try_join_strip(&mut self, i_edge: paper::EdgeIndex) {
+    fn try_join_strip(&mut self, i_edge: EdgeIndex) {
         let renames = self.papercraft.try_join_strip(i_edge);
         if renames.is_empty() {
             return;
@@ -1818,7 +1818,7 @@ impl PapercraftContext {
         self.islands_renamed(&renames);
     }
 
-    fn islands_renamed(&mut self, renames: &HashMap<paper::IslandKey, paper::JoinResult>) {
+    fn islands_renamed(&mut self, renames: &HashMap<IslandKey, JoinResult>) {
         for x in &mut self.selected_islands {
             while let Some(jr) = renames.get(x) {
                 *x = jr.i_island;
@@ -1862,8 +1862,8 @@ impl PapercraftContext {
         let mut hit_edge = None;
         for (i_edge, edge) in self.papercraft.model().edges() {
             match (self.papercraft.edge_status(i_edge), mode) {
-                (paper::EdgeStatus::Hidden, _) => continue,
-                (paper::EdgeStatus::Joined, MouseMode::Tab) => continue,
+                (EdgeStatus::Hidden, _) => continue,
+                (EdgeStatus::Joined, MouseMode::Tab) => continue,
                 _ => (),
             }
             let v1 = self.papercraft.model()[edge.v0()].pos();
@@ -1932,8 +1932,8 @@ impl PapercraftContext {
                         MouseMode::Edge | MouseMode::Tab => {
                             for i_edge in face.index_edges() {
                                 match (self.papercraft.edge_status(i_edge), mode) {
-                                    (paper::EdgeStatus::Hidden, _) => continue,
-                                    (paper::EdgeStatus::Joined, MouseMode::Tab) => continue,
+                                    (EdgeStatus::Hidden, _) => continue,
+                                    (EdgeStatus::Joined, MouseMode::Tab) => continue,
                                     _ => (),
                                 }
                                 let edge = &self.papercraft.model()[i_edge];

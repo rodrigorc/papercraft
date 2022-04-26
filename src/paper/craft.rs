@@ -14,6 +14,15 @@ pub enum EdgeStatus {
     Joined,
     Cut(bool), //the tab will be drawn on the side with the same sign as this bool
 }
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum TabStyle {
+    Textured,
+    HalfTextured,
+    White,
+    None,
+}
+
 new_key_type! {
     pub struct IslandKey;
 }
@@ -27,30 +36,49 @@ pub struct JoinResult {
     pub prev_loc: Vector2,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Options {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PaperOptions {
     pub scale: f32,
     pub page_size: (f32, f32),
+    pub resolution: u32, //dpi
     pub pages: u32,
     pub page_cols: u32,
     pub margin: (f32, f32, f32, f32), //top, left, right, bottom
+    #[serde(default)] //TODO: default not actually needed
+    pub texture: bool,
+    #[serde(default)] //TODO: default not actually needed
+    pub tab_style: TabStyle,
     pub tab_width: f32,
     pub tab_angle: f32, //degrees
     pub fold_line_len: Option<f32>, //None means fully visible, negative is outwards, positive inwards, Some(0) is invisible
 }
 
-impl Default for Options {
+impl Default for PaperOptions {
     fn default() -> Self {
-        Options {
+        PaperOptions {
             scale: 100.0,
             page_size: (210.0, 297.0),
-            pages: 3,
+            resolution: 300,
+            pages: 1,
             page_cols: 2,
             margin: (10.0, 10.0, 10.0, 10.0),
-            tab_width: 5.0,
+            texture: true,
+            tab_style: TabStyle::Textured,
+            tab_width: 3.0,
             tab_angle: 45.0,
             fold_line_len: Some(2.0),
         }
+    }
+}
+
+impl PaperOptions {
+    pub fn page_position(&self, page: u32) -> Vector2 {
+        let page_cols = self.page_cols;
+        let page_size = Vector2::from(self.page_size);
+        const SEP: f32 = 10.0; // Currently not configurable
+        let row = page / page_cols;
+        let col = page % page_cols;
+        Vector2::new((col as f32) * (page_size.x + SEP), (row as f32) * (page_size.y + SEP))
     }
 }
 
@@ -58,7 +86,7 @@ impl Default for Options {
 pub struct Papercraft {
     model: Model,
     #[serde(default)] //TODO: default not actually needed
-    options: Options,
+    options: PaperOptions,
     edges: Vec<EdgeStatus>, //parallel to EdgeIndex
     #[serde(with="super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
@@ -68,7 +96,7 @@ impl Papercraft {
     pub fn empty() -> Papercraft {
         Papercraft {
             model: Model::empty(),
-            options: Options::default(),
+            options: PaperOptions::default(),
             edges: Vec::new(),
             islands: SlotMap::with_key(),
         }
@@ -77,8 +105,17 @@ impl Papercraft {
     pub fn model(&self) -> &Model {
         &self.model
     }
-    pub fn options(&self) -> &Options {
+    pub fn options(&self) -> &PaperOptions {
         &self.options
+    }
+    pub fn set_options(&mut self, options: PaperOptions) {
+        let scale = options.scale / self.options.scale;
+        for (_, island) in &mut self.islands {
+            island.loc *= scale;
+            island.recompute_matrix();
+        }
+        self.options = options;
+        //TODO: reorder islands and whatever
     }
     pub fn face_plane(&self, face: &Face) -> Plane {
         face.plane(&self.model, self.options.scale)
@@ -452,7 +489,7 @@ impl Papercraft {
             self.options.page_size.0 - self.options.margin.1 - self.options.margin.2,
             self.options.page_size.1 - self.options.margin.0 - self.options.margin.3,
         );
-        let mut zero = self.page_position(page) + page_margin;
+        let mut zero = self.options().page_position(page) + page_margin;
 
         // The island position cannot be updated while iterating
         let mut positions = slotmap::SecondaryMap::<IslandKey, (Rad<f32>, Vector2)>::new();
@@ -481,7 +518,7 @@ impl Papercraft {
                 if pos_y > page_size.y {
                     pos_y = 0.0;
                     page += 1;
-                    zero = self.page_position(page) + page_margin;
+                    zero = self.options().page_position(page) + page_margin;
                 }
             }
             let pos = Vector2::new(pos_x - bbox.0.x, pos_y - bbox.0.y);
@@ -497,14 +534,6 @@ impl Papercraft {
             island.rot += angle;
             island.recompute_matrix();
         }
-    }
-    pub fn page_position(&self, page: u32) -> Vector2 {
-        let page_cols = self.options().page_cols;
-        let page_size = Vector2::from(self.options().page_size);
-        const SEP: f32 = 10.0; // Currently not configurable
-        let row = page / page_cols;
-        let col = page % page_cols;
-        Vector2::new((col as f32) * (page_size.x + SEP), (row as f32) * (page_size.y + SEP))
     }
 }
 
@@ -690,6 +719,40 @@ impl<'de> Deserialize<'de> for EdgeStatus {
             2 => EdgeStatus::Cut(false),
             3 => EdgeStatus::Cut(true),
             _ => return Err(serde::de::Error::missing_field("invalid edge status")),
+        };
+        Ok(res)
+    }
+}
+
+impl Default for TabStyle {
+    fn default() -> Self {
+        TabStyle::Textured
+    }
+}
+impl Serialize for TabStyle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let is = match self {
+            TabStyle::Textured => 0,
+            TabStyle::HalfTextured => 1,
+            TabStyle::White => 2,
+            TabStyle::None => 3,
+        };
+        serializer.serialize_i32(is)
+    }
+}
+impl<'de> Deserialize<'de> for TabStyle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: serde::Deserializer<'de>
+    {
+        let d = u32::deserialize(deserializer)?;
+        let res = match d {
+            0 => TabStyle::Textured,
+            1 => TabStyle::HalfTextured,
+            2 => TabStyle::White,
+            3 => TabStyle::None,
+            _ => return Err(serde::de::Error::missing_field("invalid tab_style status")),
         };
         Ok(res)
     }

@@ -53,7 +53,7 @@ void main(void) {
         if (texturize) {
             c = texture(tex, v_uv);
         } else {
-            c = vec4(0.5, 0.5, 0.5, 1.0);
+            c = vec4(0.75, 0.75, 0.75, 1.0);
         }
         base = mix(c, vec4(v_color.rgb, 1.0), v_color.a);
     }

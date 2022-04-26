@@ -138,7 +138,7 @@ impl Papercraft {
 
         let mut papercraft = Papercraft {
             model,
-            options: Options::default(),
+            options: PaperOptions::default(),
             edges,
             islands,
         };

@@ -9,7 +9,7 @@ use gtk::{
     gdk::{self, EventMask},
 };
 
-use std::{collections::HashMap, ops::ControlFlow, time::Duration, path::{Path, PathBuf}};
+use std::{collections::HashMap, ops::ControlFlow, time::Duration, path::{Path, PathBuf}, cell::Cell};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -18,8 +18,9 @@ mod paper;
 mod glr;
 mod util_3d;
 mod util_gl;
+mod options_dlg;
 
-use paper::{Papercraft, Model, Options, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex};
+use paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle};
 use glr::Rgba;
 use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
@@ -33,9 +34,6 @@ const CREASE_LINE_WIDTH: f32 = 0.05;
 
 // In pixels
 const LINE_SEL_WIDTH: f32 = 5.0;
-
-// In PPI
-const PDF_RESOLUTION: f32 = 300.0;
 
 pub trait SizeAsVector {
     fn size_as_vector(&self) -> Vector2;
@@ -202,7 +200,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
 
             if let Some(name) = name {
                 let e = ctx.borrow_mut().import_waveobj(name);
-                if show_error(e) {
+                if show_error_result(e, &top_window) {
                     app_set_default_options(&top_window.application().unwrap());
                 }
             }
@@ -248,7 +246,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 }
                 let e = ctx.borrow().export_pdf(&name)
                     .with_context(|| format!("Error exporting to {}", name.display()));
-                show_error(e);
+                show_error_result(e, &top_window);
             }
         }
     ));
@@ -258,18 +256,21 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     asave.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
-            let mut ctx = ctx.borrow_mut();
-            if let Some(name) = &ctx.data.file_name {
-                let e = ctx.save(name);
-                if show_error(e) {
+            let ctx_ = ctx.borrow();
+            let top_window = ctx_.top_window.clone();
+            if let Some(name) = ctx_.data.file_name.clone() {
+                let e = ctx_.save(&name);
+                drop(ctx_);
+                if show_error_result(e, &top_window) {
                     let title = name.display().to_string();
+                    let mut ctx = ctx.borrow_mut();
                     ctx.data.modified = false;
                     ctx.set_title(Some(&title));
                 }
                 return;
             }
-            let app = ctx.top_window.application().unwrap();
-            drop(ctx);
+            let app = top_window.application().unwrap();
+            drop(ctx_);
             app.lookup_action("save_as").unwrap().activate(None);
         }
     ));
@@ -312,9 +313,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 if name.extension().is_none() {
                     name.set_extension("craft");
                 }
-                let mut ctx = ctx.borrow_mut();
-                let e = ctx.save(&name);
-                if show_error(e) {
+                let e = ctx.borrow_mut().save(&name);
+                if show_error_result(e, &top_window) {
+                    let mut ctx = ctx.borrow_mut();
                     ctx.data.modified = false;
                     ctx.set_title(Some(&name));
                     ctx.data.file_name = Some(name);
@@ -372,6 +373,15 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             ctx.data.reset_views(sz_scene, sz_paper);
             ctx.wpaper.queue_render();
             ctx.wscene.queue_render();
+        }
+    ));
+
+    let aoptions = gio::SimpleAction::new("options", None);
+    app.add_action(&aoptions);
+    aoptions.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            options_dlg::do_options_dialog(&ctx);
         }
     ));
 
@@ -806,32 +816,39 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             app_set_default_options(&w.application().unwrap());
 
             let e = app_open(&ctx, &files[0]);
-            show_error(e);
+            show_error_result(e, &w);
         }
 	));
 
     let imports = imports.borrow();
     if let Some(args) = &*imports {
-        let e = ctx.borrow_mut().import_waveobj(args);
-        show_error(e);
+        let mut ctx = ctx.borrow_mut();
+        let w = ctx.top_window.clone();
+        let e = ctx.import_waveobj(args);
+        drop(ctx);
+        show_error_result(e, &w);
     }
 }
 
-fn show_error(e: Result<()>) -> bool {
+fn show_error_result(e: Result<()>, parent: &impl IsA<gtk::Window>) -> bool {
     let e = match e {
         Ok(()) => return true,
         Err(e) => e,
     };
+    show_error_message(&format!("{:?}", e), parent);
+    false
+}
 
+fn show_error_message(msg: &str, parent: &impl IsA<gtk::Window>) {
     let dlg = gtk::MessageDialog::builder()
         .title("Error")
-        .text(&format!("{:?}", e))
+        .text(msg)
+        .transient_for(parent)
         .message_type(gtk::MessageType::Error)
         .buttons(gtk::ButtonsType::Ok)
         .build();
     dlg.run();
     unsafe { dlg.destroy(); }
-    false
 }
 
 fn main() {
@@ -1078,7 +1095,7 @@ impl PaperDrawFaceArgs {
 }
 
 impl PapercraftContext {
-    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2, ops: &Options) -> (Transformation3D, TransformationPaper) {
+    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2, ops: &PaperOptions) -> (Transformation3D, TransformationPaper) {
         let page = Vector2::from(ops.page_size);
         let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
         let mut trans_scene = Transformation3D::new(
@@ -1278,14 +1295,29 @@ impl PapercraftContext {
             });
         }
 
+        let tab_style = self.papercraft.options().tab_style;
         for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
             let edge = &self.papercraft.model()[i_edge];
             let edge_status = self.papercraft.edge_status(i_edge);
-            let draw = match edge_status {
-                EdgeStatus::Hidden => false,
-                EdgeStatus::Cut(_) => true,
-                EdgeStatus::Joined => edge.face_sign(i_face),
+            let draw_tab = match edge_status {
+                EdgeStatus::Hidden => {
+                    // hidden edges are never drawn
+                    continue;
+                }
+                EdgeStatus::Cut(c) => {
+                    // cut edges are always drawn, the tab on c == face_sign
+                    tab_style != TabStyle::None && c == edge.face_sign(i_face)
+                }
+                EdgeStatus::Joined => {
+                    // joined edges are drawn from one side only, no matter which one
+                    if !edge.face_sign(i_face) {
+                        continue;
+                    }
+                    // but never with a tab
+                    false
+                }
             };
+
             let plane = self.papercraft.face_plane(face);
             //let selected_edge = self.selected_edge == Some(i_edge);
             let v0 = &self.papercraft.model()[i_v0];
@@ -1296,95 +1328,92 @@ impl PapercraftContext {
             let p1 = plane.project(&v1.pos());
             let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
 
-            if draw {
-                //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
-                //cut with a label
-                let dotted = if edge_status == EdgeStatus::Joined ||
-                                edge_status == EdgeStatus::Cut(edge.face_sign(i_face)) {
-                    let angle_3d = self.papercraft.model().edge_angle(i_edge);
-                    angle_3d < Rad(0.0)
+            //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
+            //cut with a tab
+            let dotted = if edge_status == EdgeStatus::Joined || draw_tab {
+                let angle_3d = self.papercraft.model().edge_angle(i_edge);
+                angle_3d < Rad(0.0)
+            } else {
+                false
+            };
+            let v = pos1 - pos0;
+            let fold_faces = edge_status == EdgeStatus::Joined;
+            let mut v0 = MVertex2DLine {
+                pos: pos0,
+                line_dash: 0.0,
+                width_left: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else if draw_tab { CREASE_LINE_WIDTH } else { BORDER_LINE_WIDTH },
+                width_right: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else { 0.0 },
+            };
+            let mut v1 = MVertex2DLine {
+                pos: pos1,
+                .. v0
+            };
+
+            let v_len = v.magnitude();
+            let (new_lines_, new_lines_2_);
+
+            let (has_visible_line_len, visible_line_len) =
+                if edge_status == EdgeStatus::Joined || draw_tab {
+                    match self.papercraft.options().fold_line_len {
+                        Some(x) => (true, x.min(v_len / 2.0)),
+                        None => (false, 0.0),
+                    }
                 } else {
-                    false
+                    (false, 0.0)
                 };
-                let v = pos1 - pos0;
-                let fold_faces = edge_status == EdgeStatus::Joined;
-                let fold_tab = edge_status == EdgeStatus::Cut(edge.face_sign(i_face)) && self.show_tabs;
-                let mut v0 = MVertex2DLine {
-                    pos: pos0,
-                    line_dash: 0.0,
-                    width_left: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else if fold_tab { CREASE_LINE_WIDTH } else { BORDER_LINE_WIDTH },
-                    width_right: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else { 0.0 },
-                };
-                let mut v1 = MVertex2DLine {
-                    pos: pos1,
+
+            let new_lines: &[_] = if has_visible_line_len {
+                let vn = v * visible_line_len / v_len;
+                let dash_delta = if dotted { 1.5 } else { 0.5 };
+                v0.line_dash = 0.51;
+                v1.line_dash = 0.99;
+                let v00 = MVertex2DLine {
+                    pos: v0.pos + vn,
+                    line_dash: v0.line_dash - dash_delta,
                     .. v0
                 };
-
-                let v_len = v.magnitude();
-                let (new_lines_, new_lines_2_);
-
-                let (has_visible_line_len, visible_line_len) =
-                    if edge_status == EdgeStatus::Joined || fold_tab {
-                        match self.papercraft.options().fold_line_len {
-                            Some(x) => (true, x.min(v_len / 2.0)),
-                            None => (false, 0.0),
-                        }
-                    } else {
-                        (false, 0.0)
-                    };
-
-                let new_lines: &[_] = if has_visible_line_len {
-                    let vn = v * visible_line_len / v_len;
-                    let dash_delta = if dotted { 1.5 } else { 0.5 };
-                    v0.line_dash = 0.51;
-                    v1.line_dash = 0.99;
-                    let v00 = MVertex2DLine {
-                        pos: v0.pos + vn,
-                        line_dash: v0.line_dash - dash_delta,
-                        .. v0
-                    };
-                    let v11 = MVertex2DLine {
-                        pos: v1.pos - vn,
-                        line_dash: v1.line_dash + dash_delta,
-                        .. v1
-                    };
-                    new_lines_ = if visible_line_len > 0.0 {
-                        [v0, v1, v0, v00, v11, v1]
-                    } else {
-                        [v0, v1, v00, v0, v1, v11]
-                    };
-                    &new_lines_
-                } else {
-                    if dotted {
-                        v1.line_dash = v.magnitude();
-                    }
-                    new_lines_2_ = [v0, v1];
-                    &new_lines_2_
+                let v11 = MVertex2DLine {
+                    pos: v1.pos - vn,
+                    line_dash: v1.line_dash + dash_delta,
+                    .. v1
                 };
-
-                let edge_index = &mut args.edge_index[usize::from(i_edge)];
-                let edge_container = if fold_faces {
-                    edge_index.0 = EdgeIndexRef::Crease;
-                    &mut args.vertices_edge_crease
+                new_lines_ = if visible_line_len > 0.0 {
+                    [v0, v1, v0, v00, v11, v1]
                 } else {
-                    edge_index.0 = EdgeIndexRef::Border;
-                    &mut args.vertices_edge_border
+                    [v0, v1, v00, v0, v1, v11]
                 };
-                let edge_pos = edge_container.len() as u32 / 2;
-                if matches!(edge_status, EdgeStatus::Cut(_)) {
-                    if edge.face_sign(i_face) {
-                        edge_index.1 = edge_pos;
-                    } else {
-                        edge_index.2 = Some(edge_pos);
-                    }
-                } else {
-                    edge_index.1 = edge_pos;
-                    edge_index.2 = None;
+                &new_lines_
+            } else {
+                if dotted {
+                    v1.line_dash = v.magnitude();
                 }
-                edge_container.extend_from_slice(new_lines);
-            }
+                new_lines_2_ = [v0, v1];
+                &new_lines_2_
+            };
 
-            if edge_status == EdgeStatus::Cut(edge.face_sign(i_face)) {
+            let edge_index = &mut args.edge_index[usize::from(i_edge)];
+            let edge_container = if fold_faces {
+                edge_index.0 = EdgeIndexRef::Crease;
+                &mut args.vertices_edge_crease
+            } else {
+                edge_index.0 = EdgeIndexRef::Border;
+                &mut args.vertices_edge_border
+            };
+            let edge_pos = edge_container.len() as u32 / 2;
+            if matches!(edge_status, EdgeStatus::Cut(_)) {
+                if edge.face_sign(i_face) {
+                    edge_index.1 = edge_pos;
+                } else {
+                    edge_index.2 = Some(edge_pos);
+                }
+            } else {
+                edge_index.1 = edge_pos;
+                edge_index.2 = None;
+            }
+            edge_container.extend_from_slice(new_lines);
+
+            // Draw the tab?
+            if draw_tab {
                 let i_face_b = match edge.faces() {
                     (fa, Some(fb)) if i_face == fb => Some(fa),
                     (fa, Some(fb)) if i_face == fa => Some(fb),
@@ -1453,44 +1482,48 @@ impl PapercraftContext {
                         &mut p[..]
                     };
 
-                    //Now we have to compute the texture coordinates of `p` in the adjacent face
-                    let plane_b = self.papercraft.face_plane(face_b);
-                    let vs_b = face_b.index_vertices().map(|v| {
-                        let v = &self.papercraft.model()[v];
-                        let p = plane_b.project(&v.pos());
-                        (v, p)
-                    });
-                    let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
-                    let mx_b_inv = mx_b.invert().unwrap();
-                    let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
+                    if tab_style == TabStyle::Textured || tab_style == TabStyle::HalfTextured {
+                        //Now we have to compute the texture coordinates of `p` in the adjacent face
+                        let plane_b = self.papercraft.face_plane(face_b);
+                        let vs_b = face_b.index_vertices().map(|v| {
+                            let v = &self.papercraft.model()[v];
+                            let p = plane_b.project(&v.pos());
+                            (v, p)
+                        });
+                        let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
+                        let mx_b_inv = mx_b.invert().unwrap();
+                        let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 
-                    // mx_b_inv converts from paper to local face_b coordinates
-                    // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
-                    // mxx do both convertions at once
-                    let mxx = Matrix3::from(mx_basis) * mx_b_inv;
+                        // mx_b_inv converts from paper to local face_b coordinates
+                        // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
+                        // mxx do both convertions at once
+                        let mxx = Matrix3::from(mx_basis) * mx_b_inv;
 
-                    let uvs: Vec<Vector2> = p.iter().map(|px| {
-                        //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
-                        let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
-                        let uv0 = vs_b[0].0.uv();
-                        let uv1 = vs_b[1].0.uv();
-                        let uv2 = vs_b[2].0.uv();
-                        uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
-                    }).collect();
+                        let uvs: Vec<Vector2> = p.iter().map(|px| {
+                            //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
+                            let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
+                            let uv0 = vs_b[0].0.uv();
+                            let uv1 = vs_b[1].0.uv();
+                            let uv2 = vs_b[2].0.uv();
+                            uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
+                        }).collect();
 
-                    let mat = face_b.material();
-                    if just_one_tri {
-                        args.vertices_tab.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: Rgba::new(1.0, 1.0, 1.0, 0.0)});
-                        args.vertices_tab.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: Rgba::new(1.0, 1.0, 1.0, 0.0)});
-                        args.vertices_tab.push(MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: Rgba::new(1.0, 1.0, 1.0, 0.0)});
-                    } else {
-                        let pp = [
-                            MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
-                            MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
-                            MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
-                            MVertex2DColor { pos: p[3].pos, uv: uvs[3], mat, color: Rgba::new(1.0, 1.0, 1.0, 0.0) },
-                        ];
-                        args.vertices_tab.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
+                        let mat = face_b.material();
+                        let root_color = Rgba::new(1.0, 1.0, 1.0, 0.0);
+                        let tip_color = Rgba::new(1.0, 1.0, 1.0, if tab_style == TabStyle::HalfTextured { 1.0 } else { 0.0 });
+                        if just_one_tri {
+                            args.vertices_tab.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color });
+                            args.vertices_tab.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color });
+                            args.vertices_tab.push(MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: root_color });
+                        } else {
+                            let pp = [
+                                MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color },
+                                MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color },
+                                MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: tip_color },
+                                MVertex2DColor { pos: p[3].pos, uv: uvs[3], mat, color: root_color },
+                            ];
+                            args.vertices_tab.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
+                        }
                     }
                 }
             }
@@ -1535,7 +1568,7 @@ impl PapercraftContext {
             let page_count = self.papercraft.options().pages;
 
             for page in 0 .. page_count {
-                let page_pos = self.papercraft.page_position(page);
+                let page_pos = self.papercraft.options().page_position(page);
 
                 let page_0 = MVertex2DColor {
                     pos: page_pos,
@@ -2055,6 +2088,11 @@ impl PapercraftContext {
     }
 
     fn undo_action(&mut self) {
+        //Do not undo while grabbing or the stack will be messed up
+        if self.grabbed_island {
+            return;
+        }
+
         let action_pack = match self.undo_stack.pop() {
             None => return,
             Some(a) => a,
@@ -2133,6 +2171,7 @@ impl GlobalContext {
         }
         let dlg = gtk::MessageDialog::builder()
             .title(title)
+            .transient_for(&ctx.borrow().top_window)
             .text("The model has not been save, continue anyway?")
             .message_type(gtk::MessageType::Question)
             .buttons(gtk::ButtonsType::OkCancel)
@@ -2364,10 +2403,11 @@ impl GlobalContext {
     }
 
     fn export_pdf(&self, file_name: impl AsRef<Path>) -> Result<()> {
+        let resolution = self.data.papercraft.options().resolution as f32;
         let page_size_mm = Vector2::from(self.data.papercraft.options().page_size);
         let page_size_inches = page_size_mm / 25.4;
         let page_size_dots = page_size_inches * 72.0;
-        let page_size_pixels = page_size_inches * PDF_RESOLUTION;
+        let page_size_pixels = page_size_inches * resolution;
         let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
         let pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y)
@@ -2420,8 +2460,9 @@ impl GlobalContext {
             let gl_fixs = self.gl_fixs.as_ref().unwrap();
 
             let mut texturize = 0;
+
             gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
-            if let (Some(tex), true) = (&gl_objs.textures, self.data.show_textures) {
+            if let (Some(tex), true) = (&gl_objs.textures, self.data.papercraft.options().texture) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 texturize = 1;
@@ -2430,10 +2471,12 @@ impl GlobalContext {
             let ortho = util_3d::ortho2d_zero(page_size_mm.x, -page_size_mm.y);
 
             let page_count = self.data.papercraft.options().pages;
+            let tab_style = self.data.papercraft.options().tab_style;
+
             for page in 0..page_count {
                 // Start render
                 gl::Clear(gl::COLOR_BUFFER_BIT);
-                let page_pos = self.data.papercraft.page_position(page);
+                let page_pos = self.data.papercraft.options().page_position(page);
                 let mt = Matrix3::from_translation(-page_pos);
                 let u = Uniforms2D {
                     m: ortho * mt,
@@ -2442,14 +2485,13 @@ impl GlobalContext {
                     line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                     texturize,
                 };
-
                 // Line Tabs
-                if self.data.show_tabs {
+                if tab_style != TabStyle::None {
                     gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
                 }
 
                 // Solid Tabs
-                if self.data.show_tabs {
+                if tab_style != TabStyle::None && tab_style != TabStyle::White {
                     gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
                 }
 
@@ -2479,7 +2521,7 @@ impl GlobalContext {
                 cr.set_source_pixbuf(&pixbuf, 0.0, 0.0);
                 let pat = cr.source();
                 let mut mc = cairo::Matrix::identity();
-                let scale = PDF_RESOLUTION / 72.0;
+                let scale = resolution / 72.0;
                 mc.scale(scale as f64, scale as f64);
                 pat.set_matrix(mc);
 
@@ -2494,4 +2536,3 @@ impl GlobalContext {
         Ok(())
     }
 }
-

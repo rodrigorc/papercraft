@@ -52,6 +52,12 @@
                 </section>
                 <section>
                     <item>
+                        <attribute name='label' translatable='yes'>_Document properties</attribute>
+                        <attribute name='action'>app.options</attribute>
+                    </item>
+                </section>
+                <section>
+                    <item>
                         <attribute name="label" translatable="yes">_Face/Island</attribute>
                         <attribute name="action">app.mode</attribute>
                         <attribute name="target">face</attribute>

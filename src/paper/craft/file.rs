@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, ffi::OsStr};
+use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, ffi::OsStr, hash::Hash};
 
 use cgmath::{One, EuclideanSpace, Transform, Rad, Zero};
 use gdk_pixbuf::traits::PixbufLoaderExt;
@@ -49,8 +49,8 @@ impl Papercraft {
         Ok(papercraft)
     }
 
-    pub fn import_waveobj(file_name: impl AsRef<Path>) -> Result<Papercraft> {
-        let f = std::fs::File::open(file_name.as_ref())?;
+    pub fn import_waveobj(file_name: &Path) -> Result<Papercraft> {
+        let f = std::fs::File::open(file_name)?;
         let f = std::io::BufReader::new(f);
         let (matlib, obj) = waveobj::Model::from_reader(f)?;
 
@@ -88,7 +88,7 @@ impl Papercraft {
         let (v_min, v_max) = util_3d::bounding_box_3d(
             model
                 .vertices()
-                .map(|v| v.pos())
+                .map(|(_, v)| v.pos())
         );
         let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
         let mscale = Matrix4::from_scale(1.0 / size);
@@ -145,6 +145,156 @@ impl Papercraft {
         papercraft.pack_islands();
         Ok(papercraft)
     }
+
+    pub fn export_waveobj(&self, file_name: &Path) -> Result<()> {
+        use std::io::prelude::*;
+        use std::collections::hash_map::Entry;
+
+
+        let title = file_name.file_stem().map(|s| s.to_string_lossy()).unwrap_or(std::borrow::Cow::Borrowed("object"));
+        let title: String = title.as_ref().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_'}).collect();
+        let mtl_name = file_name.with_extension("mtl");
+
+        let f = std::fs::File::create(file_name)?;
+        let mut f = std::io::BufWriter::new(f);
+
+        let mut index_v = HashMap::new();
+        let mut index_vn = HashMap::new();
+        let mut index_vt = HashMap::new();
+
+        // f32 cannot be used as a hash index because it does not implement Eq nor Hash, something to do with precision and ambiguous representations and NaNs...
+        // But we never operate with the values in model, so same f32 values should always have the same bit pattern, and we can use that bit-pattern as the hash index.
+
+        trait Indexable {
+            type Res: Eq + Hash;
+            fn indexable(&self) -> Self::Res;
+        }
+        impl Indexable for f32 {
+            type Res = u32;
+            fn indexable(&self) -> Self::Res {
+                self.to_bits()
+            }
+        }
+        impl Indexable for Vector2 {
+            type Res = (u32, u32);
+            fn indexable(&self) -> Self::Res {
+                (self.x.to_bits(), self.y.to_bits())
+            }
+        }
+        impl Indexable for Vector3 {
+            type Res = (u32, u32, u32);
+            fn indexable(&self) -> Self::Res {
+                (self.x.to_bits(), self.y.to_bits(), self.z.to_bits())
+            }
+        }
+        writeln!(f, "mtllib {}", mtl_name.display())?;
+        writeln!(f, "o {title}")?;
+        for (_, v) in self.model.vertices() {
+            let pos = v.pos();
+            let id = index_v.len() + 1;
+            let e = index_v.entry(pos.indexable());
+            if let Entry::Vacant(vacant) = e {
+                writeln!(f, "v {} {} {}", pos[0], pos[1], pos[2])?;
+                vacant.insert(id);
+            }
+        }
+        for (_, v) in self.model.vertices() {
+            let n = v.normal();
+            let id = index_vn.len() + 1;
+            let e = index_vn.entry(n.indexable());
+            if let Entry::Vacant(vacant) = e {
+                writeln!(f, "vn {} {} {}", n[0], n[1], n[2])?;
+                vacant.insert(id);
+            }
+        }
+        for (_, v) in self.model.vertices() {
+            let uv = v.uv();
+            let id = index_vt.len() + 1;
+            let e = index_vt.entry(uv.indexable());
+            if let Entry::Vacant(vacant) = e {
+                writeln!(f, "vt {} {}", uv[0], 1.0 - uv[1])?;
+                vacant.insert(id);
+            }
+        }
+        writeln!(f, "s 1")?;
+        let mut by_mat = vec![Vec::new(); self.model.num_textures()];
+        for (i_face, face) in self.model.faces() {
+            by_mat[usize::from(face.material())].push(i_face);
+        }
+
+        let mut done_faces = HashSet::new();
+        for (i_mat, face_by_mat) in by_mat.iter().enumerate() {
+            writeln!(f, "usemtl Material.{i_mat:03}")?;
+            for &i_face in face_by_mat {
+                if !done_faces.insert(i_face) {
+                    continue;
+                }
+                //In model, faces are all triangles, group them by flatness
+                let flat_face = self.get_flat_faces(i_face);
+                let mut flat_contour: Vec<_> = flat_face
+                    .iter()
+                    .map(|f| {
+                        done_faces.insert(*f);
+                        f
+                    })
+                    .flat_map(|&f| self.model()[f].vertices_with_edges())
+                    .filter_map(|(v0, v1, e)| {
+                        if self.edge_status(e) == EdgeStatus::Hidden {
+                            None
+                        } else {
+                            Some((v0, v1))
+                        }
+                    })
+                    .collect();
+                write!(f, "f")?;
+                let mut next = Some(flat_contour.len() - 1);
+                while let Some(pos) = next {
+                    let vertex = flat_contour.remove(pos);
+                    let (v0, v1) = vertex;
+                    let vx = &self.model()[v0];
+                    let v = index_v[&vx.pos().indexable()];
+                    let t = index_vt[&vx.uv().indexable()];
+                    let n = index_vn[&vx.normal().indexable()];
+                    write!(f, " {}/{}/{}", v, t, n)?;
+                    next = flat_contour.iter().position(|(x0, _x1)| *x0 == v1);
+                }
+                writeln!(f)?;
+            }
+        }
+        drop(f);
+
+        let fm = std::fs::File::create(mtl_name)?;
+        let mut fm = std::io::BufWriter::new(fm);
+
+        let dir = file_name.parent();
+
+        for (i_mat, tex) in self.model().textures().enumerate() {
+            writeln!(fm, "newmtl Material.{i_mat:03}")?;
+
+            if let Some(pixbuf) = tex.pixbuf() {
+                let bmp_name = tex.file_name();
+                writeln!(fm, "map_Kd {bmp_name}")?;
+
+                let path = Path::new(bmp_name);
+                let mut full_path_buf;
+                let full_path = if let Some(dir) = dir {
+                    full_path_buf = dir.to_owned();
+                    full_path_buf.push(&path);
+                    &full_path_buf
+                } else {
+                    path
+                };
+                let format = gdk_format_from_extension(path.extension());
+                let data = pixbuf.save_to_bufferv(format, &[])?;
+                std::fs::write(&full_path, &data)?;
+            }
+        }
+        drop(fm);
+
+        Ok(())
+
+    }
+
 }
 
 fn gdk_format_from_extension(ext: Option<&OsStr>) -> &str {

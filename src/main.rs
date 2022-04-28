@@ -206,19 +206,63 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             }
         }
     ));
-    let aexport_pdf = gio::SimpleAction::new("export_pdf", None);
-    app.add_action(&aexport_pdf);
-    aexport_pdf.connect_activate(clone!(
+    let aexport = gio::SimpleAction::new("export", None);
+    app.add_action(&aexport);
+    aexport.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
             let top_window = ctx.borrow().top_window.clone();
             let dlg = gtk::FileChooserDialog::with_buttons(
-                Some("Export PDF"),
+                Some("Export OBJ"),
                 Some(&top_window),
                 gtk::FileChooserAction::Save,
                 &[
                     ("Cancel", gtk::ResponseType::Cancel),
-                    ("Export PDF", gtk::ResponseType::Accept)
+                    ("Export", gtk::ResponseType::Accept)
+                ]
+            );
+            dlg.set_current_folder(".");
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("WaveObj models"));
+            filter.add_pattern("*.obj");
+            dlg.add_filter(&filter);
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("All files"));
+            filter.add_pattern("*");
+            dlg.add_filter(&filter);
+            dlg.set_do_overwrite_confirmation(true);
+
+            let res = dlg.run();
+            let name = if res == gtk::ResponseType::Accept {
+                dlg.filename()
+            } else {
+                None
+            };
+            unsafe { dlg.destroy(); }
+
+            if let Some(mut name) = name {
+                if name.extension().is_none() {
+                    name.set_extension("obj");
+                }
+                let e = ctx.borrow().data.papercraft.export_waveobj(name.as_ref())
+                    .with_context(|| format!("Error exporting to {}", name.display()));
+                show_error_result(e, &top_window);
+            }
+        }
+    ));
+    let agenerate_pdf = gio::SimpleAction::new("generate_pdf", None);
+    app.add_action(&agenerate_pdf);
+    agenerate_pdf.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let top_window = ctx.borrow().top_window.clone();
+            let dlg = gtk::FileChooserDialog::with_buttons(
+                Some("Generate PDF"),
+                Some(&top_window),
+                gtk::FileChooserAction::Save,
+                &[
+                    ("Cancel", gtk::ResponseType::Cancel),
+                    ("Generate PDF", gtk::ResponseType::Accept)
                 ]
             );
             dlg.set_current_folder(".");
@@ -244,7 +288,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 if name.extension().is_none() {
                     name.set_extension("pdf");
                 }
-                let e = ctx.borrow().export_pdf(&name)
+                let e = ctx.borrow().generate_pdf(&name)
                     .with_context(|| format!("Error exporting to {}", name.display()));
                 show_error_result(e, &top_window);
             }
@@ -2129,7 +2173,7 @@ impl PapercraftContext {
 
 impl GlobalContext {
     fn import_waveobj(&mut self, file_name: impl AsRef<Path>) -> Result<()> {
-        let papercraft = Papercraft::import_waveobj(&file_name)
+        let papercraft = Papercraft::import_waveobj(file_name.as_ref())
             .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
 
         let sz_scene = self.wscene.size_as_vector();
@@ -2402,7 +2446,7 @@ impl GlobalContext {
         }
     }
 
-    fn export_pdf(&self, file_name: impl AsRef<Path>) -> Result<()> {
+    fn generate_pdf(&self, file_name: impl AsRef<Path>) -> Result<()> {
         let resolution = self.data.papercraft.options().resolution as f32;
         let page_size_mm = Vector2::from(self.data.papercraft.options().page_size);
         let page_size_inches = page_size_mm / 25.4;

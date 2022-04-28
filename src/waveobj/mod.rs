@@ -76,7 +76,15 @@ impl Model {
                         let v = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
                         let t = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
                         let n = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
-
+                        if v > data.vs.len() {
+                            return Err(anyhow!("vertex index out of range"));
+                        }
+                        if t > data.ts.len() {
+                            return Err(anyhow!("texture index out of range"));
+                        }
+                        if n > data.ns.len() {
+                            return Err(anyhow!("normal index out of range"));
+                        }
                         let v = FaceVertex {
                             v: v as u32,
                             t: t as u32,

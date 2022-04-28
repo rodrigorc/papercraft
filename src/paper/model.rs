@@ -268,8 +268,11 @@ impl Model {
     {
         self.vertices.iter_mut().for_each(|v| f(&mut v.pos, &mut v.normal));
     }
-    pub fn vertices(&self) -> impl Iterator<Item = &Vertex> {
-        self.vertices.iter()
+    pub fn vertices(&self) -> impl Iterator<Item = (VertexIndex, &Vertex)> {
+        self.vertices
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (VertexIndex(i as u32), v))
     }
     pub fn faces(&self) -> impl Iterator<Item = (FaceIndex, &Face)> + '_ {
         self.faces

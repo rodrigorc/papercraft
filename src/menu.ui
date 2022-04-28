@@ -27,8 +27,12 @@
                         <attribute name='icon'>insert-object</attribute>
                     </item>
                     <item>
-                        <attribute name='label' translatable='yes'>Export _PDF...</attribute>
-                        <attribute name='action'>app.export_pdf</attribute>
+                        <attribute name='label' translatable='yes'>E_xport OBJ...</attribute>
+                        <attribute name='action'>app.export</attribute>
+                    </item>
+                    <item>
+                        <attribute name='label' translatable='yes'>Generate _PDF...</attribute>
+                        <attribute name='action'>app.generate_pdf</attribute>
                         <attribute name='icon'>document-print</attribute>
                     </item>
                 </section>

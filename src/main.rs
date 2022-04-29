@@ -117,6 +117,26 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             gtk::Inhibit(!ok)
         }
     ));
+    let acrash = gio::SimpleAction::new("crash", None);
+    app.add_action(&acrash);
+    acrash.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let ctx = ctx.borrow();
+            if !ctx.data.modified {
+                return;
+            }
+            let mut dir = std::env::temp_dir();
+            dir.push(format!("crashed-{}.craft", std::process::id()));
+
+            eprintln!("Papercraft panicked! Saving backup at \"{}\"", dir.display());
+
+            if let Err(e) = ctx.save(&dir) {
+                eprintln!("backup failed with {e:?}");
+            }
+
+        }
+    ));
 
     let aopen = gio::SimpleAction::new("open", None);
     app.add_action(&aopen);
@@ -357,7 +377,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 if name.extension().is_none() {
                     name.set_extension("craft");
                 }
-                let e = ctx.borrow_mut().save(&name);
+                let e = ctx.borrow().save(&name);
                 if show_error_result(e, &top_window) {
                     let mut ctx = ctx.borrow_mut();
                     ctx.data.modified = false;
@@ -920,11 +940,51 @@ fn main() {
     ));
 	app.connect_startup(clone!(
         @strong imports =>
-        move |app: &gtk::Application| {
+        move |app| {
             on_app_startup(app, imports.clone());
         }
     ));
-    app.run();
+
+    // When the application started a "crash" action will be installed, and when it is quit it will be removed.
+    // If the application panics during the normal operation we will try and save a copy of the file in /tmp
+    app.connect_shutdown(
+        |app| {
+            app.remove_action("crash");
+
+        }
+    );
+
+    //In Linux convert fatal signals to panics to save the crash backup
+    #[cfg(target_os="linux")]
+    {
+        const SIGHUP: i32 = 1;
+        const SIGINT: i32 = 2;
+        const SIGTERM: i32 = 15;
+        const SIGUSR1: i32 = 10;
+        const SIGUSR2: i32 = 12;
+        glib::source::unix_signal_add_local(SIGHUP, || {
+            panic!("SIGHUP");
+        });
+        glib::source::unix_signal_add_local(SIGINT, || {
+            panic!("SIGINT");
+        });
+        glib::source::unix_signal_add_local(SIGTERM, || {
+            panic!("SIGTERM");
+        });
+        glib::source::unix_signal_add_local(SIGUSR1, || {
+            glib::Continue(true)
+        });
+        glib::source::unix_signal_add_local(SIGUSR2, || {
+            glib::Continue(true)
+        });
+    }
+
+    if let Err(e) = std::panic::catch_unwind(|| app.run()) {
+        if let Some(a) = app.lookup_action("crash") {
+            a.activate(None);
+        }
+        std::panic::resume_unwind(e);
+    }
 }
 
 fn scene_realize(w: &gtk::GLArea, ctx: &mut GlobalContext) {

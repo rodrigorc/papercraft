@@ -455,7 +455,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         @strong ctx =>
         move |_, _| {
             let mut ctx = ctx.borrow_mut();
-            ctx.data.pack_islands();
+            let undo = ctx.data.pack_islands();
+            ctx.push_undo_action(undo);
             ctx.wpaper.queue_render();
         }
     ));
@@ -559,10 +560,13 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 match (ctx.data.mode, selection) {
                     (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
 
-                        if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                            ctx.data.try_join_strip(i_edge);
+                        let undo = if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
+                            ctx.data.try_join_strip(i_edge)
                         } else {
-                            ctx.data.edge_toggle_cut(i_edge, i_face);
+                            ctx.data.edge_toggle_cut(i_edge, i_face)
+                        };
+                        if let Some(undo) = undo {
+                            ctx.push_undo_action(undo);
                         }
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
@@ -612,7 +616,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let ctx = &mut *ctx;
             let pos = ev.position_as_vector();
 
-            ctx.data.scene_motion_notify_event(ctx.wscene.size_as_vector(), pos, ev);
+            let size = ctx.wscene.size_as_vector();
+            ctx.data.scene_motion_notify_event(size, pos, ev);
             ctx.wscene.queue_render();
             ctx.wpaper.queue_render();
             Inhibit(true)
@@ -704,10 +709,13 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 match (ctx.data.mode, selection) {
                     (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                         ctx.data.grabbed_island = false;
-                        if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                            ctx.data.try_join_strip(i_edge);
+                        let undo = if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
+                            ctx.data.try_join_strip(i_edge)
                         } else {
-                            ctx.data.edge_toggle_cut(i_edge, i_face);
+                            ctx.data.edge_toggle_cut(i_edge, i_face)
+                        };
+                        if let Some(undo) = undo {
+                            ctx.push_undo_action(undo);
                         }
                         ctx.data.paper_build();
                         ctx.data.scene_edge_build();
@@ -1111,23 +1119,25 @@ struct Transformation3D {
     rotation: Quaternion,
     scale: f32,
 
+    obj: Matrix4,
     persp: Matrix4,
     persp_inv: Matrix4,
-    obj: Matrix4,
-    obj_inv: Matrix4,
+    view: Matrix4,
+    view_inv: Matrix4,
     mnormal: Matrix3,
 }
 
 impl Transformation3D {
-    fn new(location: Vector3, rotation: Quaternion, scale: f32, persp: Matrix4) -> Transformation3D {
+    fn new(obj: Matrix4, location: Vector3, rotation: Quaternion, scale: f32, persp: Matrix4) -> Transformation3D {
         let mut tr = Transformation3D {
             location,
             rotation,
             scale,
+            obj,
             persp,
             persp_inv: persp.invert().unwrap(),
-            obj: Matrix4::one(),
-            obj_inv: Matrix4::one(),
+            view: Matrix4::one(),
+            view_inv: Matrix4::one(),
             mnormal: Matrix3::one(),
         };
         tr.recompute_obj();
@@ -1138,8 +1148,8 @@ impl Transformation3D {
         let t = Matrix4::from_translation(self.location);
         let s = Matrix4::from_scale(self.scale);
 
-        self.obj = t * Matrix4::from(r) * s;
-        self.obj_inv = self.obj.invert().unwrap();
+        self.view = t * Matrix4::from(r) * s * self.obj;
+        self.view_inv = self.view.invert().unwrap();
         self.mnormal = r; //should be inverse of transpose
     }
 
@@ -1199,10 +1209,11 @@ impl PaperDrawFaceArgs {
 }
 
 impl PapercraftContext {
-    fn default_transformations(sz_scene: Vector2, sz_paper: Vector2, ops: &PaperOptions) -> (Transformation3D, TransformationPaper) {
+    fn default_transformations(obj: Matrix4, sz_scene: Vector2, sz_paper: Vector2, ops: &PaperOptions) -> (Transformation3D, TransformationPaper) {
         let page = Vector2::from(ops.page_size);
         let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
         let mut trans_scene = Transformation3D::new(
+            obj,
             Vector3::new(0.0, 0.0, -30.0),
             Quaternion::one(),
             20.0,
@@ -1224,7 +1235,19 @@ impl PapercraftContext {
     }
 
     fn from_papercraft(papercraft: Papercraft, file_name: Option<&Path>, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
-        let (trans_scene, trans_paper) = Self::default_transformations(sz_scene, sz_paper, papercraft.options());
+        // Compute the bounding box, then move to the center and scale to a standard size
+        let (v_min, v_max) = util_3d::bounding_box_3d(
+            papercraft.model()
+                .vertices()
+                .map(|(_, v)| v.pos())
+        );
+        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
+        let mscale = Matrix4::from_scale(1.0 / size);
+        let center = (v_min + v_max) / 2.0;
+        let mcenter = Matrix4::from_translation(-center);
+        let obj = mscale * mcenter;
+
+        let (trans_scene, trans_paper) = Self::default_transformations(obj, sz_scene, sz_paper, papercraft.options());
 
         PapercraftContext {
             file_name: file_name.map(|f| f.to_owned()),
@@ -1381,7 +1404,7 @@ impl PapercraftContext {
     }
 
     fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
-        (self.trans_scene, self.trans_paper) = Self::default_transformations(sz_scene, sz_paper, self.papercraft.options());
+        (self.trans_scene, self.trans_paper) = Self::default_transformations(self.trans_scene.obj, sz_scene, sz_paper, self.papercraft.options());
     }
 
     fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
@@ -1913,19 +1936,19 @@ impl PapercraftContext {
         self.update_selection();
     }
 
-    fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) {
+    #[must_use]
+    fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> Option<Vec<UndoAction>> {
         match self.papercraft.edge_status(i_edge) {
-            EdgeStatus::Hidden => { }
+            EdgeStatus::Hidden => { None }
             EdgeStatus::Joined => {
                 let offset = self.papercraft.options().tab_width * 2.0;
                 self.papercraft.edge_cut(i_edge, Some(offset));
-                let undo_actions = vec![UndoAction::EdgeCut { i_edge }];
-                self.undo_stack.push(undo_actions);
+                Some(vec![UndoAction::EdgeCut { i_edge }])
             }
             EdgeStatus::Cut(_) => {
                 let renames = self.papercraft.edge_join(i_edge, priority_face);
                 if renames.is_empty() {
-                    return;
+                    return None;
                 }
                 let undo_actions = renames
                     .iter()
@@ -1933,16 +1956,17 @@ impl PapercraftContext {
                         UndoAction::EdgeJoin(*join_result)
                     })
                     .collect();
-                self.undo_stack.push(undo_actions);
                 self.islands_renamed(&renames);
+                Some(undo_actions)
             }
         }
     }
 
-    fn try_join_strip(&mut self, i_edge: EdgeIndex) {
+    #[must_use]
+    fn try_join_strip(&mut self, i_edge: EdgeIndex) -> Option<Vec<UndoAction>> {
         let renames = self.papercraft.try_join_strip(i_edge);
         if renames.is_empty() {
-            return;
+            return None;
         }
 
         let undo_actions = renames
@@ -1951,8 +1975,8 @@ impl PapercraftContext {
                 UndoAction::EdgeJoin(*join_result)
             })
             .collect();
-        self.undo_stack.push(undo_actions);
         self.islands_renamed(&renames);
+        Some(undo_actions)
     }
 
     fn islands_renamed(&mut self, renames: &HashMap<IslandKey, JoinResult>) {
@@ -1967,11 +1991,11 @@ impl PapercraftContext {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
-        let height = size.y;
+        let height = size.y * self.trans_scene.obj[1][1];
 
         let click_camera = self.trans_scene.persp_inv.transform_point(click);
-        let click_obj = self.trans_scene.obj_inv.transform_point(click_camera);
-        let camera_obj = self.trans_scene.obj_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
+        let click_obj = self.trans_scene.view_inv.transform_point(click_camera);
+        let camera_obj = self.trans_scene.view_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
 
         let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
@@ -2022,7 +2046,7 @@ impl PapercraftContext {
             }
 
             // Too far from the edge
-            if new_dist > 0.1 {
+            if new_dist > 5.0 {
                 continue;
             }
 
@@ -2179,16 +2203,17 @@ impl PapercraftContext {
         }
     }
 
-    fn pack_islands(&mut self) {
+    #[must_use]
+    fn pack_islands(&mut self) -> Vec<UndoAction> {
         let undo_actions = self.papercraft.islands()
             .map(|(_, island)| {
                 UndoAction::IslandMove{ i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
             })
             .collect();
-        self.undo_stack.push(undo_actions);
         self.papercraft.pack_islands();
         self.paper_build();
         self.update_selection();
+        undo_actions
     }
 
     fn undo_action(&mut self) {
@@ -2335,7 +2360,7 @@ impl GlobalContext {
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
         let mut u = Uniforms3D {
-            m: self.data.trans_scene.persp * self.data.trans_scene.obj,
+            m: self.data.trans_scene.persp * self.data.trans_scene.view,
             mnormal: self.data.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
             tex: 0,

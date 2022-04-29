@@ -262,12 +262,6 @@ impl Model {
         };
         (model, facemap)
     }
-    // F gets (pos, normal)
-    pub fn transform_vertices<F>(&mut self, mut f: F)
-        where F: FnMut(&mut Vector3, &mut Vector3)
-    {
-        self.vertices.iter_mut().for_each(|v| f(&mut v.pos, &mut v.normal));
-    }
     pub fn vertices(&self) -> impl Iterator<Item = (VertexIndex, &Vertex)> {
         self.vertices
             .iter()

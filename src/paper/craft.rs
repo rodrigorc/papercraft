@@ -56,7 +56,7 @@ pub struct PaperOptions {
 impl Default for PaperOptions {
     fn default() -> Self {
         PaperOptions {
-            scale: 100.0,
+            scale: 1.0,
             page_size: (210.0, 297.0),
             resolution: 300,
             pages: 1,

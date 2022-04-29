@@ -1,9 +1,9 @@
 use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, ffi::OsStr, hash::Hash};
 
-use cgmath::{One, EuclideanSpace, Transform, Rad, Zero};
+use cgmath::{One, Rad, Zero};
 use gdk_pixbuf::traits::PixbufLoaderExt;
 use slotmap::SlotMap;
-use crate::{waveobj, util_3d};
+use crate::waveobj;
 use anyhow::{Result, anyhow, Context};
 
 use super::*;
@@ -82,24 +82,7 @@ impl Papercraft {
                 texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
             }
         }
-        let (mut model, facemap) = Model::from_waveobj(&obj, texture_map);
-
-        // Compute the bounding box, then move to the center and scale to a standard size
-        let (v_min, v_max) = util_3d::bounding_box_3d(
-            model
-                .vertices()
-                .map(|(_, v)| v.pos())
-        );
-        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
-        let mscale = Matrix4::from_scale(1.0 / size);
-        let center = (v_min + v_max) / 2.0;
-        let mcenter = Matrix4::from_translation(-center);
-        let m = mscale * mcenter;
-
-        model.transform_vertices(|pos, _normal| {
-            //only scale and translate, no need to touch normals
-            *pos = m.transform_point(Point3::from_vec(*pos)).to_vec();
-        });
+        let (model, facemap) = Model::from_waveobj(&obj, texture_map);
 
         let mut edges = vec![EdgeStatus::Cut(false); model.num_edges()];
 

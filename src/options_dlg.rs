@@ -25,6 +25,7 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     let c_tab_width: gtk::Entry = builder.object("tab_width").unwrap();
     let c_tab_angle: gtk::Entry = builder.object("tab_angle").unwrap();
     let c_textured: gtk::CheckButton = builder.object("textured").unwrap();
+    let c_model_size: gtk::Label = builder.object("model_size").unwrap();
 
     c_scale.set_text(&options.scale.to_string());
     c_scale.connect_insert_text(allow_float);
@@ -51,6 +52,29 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     c_tab_angle.set_text(&options.tab_angle.to_string());
     c_tab_angle.connect_insert_text(allow_float);
     c_textured.set_active(options.texture);
+
+    let bbox = util_3d::bounding_box_3d(
+        ctx.borrow().data.papercraft.model()
+            .vertices()
+            .map(|(_, v)| v.pos())
+    );
+    let model_size = bbox.1 - bbox.0;
+
+    let f_update_scale =
+        move |c_scale: &gtk::Entry| {
+            let scale = c_scale.text().parse::<f32>();
+            match scale {
+                Ok(scale) => {
+                    let sz = model_size * scale;
+                    c_model_size.set_text(&format!("Model size: {:.0} / {:.0} / {:.0}", sz.x, sz.y, sz.z));
+                }
+                Err(_) => {
+                    c_model_size.set_text("");
+                }
+            }
+        };
+    f_update_scale(&c_scale);
+    c_scale.connect_changed(f_update_scale);
 
     for ps in PAPER_SIZES {
         c_paper_size.append_text(ps.name);
@@ -182,6 +206,7 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
             _ => unreachable!(),
         };
         options.borrow_mut().texture = c_textured.is_active();
+
     }));
     let res = dlg.run();
 

@@ -825,7 +825,6 @@ impl Framebuffer {
             Framebuffer { id }
         }
     }
-    #[allow(unused)]
     pub fn id(&self) -> u32 {
         self.id
     }

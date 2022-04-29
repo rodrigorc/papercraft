@@ -112,14 +112,11 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
         @weak c_width, @weak c_height =>
         move |rb| {
             let portrait = rb.is_active();
-            match (c_width.text().parse::<f32>(), c_height.text().parse::<f32>()) {
-                (Ok(w), Ok(h)) => {
-                    if (w > h) == portrait {
-                        c_width.set_text(&h.to_string());
-                        c_height.set_text(&w.to_string());
-                    }
+            if let (Ok(w), Ok(h)) = (c_width.text().parse::<f32>(), c_height.text().parse::<f32>()) {
+                if (w > h) == portrait {
+                    c_width.set_text(&h.to_string());
+                    c_height.set_text(&w.to_string());
                 }
-                _ =>  {}
             }
         }
     ));

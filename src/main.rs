@@ -2568,17 +2568,22 @@ impl GlobalContext {
             // Draw the highlight overlap if "1 < STENCIL"
             gl::Enable(gl::STENCIL_TEST);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::KEEP);
-            gl::StencilFunc(gl::LESS, 1, 0xff);
 
-            let mut uq = UniformQuad {
-                color: Rgba::new(1.0, 0.0, 1.0, 0.9),
-            };
-            gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
 
             if self.data.highlight_overlaps {
+                // Draw the overlapped highlight if "1 < STENCIL"
+                let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.9) };
+                gl::StencilFunc(gl::LESS, 1, 0xff);
+                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
+
                 // Draw the highlight dim if "1 >= STENCIL"
-                uq.color = Rgba::new(1.0, 1.0, 1.0, 0.9);
+                let uq = UniformQuad { color: Rgba::new(1.0, 1.0, 1.0, 0.9) };
                 gl::StencilFunc(gl::GEQUAL, 1, 0xff);
+                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
+            } else {
+                // If highlight is disabled wraw the overlaps anyway, but dimmer, or else it would be invisible
+                let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.5) };
+                gl::StencilFunc(gl::LESS, 1, 0xff);
                 gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
             }
 

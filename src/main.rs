@@ -226,6 +226,55 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             }
         }
     ));
+    let aupdate = gio::SimpleAction::new("update", None);
+    app.add_action(&aupdate);
+    aupdate.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+            let top_window = ctx.borrow().top_window.clone();
+            let dlg = gtk::FileChooserDialog::with_buttons(
+                Some("Update from OBJ"),
+                Some(&top_window),
+                gtk::FileChooserAction::Open,
+                &[
+                    ("Cancel", gtk::ResponseType::Cancel),
+                    ("Open", gtk::ResponseType::Accept)
+                ]
+            );
+            dlg.set_current_folder(".");
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("WaveObj models"));
+            filter.add_pattern("*.obj");
+            dlg.add_filter(&filter);
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("All files"));
+            filter.add_pattern("*");
+            dlg.add_filter(&filter);
+
+            let res = dlg.run();
+            let name = if res == gtk::ResponseType::Accept {
+                dlg.filename()
+            } else {
+                None
+            };
+            unsafe { dlg.destroy(); }
+
+            if let Some(name) = name {
+                let res = Papercraft::import_waveobj(&name);
+                match res {
+                    Err(e) => {
+                        show_error_result(Err(e), &top_window);
+                    }
+                    Ok(pc) => {
+                        ctx.borrow_mut().update_from_obj(pc);
+                        // We could make update_from_obj() to keep the current options, but now it resets to defaults, as if a new object was loaded
+                        app_set_default_options(&top_window.application().unwrap());
+                    }
+                }
+            }
+        }
+    ));
+
     let aexport = gio::SimpleAction::new("export", None);
     app.add_action(&aexport);
     aexport.connect_activate(clone!(
@@ -1114,6 +1163,7 @@ struct GlobalContext {
     data: PapercraftContext,
 }
 
+#[derive(Clone)]
 struct Transformation3D {
     location: Vector3,
     rotation: Quaternion,
@@ -1160,6 +1210,7 @@ impl Transformation3D {
     }
 }
 
+#[derive(Clone)]
 struct TransformationPaper {
     ortho: Matrix3,
     mx: Matrix3,
@@ -2260,16 +2311,25 @@ impl GlobalContext {
     fn import_waveobj(&mut self, file_name: impl AsRef<Path>) -> Result<()> {
         let papercraft = Papercraft::import_waveobj(file_name.as_ref())
             .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
-
+        self.from_papercraft(papercraft, Some(file_name.as_ref()));
+        Ok(())
+    }
+    fn from_papercraft(&mut self, papercraft: Papercraft, file_name: Option<&Path>) {
         let sz_scene = self.wscene.size_as_vector();
         let sz_paper = self.wpaper.size_as_vector();
-        let file_name = file_name.as_ref().file_name();
-        self.data = PapercraftContext::from_papercraft(papercraft, None, sz_scene, sz_paper);
-        self.data.modified = true;
-        self.set_title(file_name);
+        self.data = PapercraftContext::from_papercraft(papercraft, file_name, sz_scene, sz_paper);
+        self.push_undo_action(Vec::new());
         self.wscene.queue_render();
         self.wpaper.queue_render();
-        Ok(())
+    }
+    fn update_from_obj(&mut self, mut new_papercraft: Papercraft) {
+        let file_name = self.data.file_name.clone();
+        new_papercraft.update_from_obj(&self.data.papercraft);
+        let tp = self.data.trans_paper.clone();
+        let ts = self.data.trans_scene.clone();
+        self.from_papercraft(new_papercraft, file_name.as_deref());
+        self.data.trans_paper = tp;
+        self.data.trans_scene = ts;
     }
 
     fn save(&self, file_name: impl AsRef<Path>) -> Result<()> {
@@ -2318,11 +2378,13 @@ impl GlobalContext {
     }
 
     fn push_undo_action(&mut self, action: Vec<UndoAction>) {
-        self.data.undo_stack.push(action);
+        if !action.is_empty() {
+            self.data.undo_stack.push(action);
+        }
         if !self.data.modified {
             self.data.modified = true;
-            self.set_title(self.data.file_name.as_ref());
         }
+        self.set_title(self.data.file_name.as_ref());
     }
 
     fn build_gl_fixs(&mut self) -> Result<()> {

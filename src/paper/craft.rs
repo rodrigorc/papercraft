@@ -7,6 +7,7 @@ use serde::{Serialize, Deserialize};
 
 use super::*;
 mod file;
+mod update;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EdgeStatus {

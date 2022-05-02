@@ -27,6 +27,10 @@
                         <attribute name='icon'>insert-object</attribute>
                     </item>
                     <item>
+                        <attribute name='label' translatable='yes'>Update with _new OBJ...</attribute>
+                        <attribute name='action'>app.update</attribute>
+                    </item>
+                    <item>
                         <attribute name='label' translatable='yes'>E_xport OBJ...</attribute>
                         <attribute name='action'>app.export</attribute>
                     </item>

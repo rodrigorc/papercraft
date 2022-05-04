@@ -25,7 +25,7 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     let c_tab_width: gtk::Entry = builder.object("tab_width").unwrap();
     let c_tab_angle: gtk::Entry = builder.object("tab_angle").unwrap();
     let c_textured: gtk::CheckButton = builder.object("textured").unwrap();
-    let c_model_size: gtk::Label = builder.object("model_size").unwrap();
+    let c_model_info: gtk::Label = builder.object("model_info").unwrap();
 
     c_scale.set_text(&options.scale.to_string());
     c_scale.connect_insert_text(allow_float);
@@ -53,28 +53,35 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     c_tab_angle.connect_insert_text(allow_float);
     c_textured.set_active(options.texture);
 
+    let ctx_ = ctx.borrow();
     let bbox = util_3d::bounding_box_3d(
-        ctx.borrow().data.papercraft.model()
+        ctx_.data.papercraft.model()
             .vertices()
             .map(|(_, v)| v.pos())
     );
     let model_size = bbox.1 - bbox.0;
+    let n_pieces = ctx_.data.papercraft.num_islands();
+    let n_tabs = ctx_.data.papercraft.model().edges()
+        .filter(|(e, _)| matches!(ctx_.data.papercraft.edge_status(*e), EdgeStatus::Cut(_)))
+        .count();
+    drop(ctx_);
 
-    let f_update_scale =
+    let f_update_info =
         move |c_scale: &gtk::Entry| {
             let scale = c_scale.text().parse::<f32>();
-            match scale {
+            let s_size = match scale {
                 Ok(scale) => {
                     let sz = model_size * scale;
-                    c_model_size.set_text(&format!("Model size: {:.0} / {:.0} / {:.0}", sz.x, sz.y, sz.z));
+                    format!("{:.0} x {:.0} x {:.0}", sz.x, sz.y, sz.z)
                 }
                 Err(_) => {
-                    c_model_size.set_text("");
+                    "? x ? x ?".to_string()
                 }
-            }
+            };
+            c_model_info.set_text(&format!("Number of pieces: {n_pieces}\nNumber of tabs: {n_tabs}\nReal size (mm): {s_size}"));
         };
-    f_update_scale(&c_scale);
-    c_scale.connect_changed(f_update_scale);
+    f_update_info(&c_scale);
+    c_scale.connect_changed(f_update_info);
 
     for ps in PAPER_SIZES {
         c_paper_size.append_text(ps.name);

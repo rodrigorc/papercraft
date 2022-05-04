@@ -124,6 +124,9 @@ impl Papercraft {
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
     }
+    pub fn num_islands(&self) -> usize {
+        self.islands.len()
+    }
     pub fn island_bounding_box_angle(&self, island: &Island, angle: Rad<f32>) -> (Vector2, Vector2) {
         let mx = island.matrix() * Matrix3::from(Matrix2::from_angle(angle));
         let mut vx = Vec::new();

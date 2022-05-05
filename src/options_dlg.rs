@@ -26,6 +26,8 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     let c_tab_angle: gtk::Entry = builder.object("tab_angle").unwrap();
     let c_textured: gtk::CheckButton = builder.object("textured").unwrap();
     let c_model_info: gtk::Label = builder.object("model_info").unwrap();
+    let c_self_promotion: gtk::CheckButton = builder.object("self_promotion").unwrap();
+    let c_page_number: gtk::CheckButton = builder.object("page_number").unwrap();
 
     c_scale.set_text(&options.scale.to_string());
     c_scale.connect_insert_text(allow_float);
@@ -52,6 +54,8 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     c_tab_angle.set_text(&options.tab_angle.to_string());
     c_tab_angle.connect_insert_text(allow_float);
     c_textured.set_active(options.texture);
+    c_self_promotion.set_active(options.show_self_promotion);
+    c_page_number.set_active(options.show_page_number);
 
     let ctx_ = ctx.borrow();
     let bbox = util_3d::bounding_box_3d(
@@ -202,15 +206,18 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
         ctrl_value!(c_margin_bottom, |x| x >= 0.0, (margin.3), "Margin bottom");
         ctrl_value!(c_tab_width, |x| x > 0.0, (tab_width), "Tab width");
         ctrl_value!(c_tab_angle, |x| x > 0.0, (tab_angle), "Tab angle");
-        options.borrow_mut().tab_style = match c_tab_style.active_id().unwrap().as_str() {
+
+        let mut options = options.borrow_mut();
+        options.tab_style = match c_tab_style.active_id().unwrap().as_str() {
             "tex" => TabStyle::Textured,
             "htex" => TabStyle::HalfTextured,
             "white" => TabStyle::White,
             "none" => TabStyle::None,
             _ => unreachable!(),
         };
-        options.borrow_mut().texture = c_textured.is_active();
-
+        options.texture = c_textured.is_active();
+        options.show_self_promotion = c_self_promotion.is_active();
+        options.show_page_number = c_page_number.is_active();
     }));
     let res = dlg.run();
 

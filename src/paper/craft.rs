@@ -37,6 +37,8 @@ pub struct JoinResult {
     pub prev_loc: Vector2,
 }
 
+fn my_true() -> bool { true }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PaperOptions {
     pub scale: f32,
@@ -45,13 +47,17 @@ pub struct PaperOptions {
     pub pages: u32,
     pub page_cols: u32,
     pub margin: (f32, f32, f32, f32), //top, left, right, bottom
-    #[serde(default)] //TODO: default not actually needed
+    #[serde(default="my_true")]
     pub texture: bool,
-    #[serde(default)] //TODO: default not actually needed
+    #[serde(default)]
     pub tab_style: TabStyle,
     pub tab_width: f32,
     pub tab_angle: f32, //degrees
     pub fold_line_len: Option<f32>, //None means fully visible, negative is outwards, positive inwards, Some(0) is invisible
+    #[serde(default="my_true")]
+    pub show_self_promotion: bool,
+    #[serde(default="my_true")]
+    pub show_page_number: bool,
 }
 
 impl Default for PaperOptions {
@@ -68,6 +74,8 @@ impl Default for PaperOptions {
             tab_width: 3.0,
             tab_angle: 45.0,
             fold_line_len: Some(2.0),
+            show_self_promotion: true,
+            show_page_number: true,
         }
     }
 }

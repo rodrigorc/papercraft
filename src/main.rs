@@ -2599,8 +2599,10 @@ impl GlobalContext {
     }
 
     fn generate_pdf(&self, file_name: impl AsRef<Path>) -> Result<()> {
-        let resolution = self.data.papercraft.options().resolution as f32;
-        let page_size_mm = Vector2::from(self.data.papercraft.options().page_size);
+        let options = self.data.papercraft.options();
+        let resolution = options.resolution as f32;
+        let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
+        let page_size_mm = Vector2::from(options.page_size);
         let page_size_inches = page_size_mm / 25.4;
         let page_size_dots = page_size_inches * 72.0;
         let page_size_pixels = page_size_inches * resolution;
@@ -2614,7 +2616,7 @@ impl GlobalContext {
             None => "untitled".into()
         };
         let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
-        let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, "Papercraft (url:TODO)");
+        let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
         let cr = cairo::Context::new(&pdf)?;
 
         unsafe {
@@ -2658,7 +2660,7 @@ impl GlobalContext {
             let mut texturize = 0;
 
             gl::BindVertexArray(gl_fixs.vao_paper.as_ref().unwrap().id());
-            if let (Some(tex), true) = (&gl_objs.textures, self.data.papercraft.options().texture) {
+            if let (Some(tex), true) = (&gl_objs.textures, options.texture) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 texturize = 1;
@@ -2666,13 +2668,33 @@ impl GlobalContext {
 
             let ortho = util_3d::ortho2d_zero(page_size_mm.x, -page_size_mm.y);
 
-            let page_count = self.data.papercraft.options().pages;
-            let tab_style = self.data.papercraft.options().tab_style;
+            let page_count = options.pages;
+            let tab_style = options.tab_style;
 
             for page in 0..page_count {
+                const FONT_SIZE: f32 = 3.0;
+                if options.show_self_promotion {
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                    cr.set_font_size(FONT_SIZE as f64 * 72.0 / 25.4);
+                    let x = margin_left;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    cr.move_to(x as f64 * 72.0 / 25.4, y as f64 * 72.0 / 25.4);
+                    let _ = cr.show_text(signature());
+                }
+                if options.show_page_number {
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                    cr.set_font_size(FONT_SIZE as f64 * 72.0 / 25.4);
+                    let text = format!("Page {}/{}", page + 1, page_count);
+                    let ext = cr.text_extents(&text).unwrap();
+                    let x = page_size_mm.x - margin_right;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    cr.move_to(x as f64 * 72.0 / 25.4 - ext.width, y as f64 * 72.0 / 25.4);
+                    let _ = cr.show_text(&text);
+                }
+
                 // Start render
                 gl::Clear(gl::COLOR_BUFFER_BIT);
-                let page_pos = self.data.papercraft.options().page_position(page);
+                let page_pos = options.page_position(page);
                 let mt = Matrix3::from_translation(-page_pos);
                 let u = Uniforms2D {
                     m: ortho * mt,
@@ -2722,6 +2744,7 @@ impl GlobalContext {
                 pat.set_matrix(mc);
 
                 let _ = cr.paint();
+
                 let _ = cr.show_page();
                 //let _ = pixbuf.savev("test.png", "png", &[]);
             }
@@ -2731,4 +2754,8 @@ impl GlobalContext {
         }
         Ok(())
     }
+}
+
+fn signature() -> &'static str {
+    "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 }

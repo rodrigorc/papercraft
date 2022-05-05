@@ -59,6 +59,7 @@
             <property name="visible">True</property>
             <property name="can-focus">False</property>
             <property name="orientation">vertical</property>
+            <property name="spacing">10</property>
             <child>
               <object class="GtkFrame">
                 <property name="visible">True</property>
@@ -76,6 +77,7 @@
                         <property name="can-focus">False</property>
                         <property name="margin-bottom">5</property>
                         <property name="orientation">vertical</property>
+                        <property name="spacing">5</property>
                         <child>
                           <object class="GtkBox">
                             <property name="visible">True</property>
@@ -280,8 +282,6 @@
                                 <property name="can-focus">False</property>
                                 <property name="xpad">5</property>
                                 <property name="ypad">5</property>
-                                <property name="label" translatable="yes">Aaaaa: 12345
-Bbbbb: xxxxx</property>
                                 <property name="xalign">0</property>
                               </object>
                             </child>
@@ -349,11 +349,12 @@ Bbbbb: xxxxx</property>
                           </packing>
                         </child>
                         <child>
-                          <object class="GtkEntry" id="pages">
+                          <object class="GtkCheckButton" id="self_promotion">
+                            <property name="label" translatable="yes">Print Papercraft signature</property>
                             <property name="visible">True</property>
                             <property name="can-focus">True</property>
-                            <property name="activates-default">True</property>
-                            <property name="width-chars">6</property>
+                            <property name="receives-default">False</property>
+                            <property name="draw-indicator">True</property>
                           </object>
                           <packing>
                             <property name="expand">False</property>
@@ -362,30 +363,17 @@ Bbbbb: xxxxx</property>
                           </packing>
                         </child>
                         <child>
-                          <object class="GtkLabel">
+                          <object class="GtkCheckButton" id="page_number">
+                            <property name="label" translatable="yes">Print page number</property>
                             <property name="visible">True</property>
-                            <property name="can-focus">False</property>
-                            <property name="xpad">10</property>
-                            <property name="label" translatable="yes">Columns:</property>
-                            <property name="justify">right</property>
+                            <property name="can-focus">True</property>
+                            <property name="receives-default">False</property>
+                            <property name="draw-indicator">True</property>
                           </object>
                           <packing>
                             <property name="expand">False</property>
                             <property name="fill">True</property>
                             <property name="position">2</property>
-                          </packing>
-                        </child>
-                        <child>
-                          <object class="GtkEntry" id="columns">
-                            <property name="visible">True</property>
-                            <property name="can-focus">True</property>
-                            <property name="activates-default">True</property>
-                            <property name="width-chars">6</property>
-                          </object>
-                          <packing>
-                            <property name="expand">False</property>
-                            <property name="fill">True</property>
-                            <property name="position">3</property>
                           </packing>
                         </child>
                       </object>
@@ -422,6 +410,7 @@ Bbbbb: xxxxx</property>
                         <property name="visible">True</property>
                         <property name="can-focus">False</property>
                         <property name="orientation">vertical</property>
+                        <property name="spacing">5</property>
                         <child>
                           <object class="GtkBox">
                             <property name="visible">True</property>

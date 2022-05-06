@@ -1093,17 +1093,9 @@ struct GLObjects {
 
     // Maps a FaceIndex to the index into paper_vertices
     paper_face_index: Vec<u32>,
-    // Similar to face_index but for edges, split edges are drawn twice
-    paper_edge_index: Vec<(EdgeIndexRef, u32, Option<u32>)>,
 
     paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
     paper_vertices_margin: glr::DynamicVertexArray<MVertex2DLine>,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum EdgeIndexRef {
-    Border,
-    Crease,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -1242,7 +1234,6 @@ struct PaperDrawFaceArgs {
     vertices_tab: Vec<MVertex2DColor>,
     vertices_tab_edge: Vec<MVertex2DLine>,
     face_index: Vec<u32>,
-    edge_index: Vec<(EdgeIndexRef, u32, Option<u32>)>,
 }
 
 impl PaperDrawFaceArgs {
@@ -1254,7 +1245,6 @@ impl PaperDrawFaceArgs {
             vertices_tab: Vec::new(),
             vertices_tab_edge: Vec::new(),
             face_index: vec![0; model.num_faces()],
-            edge_index: vec![(EdgeIndexRef::Border, 0, None); model.num_edges()],
         }
     }
 }
@@ -1441,7 +1431,6 @@ impl PapercraftContext {
                 paper_vertices_edge_sel,
 
                 paper_face_index: Vec::new(),
-                paper_edge_index: Vec::new(),
 
                 paper_vertices_page,
                 paper_vertices_margin,
@@ -1516,78 +1505,81 @@ impl PapercraftContext {
             };
             let v = pos1 - pos0;
             let fold_faces = edge_status == EdgeStatus::Joined;
-            let mut v0 = MVertex2DLine {
+            let v2d = MVertex2DLine {
                 pos: pos0,
                 line_dash: 0.0,
                 width_left: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else if draw_tab { CREASE_LINE_WIDTH } else { BORDER_LINE_WIDTH },
                 width_right: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else { 0.0 },
             };
-            let mut v1 = MVertex2DLine {
-                pos: pos1,
-                .. v0
-            };
 
             let v_len = v.magnitude();
             let (new_lines_, new_lines_2_);
 
-            let (has_visible_line_len, visible_line_len) =
+            let fold_factor = self.papercraft.options().fold_line_len / v_len;
+            let visible_line =
                 if edge_status == EdgeStatus::Joined || draw_tab {
-                    match self.papercraft.options().fold_line_len {
-                        Some(x) => (true, x.min(v_len / 2.0)),
-                        None => (false, 0.0),
+                    match self.papercraft.options().fold_style {
+                        paper::FoldStyle::Full => (Some(0.0), None),
+                        paper::FoldStyle::FullAndOut => (Some(fold_factor), None),
+                        paper::FoldStyle::Out => (Some(fold_factor), Some(0.0)),
+                        paper::FoldStyle::In => (Some(0.0), Some(fold_factor)),
+                        paper::FoldStyle::InAndOut => (Some(fold_factor), Some(fold_factor)),
+                        paper::FoldStyle::None => (None, None),
                     }
                 } else {
-                    (false, 0.0)
+                    (Some(0.0), None)
                 };
 
-            let new_lines: &[_] = if has_visible_line_len {
-                let vn = v * visible_line_len / v_len;
-                let dash_delta = if dotted { 1.5 } else { 0.5 };
-                v0.line_dash = 0.51;
-                v1.line_dash = 0.99;
-                let v00 = MVertex2DLine {
-                    pos: v0.pos + vn,
-                    line_dash: v0.line_dash - dash_delta,
-                    .. v0
-                };
-                let v11 = MVertex2DLine {
-                    pos: v1.pos - vn,
-                    line_dash: v1.line_dash + dash_delta,
-                    .. v1
-                };
-                new_lines_ = if visible_line_len > 0.0 {
-                    [v0, v1, v0, v00, v11, v1]
-                } else {
-                    [v0, v1, v00, v0, v1, v11]
-                };
-                &new_lines_
-            } else {
-                if dotted {
-                    v1.line_dash = v.magnitude();
+            let new_lines: &[_] = match visible_line  {
+                (None, None) | (None, Some(_)) => { &[] }
+                (Some(f), None) => {
+                    let vn = v * f;
+                    let v0 = MVertex2DLine {
+                        pos: pos0 - vn,
+                        line_dash: 0.0,
+                        .. v2d
+                    };
+                    let v1 = MVertex2DLine {
+                        pos: pos1 + vn,
+                        line_dash: if dotted { v_len * (1.0 + 2.0 * f) } else { 0.0 },
+                        .. v0
+                    };
+                    new_lines_ = [v0, v1];
+                    &new_lines_
                 }
-                new_lines_2_ = [v0, v1];
-                &new_lines_2_
+                (Some(f_a), Some(f_b)) => {
+                    let vn_a = v * f_a;
+                    let vn_b = v * f_b;
+                    let va0 = MVertex2DLine {
+                        pos: pos0 - vn_a,
+                        line_dash: 0.0,
+                        .. v2d
+                    };
+                    let va1 = MVertex2DLine {
+                        pos: pos0 + vn_b,
+                        line_dash: if dotted { v_len * (f_a + f_b) } else { 0.0 },
+                        .. v2d
+                    };
+                    let vb0 = MVertex2DLine {
+                        pos: pos1 - vn_b,
+                        line_dash: 0.0,
+                        .. v2d
+                    };
+                    let vb1 = MVertex2DLine {
+                        pos: pos1 + vn_a,
+                        line_dash: va1.line_dash,
+                        .. v2d
+                    };
+                    new_lines_2_ = [va0, va1, vb0, vb1];
+                    &new_lines_2_
+                }
             };
 
-            let edge_index = &mut args.edge_index[usize::from(i_edge)];
             let edge_container = if fold_faces {
-                edge_index.0 = EdgeIndexRef::Crease;
                 &mut args.vertices_edge_crease
             } else {
-                edge_index.0 = EdgeIndexRef::Border;
                 &mut args.vertices_edge_border
             };
-            let edge_pos = edge_container.len() as u32 / 2;
-            if matches!(edge_status, EdgeStatus::Cut(_)) {
-                if edge.face_sign(i_face) {
-                    edge_index.1 = edge_pos;
-                } else {
-                    edge_index.2 = Some(edge_pos);
-                }
-            } else {
-                edge_index.1 = edge_pos;
-                edge_index.2 = None;
-            }
             edge_container.extend_from_slice(new_lines);
 
             // Draw the tab?
@@ -1729,7 +1721,6 @@ impl PapercraftContext {
             gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge);
 
             gl_objs.paper_face_index = args.face_index;
-            gl_objs.paper_edge_index = args.edge_index;
         }
     }
 
@@ -1890,48 +1881,52 @@ impl PapercraftContext {
             edges_sel.push(MVertex3DLine { pos: p1, color });
             gl_objs.vertices_edge_sel.set(edges_sel);
 
-            let edge_index = gl_objs.paper_edge_index[usize::from(i_sel_edge)];
-            let edge_container = match edge_index.0 {
-                EdgeIndexRef::Border => &gl_objs.paper_vertices_edge_border,
-                EdgeIndexRef::Crease => &gl_objs.paper_vertices_edge_crease,
+            let (i_face_a, i_face_b) = edge.faces();
+
+            // Returns the 2D vertices of i_sel_edge that belong to face i_face
+            let get_vx = |i_face: FaceIndex| {
+                let face_a = &self.papercraft.model()[i_face];
+                let idx_face = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                let idx_edge = face_a.index_edges().iter().position(|&e| e == i_sel_edge).unwrap();
+                let v0 = &gl_objs.paper_vertices[idx_face + idx_edge];
+                let v1 = &gl_objs.paper_vertices[idx_face + (idx_edge + 1) % 3];
+                (v0, v1)
             };
 
-            let pos = edge_index.1;
-            let pos = 2 * pos as usize;
             let mut edge_sel = Vec::with_capacity(6);
             let line_width = LINE_SEL_WIDTH / 2.0 / self.trans_paper.mx[0][0];
+
+            let (v0, v1) = get_vx(i_face_a);
             edge_sel.extend_from_slice(&[
                 MVertex2DLine {
-                    pos: edge_container[pos].pos,
+                    pos: v0.pos,
                     line_dash: 0.0,
                     width_left: line_width,
                     width_right: line_width,
                 },
                 MVertex2DLine {
-                    pos: edge_container[pos + 1].pos,
+                    pos: v1.pos,
                     line_dash: 0.0,
                     width_left: line_width,
                     width_right: line_width,
                 },
             ]);
-
-            if let Some(pos) = edge_index.2 {
-                let pos = 2 * pos as usize;
+            if let Some(i_face_b) = i_face_b {
+                let (vb0, vb1) = get_vx(i_face_b);
                 edge_sel.extend_from_slice(&[
                     MVertex2DLine {
-                        pos: edge_container[pos].pos,
+                        pos: vb0.pos,
                         line_dash: 0.0,
                         width_left: line_width,
                         width_right: line_width,
                     },
                     MVertex2DLine {
-                        pos: edge_container[pos + 1].pos,
+                        pos: vb1.pos,
                         line_dash: 0.0,
                         width_left: line_width,
                         width_right: line_width,
                     },
                 ]);
-
                 let mut link_line = [
                     MVertex2DLine {
                         pos: (edge_sel[0].pos + edge_sel[1].pos) / 2.0,

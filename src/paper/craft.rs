@@ -24,6 +24,16 @@ pub enum TabStyle {
     None,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FoldStyle {
+    Full,
+    FullAndOut,
+    Out,
+    In,
+    InAndOut,
+    None,
+}
+
 new_key_type! {
     pub struct IslandKey;
 }
@@ -51,9 +61,11 @@ pub struct PaperOptions {
     pub texture: bool,
     #[serde(default)]
     pub tab_style: TabStyle,
+    #[serde(default)]
+    pub fold_style: FoldStyle,
     pub tab_width: f32,
     pub tab_angle: f32, //degrees
-    pub fold_line_len: Option<f32>, //None means fully visible, negative is outwards, positive inwards, Some(0) is invisible
+    pub fold_line_len: f32, //only for folds in & out
     #[serde(default="my_true")]
     pub show_self_promotion: bool,
     #[serde(default="my_true")]
@@ -71,9 +83,10 @@ impl Default for PaperOptions {
             margin: (10.0, 10.0, 10.0, 10.0),
             texture: true,
             tab_style: TabStyle::Textured,
+            fold_style: FoldStyle::Full,
             tab_width: 3.0,
             tab_angle: 45.0,
-            fold_line_len: Some(2.0),
+            fold_line_len: 2.0,
             show_self_promotion: true,
             show_page_number: true,
         }
@@ -764,7 +777,45 @@ impl<'de> Deserialize<'de> for TabStyle {
             1 => TabStyle::HalfTextured,
             2 => TabStyle::White,
             3 => TabStyle::None,
-            _ => return Err(serde::de::Error::missing_field("invalid tab_style status")),
+            _ => return Err(serde::de::Error::missing_field("invalid tab_style value")),
+        };
+        Ok(res)
+    }
+}
+
+impl Default for FoldStyle {
+    fn default() -> Self {
+        FoldStyle::Full
+    }
+}
+impl Serialize for FoldStyle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let is = match self {
+            FoldStyle::Full => 0,
+            FoldStyle::FullAndOut => 1,
+            FoldStyle::Out => 2,
+            FoldStyle::In => 3,
+            FoldStyle::InAndOut => 4,
+            FoldStyle::None => 5,
+        };
+        serializer.serialize_i32(is)
+    }
+}
+impl<'de> Deserialize<'de> for FoldStyle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: serde::Deserializer<'de>
+    {
+        let d = u32::deserialize(deserializer)?;
+        let res = match d {
+            0 => FoldStyle::Full,
+            1 => FoldStyle::FullAndOut,
+            2 => FoldStyle::Out,
+            3 => FoldStyle::In,
+            4 => FoldStyle::InAndOut,
+            5 => FoldStyle::None,
+            _ => return Err(serde::de::Error::missing_field("invalid fold_style value")),
         };
         Ok(res)
     }

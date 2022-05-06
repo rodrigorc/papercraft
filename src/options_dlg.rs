@@ -24,6 +24,8 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     let c_tab_style: gtk::ComboBoxText = builder.object("tab_style").unwrap();
     let c_tab_width: gtk::Entry = builder.object("tab_width").unwrap();
     let c_tab_angle: gtk::Entry = builder.object("tab_angle").unwrap();
+    let c_fold_style: gtk::ComboBoxText = builder.object("fold_style").unwrap();
+    let c_fold_length: gtk::Entry = builder.object("fold_length").unwrap();
     let c_textured: gtk::CheckButton = builder.object("textured").unwrap();
     let c_model_info: gtk::Label = builder.object("model_info").unwrap();
     let c_self_promotion: gtk::CheckButton = builder.object("self_promotion").unwrap();
@@ -53,6 +55,8 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     c_tab_width.connect_insert_text(allow_float);
     c_tab_angle.set_text(&options.tab_angle.to_string());
     c_tab_angle.connect_insert_text(allow_float);
+    c_fold_length.set_text(&options.fold_line_len.to_string());
+    c_fold_length.connect_insert_text(allow_float);
     c_textured.set_active(options.texture);
     c_self_promotion.set_active(options.show_self_promotion);
     c_page_number.set_active(options.show_page_number);
@@ -101,6 +105,23 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
         TabStyle::None => "none",
     };
     c_tab_style.set_active_id(Some(ts_sel));
+
+    c_fold_style.append(Some("full"), "Full line");
+    c_fold_style.append(Some("full_out"), "Full & out segment");
+    c_fold_style.append(Some("out"), "Out segment");
+    c_fold_style.append(Some("in"), "In segment");
+    c_fold_style.append(Some("in_out"), "Out & in segment");
+    c_fold_style.append(Some("none"), "None");
+    let fs_sel = match options.fold_style {
+        paper::FoldStyle::Full => "full",
+        paper::FoldStyle::FullAndOut => "full_out",
+        paper::FoldStyle::Out => "out",
+        paper::FoldStyle::In => "in",
+        paper::FoldStyle::InAndOut => "in_out",
+        paper::FoldStyle::None => "none",
+    };
+    c_fold_style.set_active_id(Some(fs_sel));
+
 
     let options = Rc::new(RefCell::new(options));
 
@@ -205,6 +226,7 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
         ctrl_value!(c_margin_right, |x| x >= 0.0, (margin.2), "Margin right");
         ctrl_value!(c_margin_bottom, |x| x >= 0.0, (margin.3), "Margin bottom");
         ctrl_value!(c_tab_width, |x| x > 0.0, (tab_width), "Tab width");
+        ctrl_value!(c_fold_length, |x| x > 0.0, (fold_line_len), "Fold length");
         ctrl_value!(c_tab_angle, |x| x > 0.0, (tab_angle), "Tab angle");
 
         let mut options = options.borrow_mut();
@@ -213,6 +235,15 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
             "htex" => TabStyle::HalfTextured,
             "white" => TabStyle::White,
             "none" => TabStyle::None,
+            _ => unreachable!(),
+        };
+        options.fold_style = match c_fold_style.active_id().unwrap().as_str() {
+            "full" => paper::FoldStyle::Full,
+            "full_out" => paper::FoldStyle::FullAndOut,
+            "out" => paper::FoldStyle::Out,
+            "in" => paper::FoldStyle::In,
+            "in_out" => paper::FoldStyle::InAndOut,
+            "none" => paper::FoldStyle::None,
             _ => unreachable!(),
         };
         options.texture = c_textured.is_active();

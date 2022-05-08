@@ -250,20 +250,24 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
         options.show_self_promotion = c_self_promotion.is_active();
         options.show_page_number = c_page_number.is_active();
     }));
+
     let res = dlg.run();
-
-    if res == gtk::ResponseType::Ok {
-        let mut ctx = ctx.borrow_mut();
-        ctx.data.papercraft.set_options(options.borrow().clone());
-
-        ctx.data.pages_build();
-        ctx.data.scene_edge_build();
-        ctx.data.paper_build();
-        ctx.data.update_selection();
-        ctx.wpaper.queue_render();
-        ctx.wscene.queue_render();
-    }
     unsafe { dlg.destroy(); }
+
+    if res != gtk::ResponseType::Ok {
+        return;
+    }
+
+    let mut ctx = ctx.borrow_mut();
+    let old_options = ctx.data.papercraft.set_options(options.borrow().clone());
+    ctx.push_undo_action(vec![UndoAction::DocConfig { options: old_options }]);
+
+    ctx.data.pages_build();
+    ctx.data.scene_edge_build();
+    ctx.data.paper_build();
+    ctx.data.update_selection();
+    ctx.wpaper.queue_render();
+    ctx.wscene.queue_render();
 }
 
 struct PaperSize {

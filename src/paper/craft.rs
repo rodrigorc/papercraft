@@ -130,14 +130,16 @@ impl Papercraft {
     pub fn options(&self) -> &PaperOptions {
         &self.options
     }
-    pub fn set_options(&mut self, options: PaperOptions) {
+    // Returns the old options
+    pub fn set_options(&mut self, mut options: PaperOptions) -> PaperOptions{
         let scale = options.scale / self.options.scale;
         for (_, island) in &mut self.islands {
             island.loc *= scale;
             island.recompute_matrix();
         }
-        self.options = options;
+        std::mem::swap(&mut self.options, &mut options);
         //TODO: reorder islands and whatever
+        options
     }
     pub fn face_plane(&self, face: &Face) -> Plane {
         face.plane(&self.model, self.options.scale)

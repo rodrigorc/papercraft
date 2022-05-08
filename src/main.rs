@@ -1128,7 +1128,8 @@ enum UndoAction {
     IslandMove { i_root: FaceIndex, prev_rot: Rad<f32>, prev_loc: Vector2 },
     TabToggle { i_edge: EdgeIndex },
     EdgeCut { i_edge: EdgeIndex },
-    EdgeJoin(JoinResult),
+    EdgeJoin { join_result: JoinResult },
+    DocConfig { options: PaperOptions },
 }
 
 //Objects that are recreated when a new model is loaded
@@ -2016,7 +2017,7 @@ impl PapercraftContext {
                 let undo_actions = renames
                     .iter()
                     .map(|(_, join_result)| {
-                        UndoAction::EdgeJoin(*join_result)
+                        UndoAction::EdgeJoin { join_result: *join_result }
                     })
                     .collect();
                 self.islands_renamed(&renames);
@@ -2035,7 +2036,7 @@ impl PapercraftContext {
         let undo_actions = renames
             .iter()
             .map(|(_, join_result)| {
-                UndoAction::EdgeJoin(*join_result)
+                UndoAction::EdgeJoin { join_result: *join_result }
             })
             .collect();
         self.islands_renamed(&renames);
@@ -2304,12 +2305,15 @@ impl PapercraftContext {
                 UndoAction::EdgeCut { i_edge } => {
                     self.papercraft.edge_join(i_edge, None);
                 }
-                UndoAction::EdgeJoin(jr) => {
-                    self.papercraft.edge_cut(jr.i_edge, None);
-                    let i_prev_island = self.papercraft.island_by_face(jr.prev_root);
+                UndoAction::EdgeJoin { join_result } => {
+                    self.papercraft.edge_cut(join_result.i_edge, None);
+                    let i_prev_island = self.papercraft.island_by_face(join_result.prev_root);
                     let island = self.papercraft.island_by_key_mut(i_prev_island).unwrap();
 
-                    island.reset_transformation(jr.prev_root, jr.prev_rot, jr.prev_loc);
+                    island.reset_transformation(join_result.prev_root, join_result.prev_rot, join_result.prev_loc);
+                }
+                UndoAction::DocConfig { options } => {
+                    self.papercraft.set_options(options);
                 }
             }
         }

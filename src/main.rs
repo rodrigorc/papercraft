@@ -610,41 +610,66 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = ev.position_as_vector();
             ctx.data.last_cursor_pos = pos;
 
-            if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.data.scene_analyze_click(ctx.data.mode, ctx.wscene.size_as_vector(), pos);
-                match (ctx.data.mode, selection) {
-                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
+            match (ev.button(), ev.event_type()) {
+                (1, gdk::EventType::ButtonPress) => {
+                    let selection = ctx.data.scene_analyze_click(ctx.data.mode, ctx.wscene.size_as_vector(), pos);
+                    match (ctx.data.mode, selection) {
+                        (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
 
-                        let undo = if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                            ctx.data.try_join_strip(i_edge)
-                        } else {
-                            ctx.data.edge_toggle_cut(i_edge, i_face)
-                        };
-                        if let Some(undo) = undo {
-                            ctx.push_undo_action(undo);
+                            let undo = if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
+                                ctx.data.try_join_strip(i_edge)
+                            } else {
+                                ctx.data.edge_toggle_cut(i_edge, i_face)
+                            };
+                            if let Some(undo) = undo {
+                                ctx.push_undo_action(undo);
+                            }
+                            ctx.data.paper_build();
+                            ctx.data.scene_edge_build();
+                            ctx.data.update_selection();
                         }
-                        ctx.data.paper_build();
-                        ctx.data.scene_edge_build();
-                        ctx.data.update_selection();
+                        (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                            ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
+                            ctx.data.papercraft.edge_toggle_tab(i_edge);
+                            ctx.data.paper_build();
+                            ctx.data.scene_edge_build();
+                            ctx.data.update_selection();
+                        }
+                        (_, ClickResult::Face(f)) => {
+                            ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        }
+                        (_, ClickResult::None) => {
+                            ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                        }
+                        _ => {}
                     }
-                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                        ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                        ctx.data.papercraft.edge_toggle_tab(i_edge);
-                        ctx.data.paper_build();
-                        ctx.data.scene_edge_build();
-                        ctx.data.update_selection();
-                    }
-                    (_, ClickResult::Face(f)) => {
-                        ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
-                    }
-                    (_, ClickResult::None) => {
-                        ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
-                    }
-                    _ => {}
+                    ctx.wscene.queue_render();
+                    ctx.wpaper.queue_render();
                 }
-                ctx.wscene.queue_render();
-                ctx.wpaper.queue_render();
-    }
+                (1, gdk::EventType::DoubleButtonPress) => {
+                    let selection = ctx.data.scene_analyze_click(MouseMode::Face, ctx.wscene.size_as_vector(), pos);
+                    if let ClickResult::Face(i_face) = selection {
+                        if let Some(gl_objs) = &ctx.data.gl_objs {
+                            // Compute the average of all the faces flat with the selected one, and move it to the center of the paper.
+                            // Some vertices are counted twice, but they tend to be in diagonally opposed so the compensate, and it is an approximation anyways.
+                            let mut center = Vector2::zero();
+                            let mut n = 0.0;
+                            for i_face in ctx.data.papercraft.get_flat_faces(i_face) {
+                                let idx = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                                for i in idx .. idx + 3 {
+                                    center += gl_objs.paper_vertices[i].pos;
+                                    n += 1.0;
+                                }
+                            }
+                            center /= n;
+                            ctx.data.trans_paper.mx[2][0] = -center.x * ctx.data.trans_paper.mx[0][0];
+                            ctx.data.trans_paper.mx[2][1] = -center.y * ctx.data.trans_paper.mx[1][1];
+                            ctx.wpaper.queue_render();
+                        }
+                    }
+                }
+                _ => {}
+            }
             Inhibit(false)
         }
     ));
@@ -759,51 +784,54 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = ev.position_as_vector();
             ctx.data.last_cursor_pos = pos;
 
-            if ev.button() == 1 && ev.event_type() == gdk::EventType::ButtonPress {
-                let selection = ctx.data.paper_analyze_click(ctx.data.mode, ctx.wpaper.size_as_vector(), pos);
-                match (ctx.data.mode, selection) {
-                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                        ctx.data.grabbed_island = false;
-                        let undo = if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                            ctx.data.try_join_strip(i_edge)
-                        } else {
-                            ctx.data.edge_toggle_cut(i_edge, i_face)
-                        };
-                        if let Some(undo) = undo {
-                            ctx.push_undo_action(undo);
+            match (ev.button(), ev.event_type()) {
+                (1, gdk::EventType::ButtonPress) => {
+                    let selection = ctx.data.paper_analyze_click(ctx.data.mode, ctx.wpaper.size_as_vector(), pos);
+                    match (ctx.data.mode, selection) {
+                        (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
+                            ctx.data.grabbed_island = false;
+                            let undo = if ev.state().contains(gdk::ModifierType::SHIFT_MASK) {
+                                ctx.data.try_join_strip(i_edge)
+                            } else {
+                                ctx.data.edge_toggle_cut(i_edge, i_face)
+                            };
+                            if let Some(undo) = undo {
+                                ctx.push_undo_action(undo);
+                            }
+                            ctx.data.paper_build();
+                            ctx.data.scene_edge_build();
+                            ctx.data.update_selection();
                         }
-                        ctx.data.paper_build();
-                        ctx.data.scene_edge_build();
-                        ctx.data.update_selection();
+                        (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                            ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
+                            ctx.data.papercraft.edge_toggle_tab(i_edge);
+                            ctx.data.paper_build();
+                            ctx.data.scene_edge_build();
+                            ctx.data.update_selection();
+                        }
+                        (_, ClickResult::Face(f)) => {
+                            ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                            let undo_action = ctx.data.selected_islands
+                                .iter()
+                                .map(|&i_island| {
+                                    let island = ctx.data.papercraft.island_by_key(i_island).unwrap();
+                                    UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
+                                })
+                                .collect();
+                            ctx.push_undo_action(undo_action);
+                            ctx.data.grabbed_island = true;
+                        }
+                        (_, ClickResult::None) => {
+                            ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                            ctx.data.grabbed_island = false;
+                        }
+                        _ => {}
                     }
-                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                        ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                        ctx.data.papercraft.edge_toggle_tab(i_edge);
-                        ctx.data.paper_build();
-                        ctx.data.scene_edge_build();
-                        ctx.data.update_selection();
-                    }
-                    (_, ClickResult::Face(f)) => {
-                        ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
-                        let undo_action = ctx.data.selected_islands
-                            .iter()
-                            .map(|&i_island| {
-                                let island = ctx.data.papercraft.island_by_key(i_island).unwrap();
-                                UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
-                            })
-                            .collect();
-                        ctx.push_undo_action(undo_action);
-                        ctx.data.grabbed_island = true;
-                    }
-                    (_, ClickResult::None) => {
-                        ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
-                        ctx.data.grabbed_island = false;
-                    }
-                    _ => {}
+                    ctx.wscene.queue_render();
+                    ctx.wpaper.queue_render();
                 }
-                ctx.wscene.queue_render();
-                ctx.wpaper.queue_render();
-    }
+                _ => {}
+            }
             Inhibit(true)
         }
     ));

@@ -88,11 +88,13 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     let wscene = gtk::GLArea::new();
     let wpaper = gtk::GLArea::new();
     let top_window = gtk::ApplicationWindow::new(app);
+    let status = gtk::Label::new(None);
 
     let sz_dummy = Vector2::new(1.0, 1.0);
     let data = PapercraftContext::from_papercraft(Papercraft::empty(), None, sz_dummy, sz_dummy);
     let ctx = GlobalContext {
         top_window: top_window.clone(),
+        status: status.clone(),
         wscene: wscene.clone(),
         wpaper: wpaper.clone(),
         gl_fixs: None,
@@ -459,15 +461,19 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 a.set_state(&"".to_variant());
 
                 a.set_state(v);
+                let mut ctx = ctx.borrow_mut();
                 match v.str().unwrap() {
                     "face" => {
-                        ctx.borrow_mut().data.mode = MouseMode::Face;
+                        ctx.data.mode = MouseMode::Face;
+                        ctx.status.set_text("Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it.");
                     }
                     "edge" => {
-                        ctx.borrow_mut().data.mode = MouseMode::Edge;
+                        ctx.data.mode = MouseMode::Edge;
+                        ctx.status.set_text("Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads.");
                     }
                     "tab" => {
-                        ctx.borrow_mut().data.mode = MouseMode::Tab;
+                        ctx.data.mode = MouseMode::Tab;
+                        ctx.status.set_text("Tab mode. Click on an edge to swap the side of a tab.");
                     }
                     _ => {}
                 }
@@ -901,11 +907,21 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     btn.set_icon_name(Some("object-flip-horizontal"));
     toolbar.add(&btn);
 
+    status.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    status.set_halign(gtk::Align::Start);
+    status.set_margin(1);
+
+    let status_frame = gtk::Frame::new(None);
+    status_frame.set_shadow_type(gtk::ShadowType::EtchedIn);
+    status_frame.set_margin(1);
+    status_frame.add(&status);
+
     let vbin = gtk::Box::new(gtk::Orientation::Vertical, 0);
     top_window.add(&vbin);
 
     vbin.pack_start(&toolbar, false, true, 0);
     vbin.pack_start(&hbin, true, true, 0);
+    vbin.pack_start(&status_frame, false, true, 0);
 
 	app.connect_activate(clone!(
         @strong ctx =>
@@ -1147,6 +1163,7 @@ struct PapercraftContext {
 
 struct GlobalContext {
     top_window: gtk::ApplicationWindow,
+    status: gtk::Label,
     wscene: gtk::GLArea,
     wpaper: gtk::GLArea,
 

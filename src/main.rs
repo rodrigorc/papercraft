@@ -233,6 +233,10 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
     aupdate.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
+            GlobalContext::confirm_if_modified_with_message(&ctx,
+                "Update model",
+                "This model is not saved and this operation cannot be undone.\nContinue anyways?"
+            );
             let top_window = ctx.borrow().top_window.clone();
             let dlg = gtk::FileChooserDialog::with_buttons(
                 Some("Update from OBJ"),
@@ -2444,16 +2448,22 @@ impl GlobalContext {
     }
 
     fn confirm_if_modified(ctx: &RefCell<GlobalContext>, title: &str) -> bool {
+        Self::confirm_if_modified_with_message(ctx, title, "The model has not been save, continue anyway?")
+    }
+    fn confirm_if_modified_with_message(ctx: &RefCell<GlobalContext>, title: &str, message: &str) -> bool {
         if !ctx.borrow().data.modified {
             return true;
         }
         let dlg = gtk::MessageDialog::builder()
             .title(title)
             .transient_for(&ctx.borrow().top_window)
-            .text("The model has not been save, continue anyway?")
+            .text(message)
             .message_type(gtk::MessageType::Question)
-            .buttons(gtk::ButtonsType::OkCancel)
             .build();
+        dlg.add_buttons(&[
+            ("Cancel", gtk::ResponseType::Cancel),
+            ("Continue", gtk::ResponseType::Ok),
+        ]);
         let res = dlg.run();
         unsafe { dlg.destroy(); }
         res == gtk::ResponseType::Ok

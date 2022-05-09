@@ -262,12 +262,7 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     let old_options = ctx.data.papercraft.set_options(options.borrow().clone());
     ctx.push_undo_action(vec![UndoAction::DocConfig { options: old_options }]);
 
-    ctx.data.pages_build();
-    ctx.data.scene_edge_build();
-    ctx.data.paper_build();
-    ctx.data.update_selection();
-    ctx.wpaper.queue_render();
-    ctx.wscene.queue_render();
+    ctx.add_rebuild(RebuildFlags::ALL);
 }
 
 struct PaperSize {

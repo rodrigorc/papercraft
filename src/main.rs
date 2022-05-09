@@ -445,10 +445,10 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
         @strong ctx =>
         move |_, _| {
             let mut ctx = ctx.borrow_mut();
-            ctx.data.undo_action();
-            ctx.wscene.queue_render();
-            ctx.wpaper.queue_render();
+            if ctx.data.undo_action() {
+                ctx.add_rebuild(RebuildFlags::ALL);
             }
+        }
     ));
 
     let amode = gio::SimpleAction::new_stateful("mode", Some(glib::VariantTy::STRING), &"face".to_variant());
@@ -490,8 +490,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let sz_scene = ctx.wscene.size_as_vector();
             let sz_paper = ctx.wpaper.size_as_vector();
             ctx.data.reset_views(sz_scene, sz_paper);
-            ctx.wpaper.queue_render();
-            ctx.wscene.queue_render();
+            ctx.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
         }
     ));
 
@@ -512,7 +511,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let mut ctx = ctx.borrow_mut();
             let undo = ctx.data.pack_islands();
             ctx.push_undo_action(undo);
-            ctx.wpaper.queue_render();
+            ctx.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
         }
     ));
 
@@ -525,8 +524,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_textures = v.get().unwrap();
-                ctx.wpaper.queue_render();
-                ctx.wscene.queue_render();
+                ctx.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
             }
         }
     ));
@@ -540,7 +538,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_3d_lines = v.get().unwrap();
-                ctx.wscene.queue_render();
+                ctx.add_rebuild(RebuildFlags::SCENE_REDRAW);
             }
         }
     ));
@@ -554,9 +552,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.show_tabs = v.get().unwrap();
-                ctx.data.paper_build();
-                ctx.wpaper.queue_render();
-                ctx.wscene.queue_render();
+                ctx.add_rebuild(RebuildFlags::PAPER);
             }
         }
     ));
@@ -570,8 +566,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.xray_selection = v.get().unwrap();
-                ctx.data.update_selection();
-                ctx.wscene.queue_render();
+                ctx.add_rebuild(RebuildFlags::SELECTION);
             }
         }
     ));
@@ -585,7 +580,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                 a.set_state(v);
                 let mut ctx = ctx.borrow_mut();
                 ctx.data.highlight_overlaps = v.get().unwrap();
-                ctx.wpaper.queue_render();
+                ctx.add_rebuild(RebuildFlags::PAPER_REDRAW);
             }
         }
     ));
@@ -610,7 +605,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = ev.position_as_vector();
             ctx.data.last_cursor_pos = pos;
 
-            match (ev.button(), ev.event_type()) {
+            let rebuild = match (ev.button(), ev.event_type()) {
                 (1, gdk::EventType::ButtonPress) => {
                     let selection = ctx.data.scene_analyze_click(ctx.data.mode, ctx.wscene.size_as_vector(), pos);
                     match (ctx.data.mode, selection) {
@@ -624,27 +619,23 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                             if let Some(undo) = undo {
                                 ctx.push_undo_action(undo);
                             }
-                            ctx.data.paper_build();
-                            ctx.data.scene_edge_build();
-                            ctx.data.update_selection();
+                            RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
                         }
                         (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
                             ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                             ctx.data.papercraft.edge_toggle_tab(i_edge);
-                            ctx.data.paper_build();
-                            ctx.data.scene_edge_build();
-                            ctx.data.update_selection();
+                            RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
                         }
                         (_, ClickResult::Face(f)) => {
-                            ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                            ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK))
                         }
                         (_, ClickResult::None) => {
-                            ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                            ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK))
                         }
-                        _ => {}
+                        _ => {
+                            RebuildFlags::empty()
+                        }
                     }
-                    ctx.wscene.queue_render();
-                    ctx.wpaper.queue_render();
                 }
                 (1, gdk::EventType::DoubleButtonPress) => {
                     let selection = ctx.data.scene_analyze_click(MouseMode::Face, ctx.wscene.size_as_vector(), pos);
@@ -664,12 +655,15 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                             center /= n;
                             ctx.data.trans_paper.mx[2][0] = -center.x * ctx.data.trans_paper.mx[0][0];
                             ctx.data.trans_paper.mx[2][1] = -center.y * ctx.data.trans_paper.mx[1][1];
-                            ctx.wpaper.queue_render();
                         }
                     }
+                    RebuildFlags::PAPER_REDRAW
                 }
-                _ => {}
-            }
+                _ => {
+                    RebuildFlags::empty()
+                }
+            };
+            ctx.add_rebuild(rebuild);
             Inhibit(false)
         }
     ));
@@ -685,7 +679,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             };
             ctx.data.trans_scene.scale *= dz;
             ctx.data.trans_scene.recompute_obj();
-            ctx.wscene.queue_render();
+            ctx.add_rebuild(RebuildFlags::SCENE_REDRAW);
             Inhibit(true)
         }
     ));
@@ -697,9 +691,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = ev.position_as_vector();
 
             let size = ctx.wscene.size_as_vector();
-            ctx.data.scene_motion_notify_event(size, pos, ev);
-            ctx.wscene.queue_render();
-            ctx.wpaper.queue_render();
+            let rebuild = ctx.data.scene_motion_notify_event(size, pos, ev);
+            ctx.add_rebuild(rebuild);
             Inhibit(true)
         }
     ));
@@ -784,7 +777,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             let pos = ev.position_as_vector();
             ctx.data.last_cursor_pos = pos;
 
-            match (ev.button(), ev.event_type()) {
+            let rebuild = match (ev.button(), ev.event_type()) {
                 (1, gdk::EventType::ButtonPress) => {
                     let selection = ctx.data.paper_analyze_click(ctx.data.mode, ctx.wpaper.size_as_vector(), pos);
                     match (ctx.data.mode, selection) {
@@ -798,19 +791,15 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                             if let Some(undo) = undo {
                                 ctx.push_undo_action(undo);
                             }
-                            ctx.data.paper_build();
-                            ctx.data.scene_edge_build();
-                            ctx.data.update_selection();
+                            RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
                         }
                         (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
                             ctx.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                             ctx.data.papercraft.edge_toggle_tab(i_edge);
-                            ctx.data.paper_build();
-                            ctx.data.scene_edge_build();
-                            ctx.data.update_selection();
+                            RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
                         }
                         (_, ClickResult::Face(f)) => {
-                            ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                            let rebuild = ctx.data.set_selection(ClickResult::Face(f), true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
                             let undo_action = ctx.data.selected_islands
                                 .iter()
                                 .map(|&i_island| {
@@ -820,18 +809,23 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                                 .collect();
                             ctx.push_undo_action(undo_action);
                             ctx.data.grabbed_island = true;
+                            rebuild
                         }
                         (_, ClickResult::None) => {
-                            ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
+                            let rebuild = ctx.data.set_selection(ClickResult::None, true, ev.state().contains(gdk::ModifierType::CONTROL_MASK));
                             ctx.data.grabbed_island = false;
+                            rebuild
                         }
-                        _ => {}
+                        _ => {
+                            RebuildFlags::empty()
+                        }
                     }
-                    ctx.wscene.queue_render();
-                    ctx.wpaper.queue_render();
                 }
-                _ => {}
-            }
+                _ => {
+                    RebuildFlags::empty()
+                }
+            };
+            ctx.add_rebuild(rebuild);
             Inhibit(true)
         }
     ));
@@ -854,9 +848,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
 
             let grabbed = {
                 let mut ctx = ctx.borrow_mut();
-                ctx.data.paper_motion_notify_event(size, pos, state);
-                ctx.wpaper.queue_render();
-                ctx.wscene.queue_render();
+                let rebuild = ctx.data.paper_motion_notify_event(size, pos, state);
+                ctx.add_rebuild(rebuild);
                 ctx.data.grabbed_island
             };
 
@@ -879,8 +872,8 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
                             let mut ctx = ctx.borrow_mut();
                             ctx.data.last_cursor_pos += delta;
                             ctx.data.trans_paper.mx = Matrix3::from_translation(delta) * ctx.data.trans_paper.mx;
-                            ctx.data.paper_motion_notify_event(size, pos, state);
-                            ctx.wpaper.queue_render();
+                            let rebuild = ctx.data.paper_motion_notify_event(size, pos, state);
+                            ctx.add_rebuild(rebuild);
                             glib::Continue(true)
                         }
                     );
@@ -906,7 +899,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) 
             };
             let pos = ev.position_as_vector() - w.size_as_vector() / 2.0;
             ctx.data.trans_paper.mx = Matrix3::from_translation(pos) * Matrix3::from_scale(dz) * Matrix3::from_translation(-pos) * ctx.data.trans_paper.mx;
-            ctx.wpaper.queue_render();
+            ctx.add_rebuild(RebuildFlags::PAPER_REDRAW);
             Inhibit(true)
         }
     ));
@@ -1160,6 +1153,22 @@ enum UndoAction {
     DocConfig { options: PaperOptions },
 }
 
+bitflags::bitflags! {
+    struct RebuildFlags: u32 {
+        const PAGES = 0x0001;
+        const PAPER = 0x0002;
+        const SCENE_EDGE = 0x0004;
+        const SELECTION = 0x0008;
+        const PAPER_REDRAW = 0x0010;
+        const SCENE_REDRAW = 0x0020;
+
+        const ALL = Self::PAGES.bits | Self::PAPER.bits | Self::SCENE_EDGE.bits | Self::SELECTION.bits;
+
+        const ANY_REDRAW_PAPER = Self::PAGES.bits | Self::PAPER.bits | Self::SELECTION.bits | Self::PAPER_REDRAW.bits;
+        const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits | Self::SELECTION.bits | Self::SCENE_REDRAW.bits;
+    }
+}
+
 //Objects that are recreated when a new model is loaded
 struct PapercraftContext {
     // The model
@@ -1168,6 +1177,7 @@ struct PapercraftContext {
     undo_stack: Vec<Vec<UndoAction>>,
     modified: bool,
 
+    rebuild: RebuildFlags,
     gl_objs: Option<GLObjects>,
 
     // State
@@ -1341,6 +1351,7 @@ impl PapercraftContext {
             papercraft,
             undo_stack: Vec::new(),
             modified: false,
+            rebuild: RebuildFlags::ALL,
             gl_objs: None,
             selected_face: None,
             selected_edge: None,
@@ -1481,12 +1492,29 @@ impl PapercraftContext {
                 paper_vertices_page,
                 paper_vertices_margin,
             });
-
-            self.pages_build();
-            self.scene_edge_build();
-            self.paper_build();
-            self.update_selection();
         }
+        self.rebuild_pending();
+    }
+
+    fn pre_render(&mut self) {
+        self.build_gl_objs();
+        self.rebuild_pending();
+    }
+
+    fn rebuild_pending(&mut self) {
+        if self.rebuild.contains(RebuildFlags::PAGES) {
+            self.pages_rebuild();
+        }
+        if self.rebuild.contains(RebuildFlags::PAPER) {
+            self.paper_rebuild();
+        }
+        if self.rebuild.contains(RebuildFlags::SCENE_EDGE) {
+            self.scene_edge_rebuild();
+        }
+        if self.rebuild.contains(RebuildFlags::SELECTION) {
+            self.selection_rebuild();
+        }
+        self.rebuild = RebuildFlags::empty();
     }
 
     fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
@@ -1746,7 +1774,7 @@ impl PapercraftContext {
         }
     }
 
-    fn paper_build(&mut self) {
+    fn paper_rebuild(&mut self) {
         //Maps VertexIndex in the model to index in vertices
         let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
 
@@ -1770,7 +1798,7 @@ impl PapercraftContext {
         }
     }
 
-    fn pages_build(&mut self) {
+    fn pages_rebuild(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let color = Rgba::new(1.0, 1.0, 1.0, 1.0);
             let mat = MaterialIndex::from(0);
@@ -1853,7 +1881,7 @@ impl PapercraftContext {
         }
     }
 
-    fn scene_edge_build(&mut self) {
+    fn scene_edge_rebuild(&mut self) {
         if let Some(gl_objs) = &mut self.gl_objs {
             let mut edges_joint = Vec::new();
             let mut edges_cut = Vec::new();
@@ -1879,7 +1907,7 @@ impl PapercraftContext {
         }
     }
 
-    fn update_selection(&mut self) {
+    fn selection_rebuild(&mut self) {
         let gl_objs = match &mut self.gl_objs {
             Some(x) => x,
             None => return,
@@ -1994,19 +2022,18 @@ impl PapercraftContext {
         }
     }
 
-    fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool) {
-        //TODO check if nothing changed
-        match selection {
+    #[must_use]
+    fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool) -> RebuildFlags {
+        let mut island_changed = false;
+        let (new_edge, new_face) = match selection {
             ClickResult::None => {
-                self.selected_edge = None;
-                self.selected_face = None;
-                if clicked && !add_to_sel {
+                if clicked && !add_to_sel  && !self.selected_islands.is_empty() {
                     self.selected_islands.clear();
+                    island_changed = true;
                 }
+                (None, None)
             }
             ClickResult::Face(i_face) => {
-                self.selected_edge = None;
-                self.selected_face = Some(i_face);
                 if clicked {
                     let island = self.papercraft.island_by_face(i_face);
                     if add_to_sel {
@@ -2014,18 +2041,27 @@ impl PapercraftContext {
                             //unselect the island?
                         } else {
                             self.selected_islands.push(island);
+                            island_changed = true;
                         }
                     } else {
                         self.selected_islands = vec![island];
+                        island_changed = true;
                     }
                 }
+                (None, Some(i_face))
             }
             ClickResult::Edge(i_edge, _) => {
-                self.selected_edge = Some(i_edge);
-                self.selected_face = None;
+                (Some(i_edge), None)
             }
-        }
-        self.update_selection();
+        };
+        let rebuild = if island_changed || self.selected_edge != new_edge || self.selected_face != new_face {
+            RebuildFlags::SELECTION
+        } else {
+            RebuildFlags::empty()
+        };
+        self.selected_edge = new_edge;
+        self.selected_face = new_face;
+        rebuild
     }
 
     #[must_use]
@@ -2227,7 +2263,7 @@ impl PapercraftContext {
         }
     }
 
-    fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev: &gdk::EventMotion) {
+    fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev: &gdk::EventMotion) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
         if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
@@ -2242,21 +2278,25 @@ impl PapercraftContext {
 
             self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
             self.trans_scene.recompute_obj();
+            RebuildFlags::SCENE_REDRAW
         } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
             let delta = delta / 50.0;
             self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
             self.trans_scene.recompute_obj();
+            RebuildFlags::SCENE_REDRAW
         } else {
             let selection = self.scene_analyze_click(self.mode, size, pos);
-            self.set_selection(selection, false, false);
+            self.set_selection(selection, false, false)
         }
     }
 
-    fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) {
+    #[must_use]
+    fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
         if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
             self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
+            RebuildFlags::PAPER_REDRAW
         } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.grabbed_island {
             if !self.selected_islands.is_empty() {
                 let rotating = ev_state.contains(gdk::ModifierType::SHIFT_MASK);
@@ -2287,11 +2327,13 @@ impl PapercraftContext {
                         }
                     }
                 }
-                self.paper_build();
+                RebuildFlags::PAPER
+            } else {
+                RebuildFlags::empty()
             }
         } else {
             let selection = self.paper_analyze_click(self.mode, size, pos);
-            self.set_selection(selection, false, false);
+            self.set_selection(selection, false, false)
         }
     }
 
@@ -2303,19 +2345,17 @@ impl PapercraftContext {
             })
             .collect();
         self.papercraft.pack_islands();
-        self.paper_build();
-        self.update_selection();
         undo_actions
     }
 
-    fn undo_action(&mut self) {
+    fn undo_action(&mut self) -> bool {
         //Do not undo while grabbing or the stack will be messed up
         if self.grabbed_island {
-            return;
+            return false;
         }
 
         let action_pack = match self.undo_stack.pop() {
-            None => return,
+            None => return false,
             Some(a) => a,
         };
 
@@ -2345,9 +2385,7 @@ impl PapercraftContext {
                 }
             }
         }
-        self.paper_build();
-        self.scene_edge_build();
-        self.update_selection();
+        true
     }
 }
 
@@ -2363,8 +2401,7 @@ impl GlobalContext {
         let sz_paper = self.wpaper.size_as_vector();
         self.data = PapercraftContext::from_papercraft(papercraft, file_name, sz_scene, sz_paper);
         self.push_undo_action(Vec::new());
-        self.wscene.queue_render();
-        self.wpaper.queue_render();
+        self.add_rebuild(RebuildFlags::ALL);
     }
     fn update_from_obj(&mut self, mut new_papercraft: Papercraft) {
         let file_name = self.data.file_name.clone();
@@ -2375,7 +2412,15 @@ impl GlobalContext {
         self.data.trans_paper = tp;
         self.data.trans_scene = ts;
     }
-
+    fn add_rebuild(&mut self, flags: RebuildFlags) {
+        self.data.rebuild |= flags;
+        if flags.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
+            self.wpaper.queue_render();
+        }
+        if flags.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
+            self.wscene.queue_render();
+        }
+    }
     fn save(&self, file_name: impl AsRef<Path>) -> Result<()> {
         let f = std::fs::File::create(&file_name)
             .with_context(|| format!("Error creating file {}", file_name.as_ref().display()))?;
@@ -2458,7 +2503,7 @@ impl GlobalContext {
     }
 
     fn scene_render(&mut self) {
-        self.data.build_gl_objs();
+        self.data.pre_render();
         let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = self.gl_fixs.as_ref().unwrap();
 
@@ -2518,7 +2563,7 @@ impl GlobalContext {
     }
 
     fn paper_render(&mut self) {
-        self.data.build_gl_objs();
+        self.data.pre_render();
         let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = self.gl_fixs.as_ref().unwrap();
 

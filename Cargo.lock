@@ -684,6 +684,7 @@ name = "papercraft"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "cairo-rs",
  "cgmath",
  "gdk-pixbuf",

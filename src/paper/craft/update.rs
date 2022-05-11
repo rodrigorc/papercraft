@@ -50,7 +50,7 @@ fn compute_island_map(new: &Papercraft, old: &Papercraft, new_map: &IslandFaceMa
         let new_faces = &new_map[&i_island];
         let best = old.islands().max_by_key(|&(i_oisland, _)| {
             let old_faces = &old_map[&i_oisland];
-            new_faces.intersection(&old_faces).count()
+            new_faces.intersection(old_faces).count()
         });
         if let Some((i_oisland, _)) = best {
             map.insert(i_island, i_oisland);

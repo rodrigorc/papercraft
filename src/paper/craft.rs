@@ -131,6 +131,8 @@ impl PaperOptions {
         let page_cols = self.page_cols;
         let page_rows = (self.pages + self.page_cols - 1) / self.page_cols;
         let page_size = Vector2::from(self.page_size);
+
+        #[allow(clippy::if_same_then_else, clippy::needless_bool)]
         if pos.x < -(page_size.x + PAGE_SEP) {
             false
         } else if pos.y < -(page_size.y + PAGE_SEP) {

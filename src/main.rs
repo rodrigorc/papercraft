@@ -2421,10 +2421,10 @@ impl GlobalContext {
     fn import_waveobj(&mut self, file_name: impl AsRef<Path>) -> Result<()> {
         let papercraft = Papercraft::import_waveobj(file_name.as_ref())
             .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
-        self.from_papercraft(papercraft, Some(file_name.as_ref()));
+        self.set_new_papercraft(papercraft, Some(file_name.as_ref()));
         Ok(())
     }
-    fn from_papercraft(&mut self, papercraft: Papercraft, file_name: Option<&Path>) {
+    fn set_new_papercraft(&mut self, papercraft: Papercraft, file_name: Option<&Path>) {
         let sz_scene = self.wscene.size_as_vector();
         let sz_paper = self.wpaper.size_as_vector();
         self.data = PapercraftContext::from_papercraft(papercraft, file_name, sz_scene, sz_paper);
@@ -2436,7 +2436,7 @@ impl GlobalContext {
         new_papercraft.update_from_obj(&self.data.papercraft);
         let tp = self.data.trans_paper.clone();
         let ts = self.data.trans_scene.clone();
-        self.from_papercraft(new_papercraft, file_name.as_deref());
+        self.set_new_papercraft(new_papercraft, file_name.as_deref());
         self.data.trans_paper = tp;
         self.data.trans_scene = ts;
     }

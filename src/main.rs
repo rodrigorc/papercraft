@@ -79,7 +79,7 @@ fn app_set_default_options(app: &gtk::Application) {
     app.lookup_action("overlap").unwrap().change_state(&false.to_variant());
 }
 
-fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<String>>>) {
+fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
@@ -1024,14 +1024,14 @@ fn main() {
     let app = gtk::Application::new(None,
         gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE
     );
-    app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::String, "Import a WaveOBJ file", None);
+    app.add_main_option("import", glib::Char::from(b'I'), glib::OptionFlags::NONE, glib::OptionArg::Filename, "Import a WaveOBJ file", None);
     let imports = Rc::new(RefCell::new(None));
     app.connect_handle_local_options(clone!(
         @strong imports =>
         move |_app, dict| {
             dbg!("local_option");
             //It should be a OptionArg::Filename and a PathBuf but that gets an \0 at the end that breaks everything
-            let s: Option<String> = dict.lookup("import").unwrap();
+            let s: Option<PathBuf> = dict.lookup("import").unwrap();
             *imports.borrow_mut() = dbg!(s);
             -1
         }

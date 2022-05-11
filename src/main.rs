@@ -853,6 +853,9 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             let grabbed = {
                 let mut ctx = ctx.borrow_mut();
                 let rebuild = ctx.data.paper_motion_notify_event(size, pos, state);
+                if rebuild.is_empty() {
+                    return Inhibit(true);
+                }
                 ctx.add_rebuild(rebuild);
                 ctx.data.grabbed_island
             };
@@ -877,6 +880,10 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
                             ctx.data.last_cursor_pos += delta;
                             ctx.data.trans_paper.mx = Matrix3::from_translation(delta) * ctx.data.trans_paper.mx;
                             let rebuild = ctx.data.paper_motion_notify_event(size, pos, state);
+                            if rebuild.is_empty() {
+                                ctx.set_scroll_timer(None);
+                                return glib::Continue(false);
+                            }
                             ctx.add_rebuild(rebuild);
                             glib::Continue(true)
                         }
@@ -2311,22 +2318,34 @@ impl PapercraftContext {
                     }
                 }
 
-                for &i_island in &self.selected_islands {
-                    if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
-                        let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
-                        if rotating {
-                            // Rotate island
-                            let center = *self.rotation_center.get_or_insert(pos);
-                            //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
-                            if (pos - center).magnitude() > 10.0 {
-                                let pcenter = self.trans_paper.paper_click(size, center);
-                                let ppos_prev = self.trans_paper.paper_click(size, pos - delta);
-                                let ppos = self.trans_paper.paper_click(size, pos);
-                                let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
+                if rotating {
+                    // Rotate island
+                    let center = *self.rotation_center.get_or_insert(pos);
+                    //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
+                    if (pos - center).magnitude() > 10.0 {
+                        let pcenter = self.trans_paper.paper_click(size, center);
+                        let ppos_prev = self.trans_paper.paper_click(size, pos - delta);
+                        let ppos = self.trans_paper.paper_click(size, pos);
+                        let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
+                        for &i_island in &self.selected_islands {
+                            if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
                                 island.rotate(angle, pcenter);
                             }
-                        } else {
-                            // Move island
+                        }
+                    }
+                } else {
+                    // Move island
+                    let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
+                    for &i_island in &self.selected_islands {
+                        if let Some(island) = self.papercraft.island_by_key(i_island) {
+                            if !self.papercraft.options().is_inside_canvas(island.location() + delta_scaled) {
+                                self.last_cursor_pos -= delta;
+                                return RebuildFlags::empty();
+                            }
+                        }
+                    }
+                    for &i_island in &self.selected_islands {
+                        if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
                             island.translate(delta_scaled);
                         }
                     }

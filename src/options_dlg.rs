@@ -259,8 +259,11 @@ pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     }
 
     let mut ctx = ctx.borrow_mut();
+    let island_pos = ctx.data.papercraft.islands()
+        .map(|(_, island)| (island.root_face(), (island.rotation(), island.location())))
+        .collect();
     let old_options = ctx.data.papercraft.set_options(options.borrow().clone());
-    ctx.push_undo_action(vec![UndoAction::DocConfig { options: old_options }]);
+    ctx.push_undo_action(vec![UndoAction::DocConfig { options: old_options, island_pos }]);
 
     ctx.add_rebuild(RebuildFlags::ALL);
 }

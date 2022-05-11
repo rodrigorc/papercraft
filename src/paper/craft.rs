@@ -93,14 +93,39 @@ impl Default for PaperOptions {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct PageOffset {
+    pub page: u32,
+    pub offset: Vector2,
+}
+
+const PAGE_SEP: f32 = 10.0; // Currently not configurable
+                            //
 impl PaperOptions {
     pub fn page_position(&self, page: u32) -> Vector2 {
         let page_cols = self.page_cols;
         let page_size = Vector2::from(self.page_size);
-        const SEP: f32 = 10.0; // Currently not configurable
         let row = page / page_cols;
         let col = page % page_cols;
-        Vector2::new((col as f32) * (page_size.x + SEP), (row as f32) * (page_size.y + SEP))
+        Vector2::new((col as f32) * (page_size.x + PAGE_SEP), (row as f32) * (page_size.y + PAGE_SEP))
+    }
+    pub fn global_to_page(&self, pos: Vector2) -> PageOffset {
+        let page_cols = self.page_cols;
+        let page_size = Vector2::from(self.page_size);
+        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).min(page_cols as i32).max(0) as u32;
+        let row = ((pos.y / (page_size.y + PAGE_SEP)) as i32).max(0) as u32;
+
+        let page = row * page_cols + col;
+        let zero_pos = self.page_position(page);
+        let offset = pos - zero_pos;
+        PageOffset {
+            page,
+            offset,
+        }
+    }
+    pub fn page_to_global(&self, po: PageOffset) -> Vector2 {
+        let zero_pos = self.page_position(po.page);
+        zero_pos + po.offset
     }
 }
 
@@ -133,12 +158,28 @@ impl Papercraft {
     // Returns the old options
     pub fn set_options(&mut self, mut options: PaperOptions) -> PaperOptions{
         let scale = options.scale / self.options.scale;
-        for (_, island) in &mut self.islands {
-            island.loc *= scale;
-            island.recompute_matrix();
-        }
+        // Compute positions relative to the nearest page
+        let page_pos: HashMap<_, _> = self.islands
+            .iter()
+            .map(|(i_island, island)| {
+                let po = self.options.global_to_page(island.location());
+                (i_island, po)
+            })
+            .collect();
+
+        // Apply the new options
         std::mem::swap(&mut self.options, &mut options);
-        //TODO: reorder islands and whatever
+
+        // Apply the new positions
+        for (i_island, mut po) in page_pos {
+            po.offset *= scale;
+            let loc = self.options.page_to_global(po);
+            if let Some(island) = self.island_by_key_mut(i_island) {
+                island.loc = loc;
+                island.recompute_matrix();
+            }
+        }
+
         options
     }
     pub fn face_plane(&self, face: &Face) -> Plane {

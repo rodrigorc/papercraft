@@ -1154,7 +1154,7 @@ enum UndoAction {
     TabToggle { i_edge: EdgeIndex },
     EdgeCut { i_edge: EdgeIndex },
     EdgeJoin { join_result: JoinResult },
-    DocConfig { options: PaperOptions },
+    DocConfig { options: PaperOptions, island_pos: HashMap<FaceIndex, (Rad<f32>, Vector2)> },
 }
 
 bitflags::bitflags! {
@@ -2384,8 +2384,13 @@ impl PapercraftContext {
 
                     island.reset_transformation(join_result.prev_root, join_result.prev_rot, join_result.prev_loc);
                 }
-                UndoAction::DocConfig { options } => {
+                UndoAction::DocConfig { options, island_pos } => {
                     self.papercraft.set_options(options);
+                    for (i_root_face, (rot, loc)) in island_pos {
+                        let i_island = self.papercraft.island_by_face(i_root_face);
+                        let island = self.papercraft.island_by_key_mut(i_island).unwrap();
+                        island.reset_transformation(i_root_face, rot, loc);
+                    }
                 }
             }
         }

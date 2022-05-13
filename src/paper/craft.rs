@@ -563,7 +563,7 @@ impl Papercraft {
         renames
     }
 
-    pub fn pack_islands(&mut self) {
+    pub fn pack_islands(&mut self) -> u32 {
         let mut row_height = 0.0f32;
         let mut pos_x = 0.0;
         let mut pos_y = 0.0;
@@ -620,6 +620,7 @@ impl Papercraft {
             island.rot += angle;
             island.recompute_matrix();
         }
+        page + 1
     }
 }
 

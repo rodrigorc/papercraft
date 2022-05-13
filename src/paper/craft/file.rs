@@ -125,7 +125,24 @@ impl Papercraft {
             edges,
             islands,
         };
-        papercraft.pack_islands();
+        let (v_min, v_max) = crate::util_3d::bounding_box_3d(
+            papercraft.model()
+                .vertices()
+                .map(|(_, v)| v.pos())
+        );
+        let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
+        let paper_size = papercraft.options.page_size.0.max(papercraft.options.page_size.1);
+        // Scale to half the paper size, that looks handy.
+        let scale = paper_size / size / 2.0;
+        let scale = if scale > 1.0 {
+            scale.round()
+        } else {
+            // All in one line just for show
+            (((1.0 / (1.0 / scale).round()) * 100.0).round() / 100.0).max(0.01)
+        };
+        papercraft.options.scale = scale;
+        let num_pages = papercraft.pack_islands();
+        papercraft.options.pages = num_pages;
         Ok(papercraft)
     }
 

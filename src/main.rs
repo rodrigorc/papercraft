@@ -70,15 +70,6 @@ impl PositionAsVector for gdk::EventScroll {
     }
 }
 
-fn app_set_default_options(app: &gtk::Application) {
-    app.lookup_action("mode").unwrap().change_state(&"face".to_variant());
-    app.lookup_action("view_textures").unwrap().change_state(&true.to_variant());
-    app.lookup_action("view_tabs").unwrap().change_state(&true.to_variant());
-    app.lookup_action("3d_lines").unwrap().change_state(&true.to_variant());
-    app.lookup_action("xray_selection").unwrap().change_state(&true.to_variant());
-    app.lookup_action("overlap").unwrap().change_state(&false.to_variant());
-}
-
 fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>) {
     dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
@@ -223,7 +214,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             if let Some(name) = name {
                 let e = ctx.borrow_mut().import_waveobj(name);
                 if show_error_result(e, &top_window) {
-                    app_set_default_options(&top_window.application().unwrap());
+                    GlobalContext::app_set_options(&ctx, true);
                 }
             }
         }
@@ -274,7 +265,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
                     Ok(pc) => {
                         ctx.borrow_mut().update_from_obj(pc);
                         // We could make update_from_obj() to keep the current options, but now it resets to defaults, as if a new object was loaded
-                        app_set_default_options(&top_window.application().unwrap());
+                        GlobalContext::app_set_options(&ctx, true);
                     }
                 }
             }
@@ -448,9 +439,17 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
     aundo.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
-            let mut ctx = ctx.borrow_mut();
-            if ctx.data.undo_action() {
-                ctx.add_rebuild(RebuildFlags::ALL);
+            let update;
+            {
+                let mut ctx = ctx.borrow_mut();
+                update = ctx.data.undo_action();
+                if update {
+                    ctx.add_rebuild(RebuildFlags::ALL);
+                }
+            }
+            //This should be called with ctx unborrowed
+            if update {
+                GlobalContext::app_set_options(&ctx, false);
             }
         }
     ));
@@ -962,7 +961,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             let w = ctx.borrow().top_window.clone();
             w.show_all();
             w.present();
-            app_set_default_options(&w.application().unwrap());
+            GlobalContext::app_set_options(&ctx, true);
     	}
     ));
 
@@ -982,7 +981,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             let w = ctx.borrow().top_window.clone();
             w.show_all();
             w.present();
-            app_set_default_options(&w.application().unwrap());
+            GlobalContext::app_set_options(&ctx, true);
 
             let e = app_open(&ctx, &files[0]);
             show_error_result(e, &w);
@@ -2470,7 +2469,32 @@ impl GlobalContext {
         };
         self.top_window.set_title(&title);
     }
+    fn app_set_options(ctx: &RefCell<Self>, set_defaults: bool) {
 
+        let (app, view_textures, view_tabs);
+        {
+            let ctx = ctx.borrow();
+            app = ctx.top_window.application().unwrap();
+            let options = ctx.data.papercraft.options();
+            view_textures = options.texture;
+            view_tabs = options.tab_style != TabStyle::None;
+        }
+        if set_defaults {
+            app.lookup_action("mode").unwrap().change_state(&"face".to_variant());
+            app.lookup_action("3d_lines").unwrap().change_state(&true.to_variant());
+            app.lookup_action("xray_selection").unwrap().change_state(&true.to_variant());
+            app.lookup_action("overlap").unwrap().change_state(&false.to_variant());
+        }
+
+        let atexture: gio::SimpleAction = app.lookup_action("view_textures").unwrap().dynamic_cast().unwrap();
+        atexture.change_state(&view_textures.to_variant());
+        atexture.set_enabled(view_textures);
+
+        let atabs: gio::SimpleAction = app.lookup_action("view_tabs").unwrap().dynamic_cast().unwrap();
+
+        atabs.change_state(&view_tabs.to_variant());
+        atabs.set_enabled(view_tabs);
+    }
     fn confirm_if_modified(ctx: &RefCell<GlobalContext>, title: &str) -> bool {
         Self::confirm_if_modified_with_message(ctx, title, "The model has not been save, continue anyway?")
     }

@@ -588,6 +588,27 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
         }
     ));
 
+    let about = gio::SimpleAction::new("about", None);
+    app.add_action(&about);
+    about.connect_activate(clone!(
+        @strong ctx =>
+        move |_, _| {
+
+            static LOGO: &[u8] = include_bytes!("papercraft.png");
+            let pbl = gdk_pixbuf::PixbufLoader::new();
+            let logo = pbl.write(LOGO).ok().and_then(|_| pbl.pixbuf());
+
+            let w = ctx.borrow().top_window.clone();
+            let builder = gtk::Builder::from_string(include_str!("dialogs.ui"));
+            let dlg: gtk::AboutDialog = builder.object("about").unwrap();
+            dlg.set_version(Some(env!("CARGO_PKG_VERSION")));
+            dlg.set_logo(logo.as_ref());
+            dlg.set_transient_for(Some(&w));
+            dlg.run();
+            unsafe { dlg.destroy(); }
+        }
+    ));
+
     top_window.set_default_size(800, 600);
     top_window.connect_destroy(clone!(
         @strong app =>

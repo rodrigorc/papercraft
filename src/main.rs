@@ -715,7 +715,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
             let pos = ev.position_as_vector();
 
             let size = ctx.wscene.size_as_vector();
-            let rebuild = ctx.data.scene_motion_notify_event(size, pos, ev);
+            let rebuild = ctx.data.scene_motion_notify_event(size, pos, ev.state());
             ctx.add_rebuild(rebuild);
             Inhibit(true)
         }
@@ -2294,11 +2294,12 @@ impl PapercraftContext {
         }
     }
 
-    fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev: &gdk::EventMotion) -> RebuildFlags {
+    #[must_use]
+    fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
-        if ev.state().contains(gdk::ModifierType::BUTTON3_MASK) {
-            // half angles
+        if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) {
+            // Rotate, half angles
             let ang = delta / 200.0 / 2.0;
             let cosy = ang.x.cos();
             let siny = ang.x.sin();
@@ -2310,7 +2311,8 @@ impl PapercraftContext {
             self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
             self.trans_scene.recompute_obj();
             RebuildFlags::SCENE_REDRAW
-        } else if ev.state().contains(gdk::ModifierType::BUTTON2_MASK) {
+        } else if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) || ev_state.contains(gdk::ModifierType::BUTTON3_MASK) {
+            // Translate
             let delta = delta / 50.0;
             self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
             self.trans_scene.recompute_obj();
@@ -2325,10 +2327,12 @@ impl PapercraftContext {
     fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
-        if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) {
+        if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) || ev_state.contains(gdk::ModifierType::BUTTON3_MASK) {
+            // Translate
             self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
             RebuildFlags::PAPER_REDRAW
         } else if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) && self.grabbed_island {
+            // Move island
             if !self.selected_islands.is_empty() {
                 let rotating = ev_state.contains(gdk::ModifierType::SHIFT_MASK);
 

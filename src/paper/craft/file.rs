@@ -53,33 +53,37 @@ impl Papercraft {
         let f = std::fs::File::open(file_name)?;
         let f = std::io::BufReader::new(f);
         let (matlib, obj) = waveobj::Model::from_reader(f)?;
+        let matlib = waveobj::solve_find_matlib_file(matlib.as_ref(), file_name);
 
         let mut texture_map = HashMap::new();
 
-        // Textures are read from the .mtl file
-        let err_mtl = || format!("Error reading matlib file {matlib}");
-        let f = std::fs::File::open(&matlib)
-            .with_context(err_mtl)?;
-        let f = std::io::BufReader::new(f);
+        if let Some(matlib) = matlib {
+            // Textures are read from the .mtl file
+            let err_mtl = || format!("Error reading matlib file {}", matlib.display());
+            let f = std::fs::File::open(&matlib)
+                .with_context(err_mtl)?;
+            let f = std::io::BufReader::new(f);
 
-        for lib in waveobj::Material::from_reader(f)
-            .with_context(err_mtl)?
-        {
-            if let Some(map) = lib.map() {
-                let err_map = || format!("Error reading texture file {map}");
-                let pbl = gdk_pixbuf::PixbufLoader::new();
+            for lib in waveobj::Material::from_reader(f)
+                .with_context(err_mtl)?
+            {
+                if let Some(map) = lib.map() {
+                    let err_map = || format!("Error reading texture file {map}");
+                    let pbl = gdk_pixbuf::PixbufLoader::new();
+                    if let Some(map) = waveobj::solve_find_matlib_file(map.as_ref(), &matlib) {
+                        let data = std::fs::read(&map)
+                            .with_context(err_map)?;
+                        pbl.write(&data)
+                            .with_context(err_map)?;
+                        pbl.close()
+                            .with_context(err_map)?;
+                        let img = pbl.pixbuf().ok_or_else(|| anyhow!(err_map()))?;
 
-                let data = std::fs::read(map)
-                    .with_context(err_map)?;
-                pbl.write(&data)
-                    .with_context(err_map)?;
-                pbl.close()
-                    .with_context(err_map)?;
-                let img = pbl.pixbuf().ok_or_else(|| anyhow!(err_map()))?;
-
-                let map_name = Path::new(map).file_name().and_then(|f| f.to_str())
-                    .ok_or_else(|| anyhow!("Invalid texture name"))?;
-                texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
+                        let map_name = map.file_name().and_then(|f| f.to_str())
+                            .ok_or_else(|| anyhow!("Invalid texture name"))?;
+                        texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
+                    }
+                }
             }
         }
         let (model, facemap) = Model::from_waveobj(&obj, texture_map);

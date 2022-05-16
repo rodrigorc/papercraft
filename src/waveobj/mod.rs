@@ -1,4 +1,4 @@
-use std::io::BufRead;
+use std::{io::BufRead, path::{Path, PathBuf}};
 use anyhow::{anyhow, Result};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -156,6 +156,39 @@ impl FaceVertex {
     pub fn t(&self) -> u32 {
         self.t
     }
+}
+
+pub fn solve_find_matlib_file(mtl: &Path, obj: &Path) -> Option<PathBuf> {
+    let obj_dir = match obj.parent() {
+        None => ".".into(),
+        Some(d) => d.to_owned(),
+    };
+    if mtl.is_relative() {
+        // First find the mtl in the same directory as the obj, using the local path
+        let mut dir = obj_dir.clone();
+        dir.push(mtl);
+        if dir.exists() {
+            return Some(dir);
+        }
+        // Then without the mtl path
+        dir = obj_dir.clone();
+        dir.push(mtl.file_name().unwrap());
+        if dir.exists() {
+            return Some(dir);
+        }
+    } else {
+        // If mtl is absolute, first try the real file
+        if mtl.exists() {
+            return Some(mtl.to_owned());
+        }
+        // Then try the same name in a local path
+        let mut dir = obj_dir.clone();
+        dir.push(mtl.file_name().unwrap());
+        if dir.exists() {
+            return Some(dir);
+        }
+    }
+    None
 }
 
 #[derive(Clone, Debug)]

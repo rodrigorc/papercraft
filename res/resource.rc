@@ -1,0 +1,32 @@
+#pragma code_page(65001)
+#include <winver.h>
+#include "papercraft.h"
+
+1 VERSIONINFO
+FILEVERSION 1, 0, 0, 0
+PRODUCTVERSION 1, 0, 0, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0x0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "040904B0"
+        {
+            VALUE "LegalCopyright", PC_REPO
+            VALUE "FileDescription", PC_PROJECT
+            VALUE "FileVersion", PC_VERSION
+            VALUE "ProductVersion", PC_VERSION
+            VALUE "ProductName", PC_PROJECT
+        }
+    }
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x409, 0x4B0
+    }
+}
+
+1 ICON "res/papercraft.ico"
+

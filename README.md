@@ -51,6 +51,8 @@ For that the program has three basic working modes, selectables with the buttons
 #### Edge mode
 
 This is probably the most important mode. If you click an open edge, faces to both sides of the edge will snap together. If you click on a closed edge it will split.
+If the Shift key is pressed while an open edge is clicked, then it will join a whole strip of faces, as long as they are composed of simple quads. This is useful for big meshes that are mostly made of quads and are usually unwrapped as parallel strips.
+
 With this tool you can create the pieces to be cut as big as you want.
 
 ### Tab mode

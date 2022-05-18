@@ -71,7 +71,6 @@ impl PositionAsVector for gdk::EventScroll {
 }
 
 fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>) {
-    dbg!("startup");
     let builder = gtk::Builder::from_string(include_str!("menu.ui"));
     let menu: gio::MenuModel = builder.object("appmenu").unwrap();
     app.set_menubar(Some(&menu));
@@ -978,7 +977,6 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
 	app.connect_activate(clone!(
         @strong ctx =>
         move |_app| {
-            dbg!("activate");
             let w = ctx.borrow().top_window.clone();
             w.show_all();
             w.present();
@@ -1056,10 +1054,9 @@ fn main() {
     app.connect_handle_local_options(clone!(
         @strong imports =>
         move |_app, dict| {
-            dbg!("local_option");
             //It should be a OptionArg::Filename and a PathBuf but that gets an \0 at the end that breaks everything
             let s: Option<PathBuf> = dict.lookup("import").unwrap();
-            *imports.borrow_mut() = dbg!(s);
+            *imports.borrow_mut() = s;
             -1
         }
     ));

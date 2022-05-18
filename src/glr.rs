@@ -548,7 +548,6 @@ macro_rules! uniform {
                             return;
                         }
                     )*
-                    dbg!(name);
                 }
             }
         )*

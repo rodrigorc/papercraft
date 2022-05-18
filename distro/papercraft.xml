@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+   <mime-type type="application/x-papercraft">
+     <sub-class-of type="application/zip"/>
+     <comment>Papercraft model</comment>
+     <glob pattern="*.craft"/>
+     <icon name="papercraft"/>
+   </mime-type>
+</mime-info>

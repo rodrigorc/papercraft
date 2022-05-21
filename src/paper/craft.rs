@@ -84,9 +84,9 @@ impl Default for PaperOptions {
             texture: true,
             tab_style: TabStyle::Textured,
             fold_style: FoldStyle::Full,
-            tab_width: 3.0,
+            tab_width: 5.0,
             tab_angle: 45.0,
-            fold_line_len: 2.0,
+            fold_line_len: 4.0,
             show_self_promotion: true,
             show_page_number: true,
         }

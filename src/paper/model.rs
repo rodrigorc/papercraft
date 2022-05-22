@@ -1,6 +1,6 @@
 use std::collections::{HashSet, HashMap};
 
-use cgmath::{InnerSpace, Rad, Angle};
+use cgmath::{InnerSpace, Rad, Angle, Zero};
 use gdk_pixbuf::Pixbuf;
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
@@ -128,7 +128,13 @@ impl Model {
             all_vertices
                 .iter()
                 .map(|fv| {
-                    let uv = Vector2::from(*obj.texcoord_by_index(fv.t()));
+                    let uv = if let Some(t) = fv.t() {
+                        Vector2::from(*obj.texcoord_by_index(t))
+                    } else {
+                        // If there is no texture coordinates there will be no textures so this value does not matter.
+                        // A zero is easier to work with than an Option<Vector2>.
+                        Vector2::zero()
+                    };
                     Vertex {
                         pos: Vector3::from(*obj.vertex_by_index(fv.v())),
                         normal: Vector3::from(*obj.normal_by_index(fv.n())),

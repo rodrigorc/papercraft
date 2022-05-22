@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct FaceVertex {
     v: u32,
-    t: u32,
+    t: Option<u32>,
     n: u32,
 }
 
@@ -74,24 +74,23 @@ impl Model {
                     for fv in words {
                         let mut vals = fv.split('/');
                         let v = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
-                        let t = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
+                        let t = vals.next().ok_or_else(syn_error)?.parse::<usize>().ok().map(|x| x - 1);
                         let n = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
-                        if v > data.vs.len() {
+                        if v >= data.vs.len() {
                             return Err(anyhow!("vertex index out of range"));
                         }
-                        if t > data.ts.len() {
+                        if matches!(t, Some(t) if t >= data.ts.len()) {
                             return Err(anyhow!("texture index out of range"));
                         }
-                        if n > data.ns.len() {
+                        if n >= data.ns.len() {
                             return Err(anyhow!("normal index out of range"));
                         }
                         let v = FaceVertex {
                             v: v as u32,
-                            t: t as u32,
+                            t: t.map(|t| t as u32),
                             n: n as u32
                         };
                         verts.push(v);
-
                     }
                     data.faces.push(Face {
                         material: current_material,
@@ -153,7 +152,7 @@ impl FaceVertex {
     pub fn n(&self) -> u32 {
         self.n
     }
-    pub fn t(&self) -> u32 {
+    pub fn t(&self) -> Option<u32> {
         self.t
     }
 }

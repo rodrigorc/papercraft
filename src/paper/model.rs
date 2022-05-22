@@ -124,7 +124,8 @@ impl Model {
                 .enumerate()
                 .map(|(i, v)| (*v, i as u32))
                 .collect();
-        let vertices: Vec<Vertex> =
+        let mut recompute_normals = false;
+        let mut vertices: Vec<Vertex> =
             all_vertices
                 .iter()
                 .map(|fv| {
@@ -135,9 +136,16 @@ impl Model {
                         // A zero is easier to work with than an Option<Vector2>.
                         Vector2::zero()
                     };
+                    let normal = if let Some(n) = fv.n() {
+                        Vector3::from(*obj.normal_by_index(n))
+                    } else {
+                        // If the model does not have normals, compute them after building the faces
+                        recompute_normals = true;
+                        Vector3::zero()
+                    };
                     Vertex {
                         pos: Vector3::from(*obj.vertex_by_index(fv.v())),
-                        normal: Vector3::from(*obj.normal_by_index(fv.n())),
+                        normal,
                         uv: Vector2::new(uv.x, 1.0 - uv.y),
                     }
                 })
@@ -238,6 +246,17 @@ impl Model {
                     vertices: face_vertices,
                     edges,
                 });
+                if recompute_normals {
+                    let v0 = vertices[usize::from(face_vertices[0])].pos;
+                    let v1 = vertices[usize::from(face_vertices[1])].pos;
+                    let v2 = vertices[usize::from(face_vertices[2])].pos;
+                    let l0 = v1 - v0;
+                    let l1 = v2 - v0;
+                    let normal = l0.cross(l1).normalize();
+                    vertices[usize::from(face_vertices[0])].normal += normal;
+                    vertices[usize::from(face_vertices[1])].normal += normal;
+                    vertices[usize::from(face_vertices[2])].normal += normal;
+                }
             }
         }
 

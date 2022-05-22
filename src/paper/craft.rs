@@ -48,6 +48,7 @@ pub struct JoinResult {
 }
 
 fn my_true() -> bool { true }
+fn default_fold_line_width() -> f32 { 0.1 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PaperOptions {
@@ -66,6 +67,8 @@ pub struct PaperOptions {
     pub tab_width: f32,
     pub tab_angle: f32, //degrees
     pub fold_line_len: f32, //only for folds in & out
+    #[serde(default="default_fold_line_width")]
+    pub fold_line_width: f32, //only for folds in & out
     #[serde(default="my_true")]
     pub show_self_promotion: bool,
     #[serde(default="my_true")]
@@ -87,6 +90,7 @@ impl Default for PaperOptions {
             tab_width: 5.0,
             tab_angle: 45.0,
             fold_line_len: 4.0,
+            fold_line_width: default_fold_line_width(),
             show_self_promotion: true,
             show_page_number: true,
         }

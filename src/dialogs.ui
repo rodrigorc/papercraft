@@ -401,6 +401,44 @@
                                         <property name="position">1</property>
                                       </packing>
                                     </child>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="visible">True</property>
+                                        <property name="can-focus">False</property>
+                                        <child>
+                                          <object class="GtkLabel" id="label5">
+                                            <property name="visible">True</property>
+                                            <property name="can-focus">False</property>
+                                            <property name="xpad">10</property>
+                                            <property name="label" translatable="yes">Line Width:</property>
+                                            <property name="justify">right</property>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">False</property>
+                                            <property name="fill">True</property>
+                                            <property name="position">0</property>
+                                          </packing>
+                                        </child>
+                                        <child>
+                                          <object class="GtkEntry" id="fold_width">
+                                            <property name="visible">True</property>
+                                            <property name="can-focus">True</property>
+                                            <property name="activates-default">True</property>
+                                            <property name="width-chars">7</property>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">False</property>
+                                            <property name="fill">True</property>
+                                            <property name="position">1</property>
+                                          </packing>
+                                        </child>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="fill">True</property>
+                                        <property name="position">2</property>
+                                      </packing>
+                                    </child>
                                   </object>
                                 </child>
                                 <child type="label">
@@ -975,6 +1013,7 @@
       <widget name="label3"/>
       <widget name="label11"/>
       <widget name="label12"/>
+      <widget name="label5"/>
     </widgets>
   </object>
   <object class="GtkSizeGroup">

@@ -27,10 +27,9 @@ use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus
 
 use crate::glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
-// In millimeters
+// In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
 const TAB_LINE_WIDTH: f32 = 0.2;
 const BORDER_LINE_WIDTH: f32 = 0.1;
-const CREASE_LINE_WIDTH: f32 = 0.05;
 
 // In pixels
 const LINE_SEL_WIDTH: f32 = 5.0;
@@ -1565,6 +1564,8 @@ impl PapercraftContext {
         }
 
         let tab_style = self.papercraft.options().tab_style;
+        let fold_line_width = self.papercraft.options().fold_line_width;
+
         for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
             let edge = &self.papercraft.model()[i_edge];
             let edge_status = self.papercraft.edge_status(i_edge);
@@ -1605,13 +1606,14 @@ impl PapercraftContext {
             } else {
                 false
             };
+
             let v = pos1 - pos0;
             let fold_faces = edge_status == EdgeStatus::Joined;
             let v2d = MVertex2DLine {
                 pos: pos0,
                 line_dash: 0.0,
-                width_left: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else if draw_tab { CREASE_LINE_WIDTH } else { BORDER_LINE_WIDTH },
-                width_right: if fold_faces { CREASE_LINE_WIDTH / 2.0 } else { 0.0 },
+                width_left: if fold_faces { fold_line_width / 2.0 } else if draw_tab { fold_line_width } else { BORDER_LINE_WIDTH },
+                width_right: if fold_faces { fold_line_width / 2.0 } else { 0.0 },
             };
 
             let v_len = v.magnitude();

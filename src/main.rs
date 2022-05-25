@@ -2511,13 +2511,16 @@ impl GlobalContext {
         }
 
         let atexture: gio::SimpleAction = app.lookup_action("view_textures").unwrap().dynamic_cast().unwrap();
-        atexture.change_state(&view_textures.to_variant());
         atexture.set_enabled(view_textures);
+        if !view_textures {
+            atexture.change_state(&view_textures.to_variant());
+        }
 
         let atabs: gio::SimpleAction = app.lookup_action("view_tabs").unwrap().dynamic_cast().unwrap();
-
-        atabs.change_state(&view_tabs.to_variant());
         atabs.set_enabled(view_tabs);
+        if !view_tabs {
+            atabs.change_state(&view_tabs.to_variant());
+        }
     }
     fn confirm_if_modified(ctx: &RefCell<GlobalContext>, title: &str) -> bool {
         Self::confirm_if_modified_with_message(ctx, title, "The model has not been save, continue anyway?")

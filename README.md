@@ -25,13 +25,13 @@ If you create any nice paper model, I'd appreciate if you open an [issue][ISSUE]
 
 ## Installation
 
-If you use Windows, this program does not use any installation, you just copy it into a local folder and run it.
+If you use Windows, this program does not use any installation, you just copy it into a local folder and run it. Just download the latest package from [here][TAG] and uncompress it to your destination folder.
 
-First you need to grab the latest Gtk-3 package from [here][GTK] and uncompress it to your destination folder. This rarely changes so you don't need to update it with new Papercraft versions.
+Select the Win32 or Win64 version depending on your particular Windows and preferences. If you do not know which one you need, try both and see what happens.
 
-Then you need the latest version of Papercraft from [here][TAG]. Copy it to the same folder. Then run the program directly by double-clicking or create a shortcut to your desktop.
+Then run the program directly by double-clicking or create a shortcut to your desktop.
 
-If you use Linux you can compile it from source (quite easy, really) or ask your distribution to pre-package it. Or you can request a precompiled binary, I may try that some day...
+If you use Linux you can compile it from source (quite easy, really) or use the precompiled AppImage from the [releases][TAG] page. Remember to set the downloaded file to _executable_, then just run it.
 
 If you use any other OS you can try compiling from source, but I don't know if you will succeed. Let me now either way.
 
@@ -69,7 +69,7 @@ You can also move the pieces in any other mode, but this one disables clicking o
 
 In the menu Edit / Document properties you can edit many options related to the document as a whole:
 
-![image](https://user-images.githubusercontent.com/1128630/168822380-88c6a179-67b3-4ed5-a536-46db9b6f90d6.png)
+![image](https://user-images.githubusercontent.com/1128630/170358231-37c8d240-bc70-4d68-af88-53dfba44f361.png)
 
 * Model scale: the units in the original OBJ model are assumed to be millimeters. This value scales up or down that measure to make the final model bigger or smaller.
   You can check the final size of the model in the information box below.
@@ -91,6 +91,7 @@ In the menu Edit / Document properties you can edit many options related to the 
     * Out & in segment: A combination of _in_ and _out_ segments.
     * None: No fold line. How to fold them is up to you. You you use very thin paper you can even try to glue the model without folding.
 * Fold length: when using in or out segments, the length of the segment.
+* Line width: with of the folded printed lines, in millimeters.
 * Pages: the number of pages of the output PDF.
 * Columns: how many columns are used to order the pages in the 2D view. It does not have any effect in the final PDF file.
 * Print Papercraft signature. You can disable the signature that is printed in the PDF linking to this Internet page.
@@ -159,5 +160,4 @@ Note that some overlapping in tabs is perfectly acceptable, you just cut through
 [ISSUE]: https://github.com/rodrigorc/papercraft/issues
 [BLENDER]: https://www.blender.org/
 [PIKACHU]: https://www.printables.com/model/243-low-poly-pikachu
-[GTK]: https://github.com/rodrigorc/papercraft/releases/tag/gtk3-1.0
-[TAG]: https://github.com/rodrigorc/papercraft/releases/tag/v0.9
+[TAG]: https://github.com/rodrigorc/papercraft/releases/latest

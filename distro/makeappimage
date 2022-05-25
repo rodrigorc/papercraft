@@ -1,0 +1,9 @@
+#!/bin/bash
+set -e
+export VERSION="$(git describe --tag)"
+linuxdeploy --appdir=AppDir
+cp papercraft.desktop AppDir/usr/share/applications/
+cargo build --release
+cp ../target/release/papercraft AppDir/usr/bin/
+cp ../src/papercraft.png AppDir/usr/share/icons/hicolor/128x128/apps/
+linuxdeploy --appdir=AppDir --desktop-file=AppDir/usr/share/applications/papercraft.desktop --output appimage

@@ -14,7 +14,7 @@ fn main() -> std::io::Result<()> {
 "#)
         )?;
         let output = std::path::PathBuf::from(&output_dir).join("resource.o");
-        let status = std::process::Command::new("i686-w64-mingw32-windres")
+        let status = std::process::Command::new(option_env!("WINDRES").expect("WINDRES envvar is undefined"))
             .arg("-I").arg(&output_dir)
             .arg("res/resource.rc")
             .arg(&output)

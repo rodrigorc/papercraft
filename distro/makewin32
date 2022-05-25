@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+VERSION="$(git describe --tag)"
+source ./win32env
+cargo build --release --target i686-pc-windows-gnu
+rm -rf pkg
+mkdir -p pkg
+cd pkg
+ln -s ../win32inst papercraft
+rm -f "../Papercraft-$VERSION-win32.zip"
+zip -r "../Papercraft-$VERSION-win32.zip" papercraft
+cd ..
+rm -r pkg

@@ -1,0 +1,7 @@
+export PKG_CONFIG_ALLOW_CROSS="1"
+export PKG_CONFIG_LIBDIR="/usr/x86_64-w64-mingw32/lib/pkgconfig/"
+export CARGO_TARGET_DIR=$(pwd)/w64target
+export WINEPREFIX=$HOME/.wine-xxx
+export WINDRES=x86_64-w64-mingw32-windres
+export RUSTFLAGS="-Clink-arg=-mwindows"
+export PS1="W64 $PS1"

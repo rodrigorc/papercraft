@@ -594,7 +594,10 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
 
             static LOGO: &[u8] = include_bytes!("papercraft.png");
             let pbl = gdk_pixbuf::PixbufLoader::new();
-            let logo = pbl.write(LOGO).ok().and_then(|_| pbl.pixbuf());
+            let logo = pbl.write(LOGO)
+                .and_then(|_| pbl.close())
+                .ok()
+                .and_then(|_| pbl.pixbuf());
 
             let w = ctx.borrow().top_window.clone();
             let builder = gtk::Builder::from_string(include_str!("dialogs.ui"));

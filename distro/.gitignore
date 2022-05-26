@@ -1,7 +1,7 @@
 /AppDir
-/wtarget
-/w64target
-/Papercraft-*.zip
-/Papercraft-*.AppImage
+/win32target
+/win64target
 /win32inst
 /win64inst
+Papercraft-*.zip
+Papercraft-*.AppImage

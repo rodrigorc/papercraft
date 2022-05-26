@@ -1,0 +1,23 @@
+#!/bin/bash
+set -e
+
+cd docker
+
+# There is no linuxdeploy here, you have to get it from elsewhere, in this case from the path
+cp "$(which linuxdeploy)" .
+docker build --tag papercraft .
+rm linuxdeploy
+
+COMMIT="${1:-HEAD}"
+VERSION="$(git describe --tag "$COMMIT")"
+echo Building $COMMIT as $VERSION
+
+# Send a copy of HEAD to the Docker container
+(cd $(git rev-parse --show-toplevel); git archive --format=tar "$COMMIT") > source.tar
+
+docker run -it -v $(realpath source.tar):/app/source.tar -v cargo:/root/.cargo --device /dev/fuse --cap-add SYS_ADMIN papercraft ./makeappimage "$VERSION"
+
+CNT="$(docker ps -lq)"
+docker cp "$CNT:/app/Papercraft-$VERSION-x86_64.AppImage" ..
+
+rm source.tar

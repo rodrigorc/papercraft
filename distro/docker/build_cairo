@@ -1,0 +1,7 @@
+#!/bin/sh
+curl https://www.cairographics.org/releases/cairo-1.16.0.tar.xz -o cairo-1.16.0.tar.xz
+tar -xf cairo-1.16.0.tar.xz
+cd cairo-1.16.0/
+./configure
+make
+make install

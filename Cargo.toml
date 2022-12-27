@@ -27,3 +27,35 @@ smallvec = "*"
 zip = "*"
 memoffset = "*"
 bitflags = "*"
+
+glutin = "*"
+glutin-winit = "*"
+raw-window-handle = "*"
+
+[dependencies.imgui]
+version = "*"
+features = ["freetype"]
+path = "thirdparty/imgui-rs/imgui"
+
+[dependencies.imgui-sys]
+version = "*"
+path = "thirdparty/imgui-rs/imgui-sys"
+
+[dependencies.imgui-winit-support]
+version = "*"
+path = "thirdparty/imgui-rs/imgui-winit-support"
+
+[dependencies.imgui-glow-renderer]
+version = "*"
+path = "thirdparty/imgui-rs/imgui-glow-renderer"
+
+[dependencies.winit]
+version = "*"
+
+[dependencies.glow]
+version = "0.11"
+
+[patch.crates-io.glow]
+#path = "thirdparty/glow"
+git = "https://github.com/grovesNL/glow"
+rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"

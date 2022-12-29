@@ -1,10 +1,10 @@
-use anyhow::{Result, anyhow, Context};
-use cgmath::{
+pub use anyhow::{Result, anyhow, Context};
+pub use cgmath::{
     prelude::*,
     Deg, Rad,
 };
-use glib::clone;
-use gtk::{
+pub use glib::clone;
+pub use gtk::{
     prelude::*,
     gdk::{self, EventMask},
 };
@@ -13,17 +13,12 @@ use std::{collections::HashMap, ops::ControlFlow, time::Duration, path::{Path, P
 use std::rc::Rc;
 use std::cell::RefCell;
 
-mod waveobj;
-mod paper;
-mod glr;
-mod util_3d;
-mod util_gl;
-mod options_dlg;
+use super::*;
 
-use paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle};
-use glr::Rgba;
-use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
-use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
+pub use paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle};
+pub use glr::Rgba;
+pub use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
+pub use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 
 use crate::glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
@@ -500,7 +495,7 @@ fn on_app_startup(app: &gtk::Application, imports: Rc<RefCell<Option<PathBuf>>>)
     aoptions.connect_activate(clone!(
         @strong ctx =>
         move |_, _| {
-            options_dlg::do_options_dialog(&ctx);
+            //options_dlg::do_options_dialog(&ctx);
         }
     ));
 
@@ -1028,7 +1023,7 @@ fn show_error_result(e: Result<()>, parent: &impl IsA<gtk::Window>) -> bool {
     false
 }
 
-fn show_error_message(msg: &str, parent: &impl IsA<gtk::Window>) {
+pub fn show_error_message(msg: &str, parent: &impl IsA<gtk::Window>) {
     let dlg = gtk::MessageDialog::builder()
         .title("Error")
         .text(msg)
@@ -1140,33 +1135,33 @@ struct GLFixedObjects {
     prg_quad: glr::Program,
 }
 
-struct GLObjects {
-    textures: Option<glr::Texture>,
+pub struct GLObjects {
+    pub textures: Option<glr::Texture>,
 
     //GL objects that are rebuild with the model
-    vertices: glr::DynamicVertexArray<MVertex3D>,
-    vertices_sel: glr::DynamicVertexArray<MStatus3D>,
-    vertices_edge_joint: glr::DynamicVertexArray<MVertex3DLine>,
-    vertices_edge_cut: glr::DynamicVertexArray<MVertex3DLine>,
-    vertices_edge_sel: glr::DynamicVertexArray<MVertex3DLine>,
+    pub vertices: glr::DynamicVertexArray<MVertex3D>,
+    pub vertices_sel: glr::DynamicVertexArray<MStatus3D>,
+    pub vertices_edge_joint: glr::DynamicVertexArray<MVertex3DLine>,
+    pub vertices_edge_cut: glr::DynamicVertexArray<MVertex3DLine>,
+    pub vertices_edge_sel: glr::DynamicVertexArray<MVertex3DLine>,
 
-    paper_vertices: glr::DynamicVertexArray<MVertex2D>,
-    paper_vertices_sel: glr::DynamicVertexArray<MStatus2D>,
-    paper_vertices_edge_border: glr::DynamicVertexArray<MVertex2DLine>,
-    paper_vertices_edge_crease: glr::DynamicVertexArray<MVertex2DLine>,
-    paper_vertices_tab: glr::DynamicVertexArray<MVertex2DColor>,
-    paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2DLine>,
-    paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices: glr::DynamicVertexArray<MVertex2D>,
+    pub paper_vertices_sel: glr::DynamicVertexArray<MStatus2D>,
+    pub paper_vertices_edge_border: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_edge_crease: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_tab: glr::DynamicVertexArray<MVertex2DColor>,
+    pub paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
 
     // Maps a FaceIndex to the index into paper_vertices
-    paper_face_index: Vec<u32>,
+    pub paper_face_index: Vec<u32>,
 
-    paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
-    paper_vertices_margin: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
+    pub paper_vertices_margin: glr::DynamicVertexArray<MVertex2DLine>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum MouseMode {
+pub enum MouseMode {
     Face,
     Edge,
     Tab,
@@ -1175,7 +1170,7 @@ enum MouseMode {
 
 //UndoItem cannot store IslandKey, because they are dynamic, use the root of the island instead
 #[derive(Debug)]
-enum UndoAction {
+pub enum UndoAction {
     IslandMove { i_root: FaceIndex, prev_rot: Rad<f32>, prev_loc: Vector2 },
     TabToggle { i_edge: EdgeIndex },
     EdgeCut { i_edge: EdgeIndex },
@@ -1184,7 +1179,7 @@ enum UndoAction {
 }
 
 bitflags::bitflags! {
-    struct RebuildFlags: u32 {
+    pub struct RebuildFlags: u32 {
         const PAGES = 0x0001;
         const PAPER = 0x0002;
         const SCENE_EDGE = 0x0004;
@@ -1200,34 +1195,34 @@ bitflags::bitflags! {
 }
 
 //Objects that are recreated when a new model is loaded
-struct PapercraftContext {
+pub struct PapercraftContext {
     // The model
-    file_name: Option<PathBuf>,
-    papercraft: Papercraft,
-    undo_stack: Vec<Vec<UndoAction>>,
-    modified: bool,
+    pub file_name: Option<PathBuf>,
+    pub papercraft: Papercraft,
+    pub undo_stack: Vec<Vec<UndoAction>>,
+    pub modified: bool,
 
-    rebuild: RebuildFlags,
-    gl_objs: Option<GLObjects>,
+    pub rebuild: RebuildFlags,
+    pub gl_objs: Option<GLObjects>,
 
     // State
-    selected_face: Option<FaceIndex>,
-    selected_edge: Option<EdgeIndex>,
-    selected_islands: Vec<IslandKey>,
-    grabbed_island: bool,
-    scroll_timer: Option<glib::SourceId>,
+    pub selected_face: Option<FaceIndex>,
+    pub selected_edge: Option<EdgeIndex>,
+    pub selected_islands: Vec<IslandKey>,
+    pub grabbed_island: bool,
+    pub scroll_timer: Option<glib::SourceId>,
 
-    last_cursor_pos: Vector2,
-    rotation_center: Option<Vector2>,
+    pub last_cursor_pos: Vector2,
+    pub rotation_center: Option<Vector2>,
 
-    mode: MouseMode,
-    show_textures: bool,
-    show_tabs: bool,
-    show_3d_lines: bool,
-    xray_selection: bool,
-    highlight_overlaps: bool,
-    trans_scene: Transformation3D,
-    trans_paper: TransformationPaper,
+    pub mode: MouseMode,
+    pub show_textures: bool,
+    pub show_tabs: bool,
+    pub show_3d_lines: bool,
+    pub xray_selection: bool,
+    pub highlight_overlaps: bool,
+    pub trans_scene: Transformation3D,
+    pub trans_paper: TransformationPaper,
 }
 
 struct GlobalContext {
@@ -1242,17 +1237,17 @@ struct GlobalContext {
 }
 
 #[derive(Clone)]
-struct Transformation3D {
-    location: Vector3,
-    rotation: Quaternion,
-    scale: f32,
+pub struct Transformation3D {
+    pub location: Vector3,
+    pub rotation: Quaternion,
+    pub scale: f32,
 
-    obj: Matrix4,
-    persp: Matrix4,
-    persp_inv: Matrix4,
-    view: Matrix4,
-    view_inv: Matrix4,
-    mnormal: Matrix3,
+    pub obj: Matrix4,
+    pub persp: Matrix4,
+    pub persp_inv: Matrix4,
+    pub view: Matrix4,
+    pub view_inv: Matrix4,
+    pub mnormal: Matrix3,
 }
 
 impl Transformation3D {
@@ -1271,7 +1266,7 @@ impl Transformation3D {
         tr.recompute_obj();
         tr
     }
-    fn recompute_obj(&mut self) {
+    pub fn recompute_obj(&mut self) {
         let r = Matrix3::from(self.rotation);
         let t = Matrix4::from_translation(self.location);
         let s = Matrix4::from_scale(self.scale);
@@ -1281,7 +1276,7 @@ impl Transformation3D {
         self.mnormal = r; //should be inverse of transpose
     }
 
-    fn set_ratio(&mut self, ratio: f32) {
+    pub fn set_ratio(&mut self, ratio: f32) {
         let f = self.persp[1][1];
         self.persp[0][0] = f / ratio;
         self.persp_inv = self.persp.invert().unwrap();
@@ -1289,9 +1284,9 @@ impl Transformation3D {
 }
 
 #[derive(Clone)]
-struct TransformationPaper {
-    ortho: Matrix3,
-    mx: Matrix3,
+pub struct TransformationPaper {
+    pub ortho: Matrix3,
+    pub mx: Matrix3,
 }
 
 impl TransformationPaper {
@@ -1307,7 +1302,7 @@ impl TransformationPaper {
 }
 
 #[derive(Debug)]
-enum ClickResult {
+pub enum ClickResult {
     None,
     Face(FaceIndex),
     Edge(EdgeIndex, Option<FaceIndex>),
@@ -1361,7 +1356,7 @@ impl PapercraftContext {
         (trans_scene, trans_paper)
     }
 
-    fn from_papercraft(papercraft: Papercraft, file_name: Option<&Path>, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
+    pub fn from_papercraft(papercraft: Papercraft, file_name: Option<&Path>, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
         // Compute the bounding box, then move to the center and scale to a standard size
         let (v_min, v_max) = util_3d::bounding_box_3d(
             papercraft.model()
@@ -1526,7 +1521,7 @@ impl PapercraftContext {
         self.rebuild_pending();
     }
 
-    fn pre_render(&mut self) {
+    pub fn pre_render(&mut self) {
         self.build_gl_objs();
         self.rebuild_pending();
     }
@@ -2056,7 +2051,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool) -> RebuildFlags {
+    pub fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool) -> RebuildFlags {
         let mut island_changed = false;
         let (new_edge, new_face) = match selection {
             ClickResult::None => {
@@ -2098,7 +2093,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> Option<Vec<UndoAction>> {
+    pub fn edge_toggle_cut(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> Option<Vec<UndoAction>> {
         match self.papercraft.edge_status(i_edge) {
             EdgeStatus::Hidden => { None }
             EdgeStatus::Joined => {
@@ -2124,7 +2119,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    fn try_join_strip(&mut self, i_edge: EdgeIndex) -> Option<Vec<UndoAction>> {
+    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> Option<Vec<UndoAction>> {
         let renames = self.papercraft.try_join_strip(i_edge);
         if renames.is_empty() {
             return None;
@@ -2148,7 +2143,7 @@ impl PapercraftContext {
         }
     }
 
-    fn scene_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
+    pub fn scene_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
@@ -2228,7 +2223,7 @@ impl PapercraftContext {
         }
     }
 
-    fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
+    pub fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
         let click = self.trans_paper.paper_click(size, pos);
         let mx = self.trans_paper.ortho * self.trans_paper.mx;
 
@@ -2297,7 +2292,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) -> RebuildFlags {
+    pub fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
         if ev_state.contains(gdk::ModifierType::BUTTON1_MASK) {
@@ -2326,7 +2321,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) -> RebuildFlags {
+    pub fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: gdk::ModifierType) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
         if ev_state.contains(gdk::ModifierType::BUTTON2_MASK) || ev_state.contains(gdk::ModifierType::BUTTON3_MASK) {

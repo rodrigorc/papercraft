@@ -1,4 +1,13 @@
+use std::{cell::{RefCell, Cell}, rc::Rc};
+
 use super::*;
+use super::main_ui::*;
+
+use glib::clone;
+use gtk::{
+    prelude::*,
+    gdk::{self, EventMask},
+};
 
 pub(super) fn do_options_dialog(ctx: &RefCell<GlobalContext>) {
     let builder = gtk::Builder::from_string(include_str!("dialogs.ui"));

@@ -120,7 +120,7 @@ fn main() {
             this: this.clone(),
             gl_fixs,
             data,
-            dragging_left_mouse: false,
+            splitter_pos: 0.0,
             scene_ui_status: Canvas3dStatus::default(),
             paper_ui_status: Canvas3dStatus::default(),
         })
@@ -262,7 +262,7 @@ struct GlobalContext {
     this: Weak<RefCell<GlobalContext>>,
     gl_fixs: GLFixedObjects,
     data: PapercraftContext,
-    dragging_left_mouse: bool,
+    splitter_pos: f32,
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
 }
@@ -273,10 +273,28 @@ impl GlobalContext {
             ui.menu("File", || {});
         });
         //ui.show_demo_window(&mut true);
+        let _s1 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0]));
+        let _s2 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
+        let _s3 = ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered));
+        let _s4 = ui.push_style_color(imgui::StyleColor::Button, ui.style_color(imgui::StyleColor::ButtonHovered));
 
         let size = Vector2::from(ui.content_region_avail());
 
-        self.build_scene(ui, size.x / 2.0);
+        if self.splitter_pos == 0.0 {
+            self.splitter_pos = size.x / 2.0;
+        }
+
+        self.build_scene(ui, self.splitter_pos);
+        ui.same_line();
+
+        ui.button_with_size("##vsplitter", [8.0, -1.0]);
+        if ui.is_item_active() {
+            self.splitter_pos += ui.io().mouse_delta[0];
+        }
+        self.splitter_pos = self.splitter_pos.clamp(50.0, size.x - 50.0);
+        if ui.is_item_hovered() || ui.is_item_active() {
+            ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
+        }
         ui.same_line();
         self.build_paper(ui);
     }
@@ -289,8 +307,11 @@ impl GlobalContext {
             .border(true)
             .begin()
         {
-            let pos = Vector2::from(ui.cursor_screen_pos());
             let size = Vector2::from(ui.content_region_avail());
+            if size.x <= 0.0 || size.y <= 0.0 {
+                return;
+            }
+            let pos = Vector2::from(ui.cursor_screen_pos());
             let dsp_size = Vector2::from(ui.io().display_size);
             let ratio = size.x / size.y;
             let pos_y2 = dsp_size.y - pos.y - size.y;
@@ -413,12 +434,15 @@ impl GlobalContext {
         if let Some(_paper) = ui.child_window("paper")
             //.size([300.0, 300.0], imgui::Condition::Once)
             //.movable(true)
-            .size([0.0, 0.0])
+            .size([-1.0, -1.0])
             .border(true)
             .begin()
         {
-            let pos = Vector2::from(ui.cursor_screen_pos());
             let size = Vector2::from(ui.content_region_avail());
+            if size.x <= 0.0 || size.y <= 0.0 {
+                return;
+            }
+            let pos = Vector2::from(ui.cursor_screen_pos());
             let dsp_size = Vector2::from(ui.io().display_size);
             //let ratio = size.x / size.y;
             let pos_y2 = dsp_size.y - pos.y - size.y;

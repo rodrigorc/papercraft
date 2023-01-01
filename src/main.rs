@@ -6,7 +6,7 @@ use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
 use glutin_winit::DisplayBuilder;
 use imgui_winit_support::WinitPlatform;
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use winit::{event_loop::{EventLoopBuilder, EventLoop}, window::{WindowBuilder, Window}};
 
 
@@ -123,8 +123,13 @@ fn main() {
             splitter_pos: 0.0,
             scene_ui_status: Canvas3dStatus::default(),
             paper_ui_status: Canvas3dStatus::default(),
+            options_opened: false,
+            mouse_mode: MouseMode::Face,
+            quit: false,
         })
     });
+
+    imgui_context.io_mut().config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -170,8 +175,12 @@ fn main() {
 
                     drop((_s2, _s1));
                     let mut ctx = ctx.borrow_mut();
-                    ctx.build_ui(&ui);
+                    ctx.build_ui(&ui, &gl_window);
+                    //ui.show_demo_window(&mut true);
                     gl_window.window.set_title(&ctx.title());
+                    if ctx.quit {
+                        *control_flow = winit::event_loop::ControlFlow::Exit;
+                    }
                 }
 
                 winit_platform.prepare_render(&ui, &gl_window.window);
@@ -265,14 +274,118 @@ struct GlobalContext {
     splitter_pos: f32,
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
+    options_opened: bool,
+    mouse_mode: MouseMode,
+    quit: bool,
 }
 
 impl GlobalContext {
-    fn build_ui(&mut self, ui: &imgui::Ui) {
+    fn build_ui(&mut self, ui: &imgui::Ui, w: &GlWindow) {
+        let mut reset_views = false;
+
         ui.menu_bar(|| {
-            ui.menu("File", || {});
+            ui.menu("File", || {
+                if ui.menu_item("Open...") {
+                    let _ = dbg!(native_dialog::FileDialog::new()
+                        .set_owner(&w.window)
+                        .show_open_single_file());
+                }
+                if ui.menu_item("Save") {
+                    let _ = dbg!(native_dialog::FileDialog::new()
+                        .set_owner(&w.window)
+                        .show_save_single_file());
+                }
+                if ui.menu_item("Save as...") {
+                    let _ = dbg!(native_dialog::FileDialog::new()
+                        .set_owner(&w.window)
+                        .show_save_single_file());
+                }
+                if ui.menu_item("Import OBJ...") {
+                    let _ = dbg!(native_dialog::FileDialog::new()
+                        .set_owner(&w.window)
+                        .show_open_single_file());
+                }
+                if ui.menu_item("Update with new OBJ...") {
+                    let _ = dbg!(native_dialog::FileDialog::new()
+                        .set_owner(&w.window)
+                        .show_open_single_file());
+                }
+                if ui.menu_item("Export OBJ...") {
+                    let _ = dbg!(native_dialog::FileDialog::new()
+                        .set_owner(&w.window)
+                        .show_save_single_file());
+                }
+                if ui.menu_item("Generate PDF...") {
+                    let _ = dbg!(native_dialog::FileDialog::new()
+                        .set_owner(&w.window)
+                        .show_save_single_file());
+                }
+                ui.separator();
+                if ui.menu_item("Quit") {
+                    self.quit = true;
+                }
+            });
+            ui.menu("Edit", || {
+                if ui.menu_item_config("Undo")
+                    .enabled(self.data.can_undo())
+                    .build()
+                {
+                    if self.data.undo_action() {
+                        self.add_rebuild(RebuildFlags::ALL);
+                    }
+                }
+                ui.menu_item_config("Document properties")
+                    .build_with_ref(&mut self.options_opened);
+                ui.separator();
+                let b1 = ui.radio_button("Face/Island", &mut self.data.mode, MouseMode::Face); 
+                let b2 = ui.radio_button("Split/Join edge", &mut self.data.mode, MouseMode::Edge);
+                let b3 = ui.radio_button("Tabs", &mut self.data.mode, MouseMode::Tab);
+                if b1 || b2 || b3 {
+                    ui.close_current_popup();
+                }
+                ui.separator();
+                if ui.menu_item("Reset views") {
+                    reset_views = true;
+                }
+                if ui.menu_item("Repack pieces") {
+                    let undo = self.data.pack_islands();
+                    self.push_undo_action(undo);
+                    self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
+                }
+            });
+            ui.menu("View", || {
+                if ui.menu_item_config("Textures")
+                    .build_with_ref(&mut self.data.show_textures)
+                {
+                    self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
+                }
+                if ui.menu_item_config("3D lines")
+                    .build_with_ref(&mut self.data.show_3d_lines)
+                {
+                    self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                }
+                if ui.menu_item_config("Tabs")
+                    .build_with_ref(&mut self.data.show_tabs)
+                {
+                    self.add_rebuild(RebuildFlags::PAPER);
+                }
+                if ui.menu_item_config("X-ray selection")
+                    .build_with_ref(&mut self.data.xray_selection)
+                {
+                    self.add_rebuild(RebuildFlags::SELECTION);
+                }
+                if ui.menu_item_config("Highlight overlaps")
+                    .build_with_ref(&mut self.data.highlight_overlaps)
+                {
+                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                }
+            });
+            ui.menu("Help", || {
+                if ui.menu_item("About...") {
+                    //TODO
+                }
+            });
         });
-        //ui.show_demo_window(&mut true);
         let _s1 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0]));
         let _s2 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
         let _s3 = ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered));
@@ -285,6 +398,8 @@ impl GlobalContext {
         }
 
         self.build_scene(ui, self.splitter_pos);
+        let sz_scene = ui.item_rect_size();
+
         ui.same_line();
 
         ui.button_with_size("##vsplitter", [8.0, -1.0]);
@@ -295,8 +410,27 @@ impl GlobalContext {
         if ui.is_item_hovered() || ui.is_item_active() {
             ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
         }
+
         ui.same_line();
+
         self.build_paper(ui);
+        let sz_paper = ui.item_rect_size();
+
+        if reset_views {
+            self.data.reset_views(sz_scene.into(), sz_paper.into());
+        }
+
+        if self.options_opened {
+            if let Some(_options) = ui.window("Options##options")
+                //.size([300.0, 300.0], imgui::Condition::Once)
+                .resizable(false)
+                .movable(true)
+                .opened(&mut self.options_opened)
+                .begin()
+            {
+                ui.label_text("", "hola");
+            }
+        }
     }
 
     fn build_scene(&mut self, ui: &imgui::Ui, width: f32) {
@@ -333,7 +467,7 @@ impl GlobalContext {
             canvas3d(ui, &mut self.scene_ui_status);
 
             match &self.scene_ui_status.action {
-                Canvas3dAction::Hovering => {
+                Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
                     let flags = self.data.scene_motion_notify_event(size, mouse_pos, ev_state);
                     rebuild.insert(flags);
                     'zoom: {
@@ -464,7 +598,12 @@ impl GlobalContext {
             canvas3d(ui, &mut self.paper_ui_status);
 
             match &self.paper_ui_status.action {
-                Canvas3dAction::Hovering => {
+                Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
+                    if self.paper_ui_status.action == Canvas3dAction::Hovering {
+                        self.data.rotation_center = None;
+                        self.data.grabbed_island = false;
+                    }
+
                     let flags = self.data.paper_motion_notify_event(size, mouse_pos, ev_state);
                     rebuild.insert(flags);
 
@@ -481,7 +620,6 @@ impl GlobalContext {
                 }
                 Canvas3dAction::Clicked(imgui::MouseButton::Left) => {
                     ev_state.insert(gdk::ModifierType::BUTTON1_MASK);
-                    self.data.rotation_center = None;
 
                     let selection = self.data.paper_analyze_click(self.data.mode, size, mouse_pos);
                     match (self.data.mode, selection) {
@@ -755,7 +893,7 @@ impl GlobalContext {
     }
 
     fn add_rebuild(&mut self, flags: RebuildFlags) {
-        self.data.rebuild |= flags;
+        self.data.rebuild.insert(flags);
         if flags.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
             //self.wpaper.queue_render();
         }
@@ -848,6 +986,7 @@ enum Canvas3dAction {
     None,
     Hovering,
     Clicked(imgui::MouseButton),
+    Pressed(imgui::MouseButton),
     Dragging(imgui::MouseButton),
 }
 
@@ -868,7 +1007,7 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
                 Canvas3dAction::None
             }
         }
-        Canvas3dAction::Hovering | Canvas3dAction::Clicked(_) => {
+        Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) | Canvas3dAction::Clicked(_) => {
             if !hovered {
                 Canvas3dAction::None
             } else if ui.is_mouse_dragging(imgui::MouseButton::Left) {
@@ -879,6 +1018,10 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
                 Canvas3dAction::Clicked(imgui::MouseButton::Left)
             } else if ui.is_mouse_clicked(imgui::MouseButton::Right) {
                 Canvas3dAction::Clicked(imgui::MouseButton::Right)
+            } else if ui.is_mouse_down(imgui::MouseButton::Left) {
+                Canvas3dAction::Pressed(imgui::MouseButton::Left)
+            } else if ui.is_mouse_down(imgui::MouseButton::Right) {
+                Canvas3dAction::Pressed(imgui::MouseButton::Right)
             } else {
                 Canvas3dAction::Hovering
             }

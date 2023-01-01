@@ -27,6 +27,7 @@ smallvec = "*"
 zip = "*"
 memoffset = "*"
 bitflags = "*"
+native-dialog = "*"
 
 glutin = "*"
 glutin-winit = "*"

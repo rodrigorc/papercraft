@@ -1542,7 +1542,7 @@ impl PapercraftContext {
         self.rebuild = RebuildFlags::empty();
     }
 
-    fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
+    pub fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
         (self.trans_scene, self.trans_paper) = Self::default_transformations(self.trans_scene.obj, sz_scene, sz_paper, self.papercraft.options());
     }
 
@@ -2382,7 +2382,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    fn pack_islands(&mut self) -> Vec<UndoAction> {
+    pub fn pack_islands(&mut self) -> Vec<UndoAction> {
         let undo_actions = self.papercraft.islands()
             .map(|(_, island)| {
                 UndoAction::IslandMove{ i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
@@ -2392,7 +2392,10 @@ impl PapercraftContext {
         undo_actions
     }
 
-    fn undo_action(&mut self) -> bool {
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+    pub fn undo_action(&mut self) -> bool {
         //Do not undo while grabbing or the stack will be messed up
         if self.grabbed_island {
             return false;

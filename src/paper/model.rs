@@ -1,7 +1,7 @@
 use std::collections::{HashSet, HashMap};
 
 use cgmath::{InnerSpace, Rad, Angle, Zero};
-use gdk_pixbuf::Pixbuf;
+use image::DynamicImage;
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 
@@ -12,14 +12,14 @@ use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3, TransparentType};
 pub struct Texture {
     file_name: String,
     #[serde(skip)]
-    pixbuf: Option<Pixbuf>
+    pixbuf: Option<DynamicImage>,
 }
 
 impl Texture {
     pub fn file_name(&self) -> &str {
         &self.file_name
     }
-    pub fn pixbuf(&self) -> Option<&Pixbuf> {
+    pub fn pixbuf(&self) -> Option<&DynamicImage> {
         self.pixbuf.as_ref()
     }
 }
@@ -105,7 +105,7 @@ impl Model {
         }
     }
 
-    pub fn from_waveobj(obj: &waveobj::Model, texture_map: HashMap<String, (String, Pixbuf)>) -> (Model, HashMap<FaceIndex, u32>) {
+    pub fn from_waveobj(obj: &waveobj::Model, mut texture_map: HashMap<String, (String, DynamicImage)>) -> (Model, HashMap<FaceIndex, u32>) {
         // Remove duplicated vertices by adding them into a set
         let all_vertices: HashSet<waveobj::FaceVertex> =
             obj.faces()
@@ -261,11 +261,12 @@ impl Model {
         }
 
         let mut textures: Vec<_> = obj.materials().map(|s| {
-            let pixbuf = texture_map.get(s).cloned();
-            let (file_name, pixbuf) = match pixbuf {
+            let tex = texture_map.remove(s);
+            let (file_name, pixbuf) = match tex {
                 Some((n, p)) => (n, Some(p)),
                 None => (String::new(), None)
             };
+
             Texture {
                 file_name,
                 pixbuf,
@@ -317,7 +318,7 @@ impl Model {
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()
     }
-    pub fn reload_textures<F: FnMut(&str) -> Result<Pixbuf>>(&mut self, mut f: F) -> Result<()> {
+    pub fn reload_textures<F: FnMut(&str) -> Result<DynamicImage>>(&mut self, mut f: F) -> Result<()> {
         for tex in &mut self.textures {
             tex.pixbuf = if tex.file_name.is_empty() {
                 None

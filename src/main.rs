@@ -1,7 +1,11 @@
 #![allow(unused_imports, dead_code)]
 
 use std::{num::NonZeroU32, ffi::CString, time::Instant, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
-
+use anyhow::{Result, anyhow, Context};
+use cgmath::{
+    prelude::*,
+    Deg, Rad,
+};
 use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
 use glutin_winit::DisplayBuilder;
@@ -9,19 +13,16 @@ use imgui_winit_support::WinitPlatform;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use winit::{event_loop::{EventLoopBuilder, EventLoop}, window::{WindowBuilder, Window}};
 
-
+mod imgui_filedialog;
 mod waveobj;
 mod paper;
 mod glr;
 mod util_3d;
 mod util_gl;
-mod main_ui;
+mod ui;
 //mod options_dlg;
 
-mod imgui_filedialog;
-
-use main_ui::*;
-
+use ui::*;
 
 use paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle};
 use glr::Rgba;
@@ -181,7 +182,7 @@ fn main() {
                     drop((_s2, _s1));
                     let mut ctx = ctx.borrow_mut();
                     ctx.build_ui(&ui);
-                    ui.show_demo_window(&mut true);
+                    //ui.show_demo_window(&mut true);
                     let new_title = ctx.title();
                     if new_title != old_title {
                         gl_window.window.set_title(&new_title);
@@ -587,12 +588,12 @@ impl GlobalContext {
 
             let mouse_pos = Vector2::from(ui.io().mouse_pos) - pos;
             let mut rebuild = RebuildFlags::empty();
-            let mut ev_state = gdk::ModifierType::empty();
+            let mut ev_state = ModifierType::empty();
             if ui.io().key_shift {
-                ev_state.insert(gdk::ModifierType::SHIFT_MASK);
+                ev_state.insert(ModifierType::SHIFT_MASK);
             }
             if ui.io().key_ctrl {
-                ev_state.insert(gdk::ModifierType::CONTROL_MASK);
+                ev_state.insert(ModifierType::CONTROL_MASK);
             }
 
             canvas3d(ui, &mut self.scene_ui_status);
@@ -613,11 +614,11 @@ impl GlobalContext {
                     }
                 }
                 Canvas3dAction::Clicked(imgui::MouseButton::Left) => {
-                    ev_state.insert(gdk::ModifierType::BUTTON1_MASK);
+                    ev_state.insert(ModifierType::BUTTON1_MASK);
                     let selection = self.data.scene_analyze_click(self.data.mode, size, mouse_pos);
                     match (self.data.mode, selection) {
                         (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                            let undo = if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
+                            let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
                                 self.data.try_join_strip(i_edge)
                             } else {
                                 self.data.edge_toggle_cut(i_edge, i_face)
@@ -633,11 +634,11 @@ impl GlobalContext {
                             rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
                         }
                         (_, ClickResult::Face(f)) => {
-                            let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(gdk::ModifierType::CONTROL_MASK));
+                            let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK));
                             rebuild.insert(flags);
                         }
                         (_, ClickResult::None) => {
-                            let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(gdk::ModifierType::CONTROL_MASK));
+                            let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK));
                             rebuild.insert(flags);
                         }
                         _ => {}
@@ -645,8 +646,8 @@ impl GlobalContext {
                 }
                 Canvas3dAction::Dragging(bt) => {
                     match bt {
-                        imgui::MouseButton::Left => ev_state.insert(gdk::ModifierType::BUTTON1_MASK),
-                        imgui::MouseButton::Right => ev_state.insert(gdk::ModifierType::BUTTON2_MASK),
+                        imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
+                        imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
                         _ => ()
                     }
                     let flags = self.data.scene_motion_notify_event(size, mouse_pos, ev_state);
@@ -717,12 +718,12 @@ impl GlobalContext {
 
             let mouse_pos = Vector2::from(ui.io().mouse_pos) - pos;
             let mut rebuild = RebuildFlags::empty();
-            let mut ev_state = gdk::ModifierType::empty();
+            let mut ev_state = ModifierType::empty();
             if ui.io().key_shift {
-                ev_state.insert(gdk::ModifierType::SHIFT_MASK);
+                ev_state.insert(ModifierType::SHIFT_MASK);
             }
             if ui.io().key_ctrl {
-                ev_state.insert(gdk::ModifierType::CONTROL_MASK);
+                ev_state.insert(ModifierType::CONTROL_MASK);
             }
 
             canvas3d(ui, &mut self.paper_ui_status);
@@ -749,14 +750,14 @@ impl GlobalContext {
                     }
                 }
                 Canvas3dAction::Clicked(imgui::MouseButton::Left) => {
-                    ev_state.insert(gdk::ModifierType::BUTTON1_MASK);
+                    ev_state.insert(ModifierType::BUTTON1_MASK);
 
                     let selection = self.data.paper_analyze_click(self.data.mode, size, mouse_pos);
                     match (self.data.mode, selection) {
                         (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                             self.data.grabbed_island = false;
 
-                            let undo = if ev_state.contains(gdk::ModifierType::SHIFT_MASK) {
+                            let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
                                 self.data.try_join_strip(i_edge)
                             } else {
                                 self.data.edge_toggle_cut(i_edge, i_face)
@@ -772,7 +773,7 @@ impl GlobalContext {
                             rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
                         }
                         (_, ClickResult::Face(f)) => {
-                            rebuild.insert(self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(gdk::ModifierType::CONTROL_MASK)));
+                            rebuild.insert(self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK)));
                             let undo_action = self.data.selected_islands
                                 .iter()
                                 .map(|&i_island| {
@@ -784,7 +785,7 @@ impl GlobalContext {
                             self.data.grabbed_island = true;
                         }
                         (_, ClickResult::None) => {
-                            rebuild.insert(self.data.set_selection(ClickResult::None, true, ev_state.contains(gdk::ModifierType::CONTROL_MASK)));
+                            rebuild.insert(self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK)));
                             self.data.grabbed_island = false;
                         }
                         _ => {}
@@ -792,8 +793,8 @@ impl GlobalContext {
                 }
                 Canvas3dAction::Dragging(bt) => {
                     match bt {
-                        imgui::MouseButton::Left => ev_state.insert(gdk::ModifierType::BUTTON1_MASK),
-                        imgui::MouseButton::Right => ev_state.insert(gdk::ModifierType::BUTTON2_MASK),
+                        imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
+                        imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
                         _ => ()
                     }
                     let flags = self.data.paper_motion_notify_event(size, mouse_pos, ev_state);
@@ -1100,8 +1101,9 @@ impl GlobalContext {
         let page_size_pixels = page_size_inches * resolution;
         let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
-        let pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y)
-            .ok_or_else(|| anyhow!("Unable to create output pixbuf"))?;
+        let mut pixbuf = cairo::ImageSurface::create(cairo::Format::ARgb32, page_size_pixels.x, page_size_pixels.y)
+            .with_context(|| anyhow!("Unable to create output pixbuf"))?;
+        let stride = pixbuf.stride();
         let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
         let title = match &self.data.file_name {
             Some(f) => f.file_stem().map(|s| s.to_string_lossy()).unwrap_or_else(|| "".into()),
@@ -1112,7 +1114,7 @@ impl GlobalContext {
         let cr = cairo::Context::new(&pdf)?;
 
         unsafe {
-            gl::PixelStorei(gl::PACK_ROW_LENGTH, pixbuf.rowstride() / 4);
+            gl::PixelStorei(gl::PACK_ROW_LENGTH, stride / 4);
 
             let fbo = glr::Framebuffer::generate();
             let rbo = glr::Renderbuffer::generate();
@@ -1148,9 +1150,15 @@ impl GlobalContext {
             };
             let _vp = glr::PushViewport::push(0, 0, page_size_pixels.x, page_size_pixels.y);
 
-            gl::ClearColor(1.0, 1.0, 1.0, 0.0);
+            // Cairo surfaces are alpha-premultiplied:
+            // * The framebuffer will be premultiplied, but the input fragments are not.
+            // * The clear color is set to transparent (premultiplied).
+            // * In the screen DST_ALPHA does not matter, because the framebuffer is not
+            //   transparent, but here we have to set it to the proper value: use separate blend
+            //   functions or we'll get the alpha squared.
+            gl::ClearColor(0.0, 0.0, 0.0, 0.0);
             gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             let gl_objs = self.data.gl_objs.as_ref().unwrap();
             let gl_fixs = &self.gl_fixs;
@@ -1231,10 +1239,13 @@ impl GlobalContext {
                 }
 
                 gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
-                let data = pixbuf.pixels();
-                gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::RGBA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
 
-                cr.set_source_pixbuf(&pixbuf, 0.0, 0.0);
+                {
+                    let mut data = pixbuf.data()?;
+                    gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::BGRA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
+                }
+
+                cr.set_source_surface(&pixbuf, 0.0, 0.0)?;
                 let pat = cr.source();
                 let mut mc = cairo::Matrix::identity();
                 let scale = resolution / 72.0;
@@ -1242,9 +1253,8 @@ impl GlobalContext {
                 pat.set_matrix(mc);
 
                 let _ = cr.paint();
-
                 let _ = cr.show_page();
-                //let _ = pixbuf.savev("test.png", "png", &[]);
+                let _ = pixbuf.write_to_png(&mut std::fs::File::create("test.png").unwrap());
             }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
             drop(cr);

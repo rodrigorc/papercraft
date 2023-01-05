@@ -15,23 +15,20 @@ cc = "*"
 bindgen = "*"
 
 [dependencies]
-gtk = { version = "*", features = ["v3_22"] }
-glib = "*"
-gio = "*"
-cairo-rs = { version = "*", features = ["pdf", "v1_16"] }
+cairo-rs = { version = "0.15", features = ["pdf", "png", "v1_16"] }
 gl_loader = "*"
 cgmath = "*"
 anyhow = "*"
-gdk-pixbuf = "*"
 slotmap = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 gl ="*"
 smallvec = "*"
 zip = "*"
-memoffset = "*"
+memoffset = "0.6"
 bitflags = "*"
 mint = "*"
+image = { version = "*", default_features = false, features = ["png", "jpeg", "jpeg_rayon"] }
 
 glutin = "*"
 glutin-winit = "*"

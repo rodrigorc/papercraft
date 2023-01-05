@@ -1,7 +1,6 @@
 use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, ffi::OsStr, hash::Hash};
 
 use cgmath::{One, Rad, Zero};
-use gdk_pixbuf::traits::PixbufLoaderExt;
 use slotmap::SlotMap;
 use crate::waveobj;
 use anyhow::{Result, anyhow, Context};
@@ -20,8 +19,9 @@ impl Papercraft {
             if let Some(pixbuf) = tex.pixbuf() {
                 let file_name = tex.file_name();
                 zip.start_file(&format!("tex/{file_name}"), options)?;
-                let format = gdk_format_from_extension(Path::new(file_name).extension());
-                let data = pixbuf.save_to_bufferv(format, &[])?;
+                let mut data = Vec::new();
+                let format = image::ImageFormat::from_path(&file_name).unwrap_or(image::ImageFormat::Png);
+                pixbuf.write_to(&mut std::io::Cursor::new(&mut data), format)?;
                 zip.write_all(&data[..])?;
             }
         }
@@ -39,11 +39,9 @@ impl Papercraft {
             let mut ztex = zip.by_name(&format!("tex/{file_name}"))?;
             let mut data = Vec::new();
             ztex.read_to_end(&mut data)?;
-
-            let pbl = gdk_pixbuf::PixbufLoader::new();
-            pbl.write(&data)?;
-            pbl.close()?;
-            let img = pbl.pixbuf().ok_or_else(|| anyhow!("Invalid texture image"))?;
+            let img = image::io::Reader::new(std::io::Cursor::new(&data))
+                .with_guessed_format()?
+                .decode()?;
             Ok(img)
         })?;
         Ok(papercraft)
@@ -69,15 +67,13 @@ impl Papercraft {
             {
                 if let Some(map) = lib.map() {
                     let err_map = || format!("Error reading texture file {map}");
-                    let pbl = gdk_pixbuf::PixbufLoader::new();
                     if let Some(map) = waveobj::solve_find_matlib_file(map.as_ref(), &matlib) {
-                        let data = std::fs::read(&map)
+                        let img = image::io::Reader::open(&map)
+                            .with_context(err_map)?
+                            .with_guessed_format()
+                            .with_context(err_map)?
+                            .decode()
                             .with_context(err_map)?;
-                        pbl.write(&data)
-                            .with_context(err_map)?;
-                        pbl.close()
-                            .with_context(err_map)?;
-                        let img = pbl.pixbuf().ok_or_else(|| anyhow!(err_map()))?;
 
                         let map_name = map.file_name().and_then(|f| f.to_str())
                             .ok_or_else(|| anyhow!("Invalid texture name"))?;
@@ -288,9 +284,7 @@ impl Papercraft {
                 } else {
                     path
                 };
-                let format = gdk_format_from_extension(path.extension());
-                let data = pixbuf.save_to_bufferv(format, &[])?;
-                std::fs::write(&full_path, &data)?;
+                pixbuf.save(&full_path)?;
             }
         }
         drop(fm);
@@ -301,15 +295,3 @@ impl Papercraft {
 
 }
 
-fn gdk_format_from_extension(ext: Option<&OsStr>) -> &str {
-    //TODO: use gdk_pixbuf_format_get_extensions?
-    let ext = match ext.and_then(|s| s.to_str()) {
-        None => return "png",
-        Some(e) => e.to_ascii_lowercase(),
-    };
-    match ext.as_str() {
-        "png" => "png",
-        "jpg" | "jpeg" | "jfif" => "jpeg",
-        _ => "png",
-    }
-}

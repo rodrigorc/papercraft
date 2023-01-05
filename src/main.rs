@@ -1,6 +1,6 @@
 #![allow(unused_imports, dead_code)]
 
-use std::{num::NonZeroU32, ffi::CString, time::Instant, rc::{Rc, Weak}, cell::RefCell, path::Path};
+use std::{num::NonZeroU32, ffi::CString, time::Instant, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
 
 use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
@@ -17,6 +17,8 @@ mod util_3d;
 mod util_gl;
 mod main_ui;
 //mod options_dlg;
+
+mod imgui_filedialog;
 
 use main_ui::*;
 
@@ -109,7 +111,7 @@ fn main() {
     let papercraft = Papercraft::load(fs).unwrap();
     let data = PapercraftContext::from_papercraft(
         papercraft,
-        Some(&std::path::PathBuf::from("test")),
+        Some(&PathBuf::from("test")),
         sz_dummy,
         sz_dummy
     );
@@ -126,10 +128,13 @@ fn main() {
             options_opened: false,
             mouse_mode: MouseMode::Face,
             quit: false,
+            file_dialog: None,
+            error_message: String::new(),
         })
     });
 
     imgui_context.io_mut().config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
+    let mut old_title = String::new();
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -175,9 +180,13 @@ fn main() {
 
                     drop((_s2, _s1));
                     let mut ctx = ctx.borrow_mut();
-                    ctx.build_ui(&ui, &gl_window);
-                    //ui.show_demo_window(&mut true);
-                    gl_window.window.set_title(&ctx.title());
+                    ctx.build_ui(&ui);
+                    ui.show_demo_window(&mut true);
+                    let new_title = ctx.title();
+                    if new_title != old_title {
+                        gl_window.window.set_title(&new_title);
+                        old_title = new_title;
+                    }
                     if ctx.quit {
                         *control_flow = winit::event_loop::ControlFlow::Exit;
                     }
@@ -267,6 +276,16 @@ struct GLFixedObjects {
     prg_quad: glr::Program,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum FileAction {
+    OpenCraft,
+    SaveAsCraft,
+    ImportObj,
+    UpdateObj,
+    ExportObj,
+    GeneratePdf, 
+}
+
 struct GlobalContext {
     this: Weak<RefCell<GlobalContext>>,
     gl_fixs: GLFixedObjects,
@@ -277,48 +296,92 @@ struct GlobalContext {
     options_opened: bool,
     mouse_mode: MouseMode,
     quit: bool,
+    file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
+    error_message: String,
 }
 
 impl GlobalContext {
-    fn build_ui(&mut self, ui: &imgui::Ui, w: &GlWindow) {
+    fn build_modal_error_message(&mut self, ui: &imgui::Ui) {
+        if let Some(_pop) = ui.modal_popup_config("Error")
+            .resizable(false)
+            .opened(&mut true)
+            .begin_popup()
+        {
+            ui.text(&self.error_message);
+            if ui.button("OK")
+                || ui.is_key_pressed(imgui::Key::Enter)
+                || ui.is_key_pressed(imgui::Key::KeyPadEnter)
+            {
+                if !ui.is_window_appearing() {
+                    ui.close_current_popup();
+                }
+            }
+        }
+    }
+    fn build_ui(&mut self, ui: &imgui::Ui) {
         let mut reset_views = false;
+        let mut file_action = None;
+        let mut save_as = false;
+        let mut open_file_dialog = false;
 
         ui.menu_bar(|| {
             ui.menu("File", || {
-                if ui.menu_item("Open...") {
-                    let _ = dbg!(native_dialog::FileDialog::new()
-                        .set_owner(&w.window)
-                        .show_open_single_file());
+                let title = "Open...";
+                if ui.menu_item(title) {
+                    let mut fd = imgui_filedialog::FileDialog::new();
+                    fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
+                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+                    self.file_dialog = Some((fd, title, FileAction::OpenCraft));
+                    open_file_dialog = true;
                 }
                 if ui.menu_item("Save") {
-                    let _ = dbg!(native_dialog::FileDialog::new()
-                        .set_owner(&w.window)
-                        .show_save_single_file());
+                    match &self.data.file_name {
+                        Some(f) => {
+                            file_action = Some((FileAction::SaveAsCraft, f.clone()));
+                            open_file_dialog = true;
+                        }
+                        None => save_as = true,
+                    }
                 }
-                if ui.menu_item("Save as...") {
-                    let _ = dbg!(native_dialog::FileDialog::new()
-                        .set_owner(&w.window)
-                        .show_save_single_file());
+                let title = "Save as...";
+                if ui.menu_item(title) || save_as {
+                    let mut fd = imgui_filedialog::FileDialog::new();
+                    fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
+                        imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
+                    self.file_dialog = Some((fd, title, FileAction::SaveAsCraft));
+                    open_file_dialog = true;
                 }
-                if ui.menu_item("Import OBJ...") {
-                    let _ = dbg!(native_dialog::FileDialog::new()
-                        .set_owner(&w.window)
-                        .show_open_single_file());
+                let title = "Import OBJ...";
+                if ui.menu_item(title) {
+                    let mut fd = imgui_filedialog::FileDialog::new();
+                    fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+                    self.file_dialog = Some((fd, title, FileAction::ImportObj));
+                    open_file_dialog = true;
                 }
-                if ui.menu_item("Update with new OBJ...") {
-                    let _ = dbg!(native_dialog::FileDialog::new()
-                        .set_owner(&w.window)
-                        .show_open_single_file());
+                let title = "Update with new OBJ...";
+                if ui.menu_item(title) {
+                    let mut fd = imgui_filedialog::FileDialog::new();
+                    fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+                    self.file_dialog = Some((fd, title, FileAction::UpdateObj));
+                    open_file_dialog = true;
                 }
-                if ui.menu_item("Export OBJ...") {
-                    let _ = dbg!(native_dialog::FileDialog::new()
-                        .set_owner(&w.window)
-                        .show_save_single_file());
+                let title = "Export OBJ...";
+                if ui.menu_item(title) {
+                    let mut fd = imgui_filedialog::FileDialog::new();
+                    fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                        imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
+                    self.file_dialog = Some((fd, title, FileAction::ExportObj));
+                    open_file_dialog = true;
                 }
-                if ui.menu_item("Generate PDF...") {
-                    let _ = dbg!(native_dialog::FileDialog::new()
-                        .set_owner(&w.window)
-                        .show_save_single_file());
+                let title = "Generate PDF...";
+                if ui.menu_item(title) {
+                    let mut fd = imgui_filedialog::FileDialog::new();
+                    fd.open("fd", "", "PDF document (*.pdf) {.pdf},All files {.*}", "", "", 1,
+                        imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
+                    self.file_dialog = Some((fd, title, FileAction::GeneratePdf));
+                    open_file_dialog = true;
                 }
                 ui.separator();
                 if ui.menu_item("Quit") {
@@ -349,7 +412,7 @@ impl GlobalContext {
                 }
                 if ui.menu_item("Repack pieces") {
                     let undo = self.data.pack_islands();
-                    self.push_undo_action(undo);
+                    self.data.push_undo_action(undo);
                     self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
                 }
             });
@@ -386,6 +449,77 @@ impl GlobalContext {
                 }
             });
         });
+
+        if open_file_dialog {
+            ui.open_popup("###file_dialog_modal");
+            unsafe {
+                imgui_sys::igSetNextWindowFocus();
+            }
+        }
+        if let Some((mut fd, title, action)) = self.file_dialog.take() {
+            let dsp_size = Vector2::from(ui.io().display_size);
+            let min_size: [f32; 2] = (dsp_size * 0.75).into();
+            let max_size: [f32; 2] = dsp_size.into();
+            unsafe {
+                imgui_sys::igSetNextWindowSizeConstraints(
+                    min_size.into(),
+                    max_size.into(),
+                    None,
+                    std::ptr::null_mut(),
+                );
+            };
+            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###file_dialog_modal"))
+                .opened(&mut true)
+                .begin_popup()
+            {
+                let mut finish_file_dialog = false;
+                let size = ui.content_region_avail();
+                if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
+                    if fd2.ok() {
+                        // OK FD
+                        if let Some(file) = fd2.file_path_name() {
+                            if action == FileAction::OpenCraft || action == FileAction::ImportObj {
+                                reset_views = true;
+                            }
+                            match self.run_file_action(action, &file) {
+                                Ok(()) => {
+                                    finish_file_dialog = true;
+                                    //fd2.close();
+                                    ui.close_current_popup();
+                                }
+                                Err(e) => {
+                                    self.error_message = format!("{e:?}");
+                                    ui.open_popup("Error");
+                                }
+                            }
+                        }
+                    } else {
+                        // Cancel FD
+                        finish_file_dialog = true;
+                        //fd2.close();
+                        ui.close_current_popup();
+                    }
+                }
+                if !finish_file_dialog {
+                    // When pressing OK the FD tends to try and close itself, but if the file operation
+                    // fails we want the dialog to keep on
+                    self.file_dialog = Some((fd, title, action));
+                }
+                self.build_modal_error_message(ui);
+            }
+        }
+
+        if let Some((action, file)) = file_action {
+            match self.run_file_action(action, &file) {
+                Ok(()) => {}
+                Err(e) => {
+                    self.error_message = format!("{e:?}");
+                    ui.open_popup("Error");
+                }
+            }
+        }
+        self.build_modal_error_message(ui);
+
         let _s1 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0]));
         let _s2 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
         let _s3 = ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered));
@@ -428,6 +562,7 @@ impl GlobalContext {
                 .opened(&mut self.options_opened)
                 .begin()
             {
+                //TODO
                 ui.label_text("", "hola");
             }
         }
@@ -492,13 +627,13 @@ impl GlobalContext {
                                 self.data.edge_toggle_cut(i_edge, i_face)
                             };
                             if let Some(undo) = undo {
-                                self.push_undo_action(undo);
+                                self.data.push_undo_action(undo);
                             }
                             rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
                         }
                         (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                            self.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                             self.data.papercraft.edge_toggle_tab(i_edge);
+                            self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                             rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
                         }
                         (_, ClickResult::Face(f)) => {
@@ -556,7 +691,6 @@ impl GlobalContext {
                             size.x as i32,
                             size.y as i32,
                         );
-
                         this.scene_render(mx_ortho);
                     }
                 }
@@ -632,13 +766,13 @@ impl GlobalContext {
                                 self.data.edge_toggle_cut(i_edge, i_face)
                             };
                             if let Some(undo) = undo {
-                                self.push_undo_action(undo);
+                                self.data.push_undo_action(undo);
                             }
                             rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
                         }
                         (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                            self.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                             self.data.papercraft.edge_toggle_tab(i_edge);
+                            self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
                             rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
                         }
                         (_, ClickResult::Face(f)) => {
@@ -650,7 +784,7 @@ impl GlobalContext {
                                     UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
                                 })
                                 .collect();
-                            self.push_undo_action(undo_action);
+                            self.data.push_undo_action(undo_action);
                             self.data.grabbed_island = true;
                         }
                         (_, ClickResult::None) => {
@@ -901,14 +1035,6 @@ impl GlobalContext {
             //self.wscene.queue_render();
         }
     }
-    fn push_undo_action(&mut self, action: Vec<UndoAction>) {
-        if !action.is_empty() {
-            self.data.undo_stack.push(action);
-        }
-        if !self.data.modified {
-            self.data.modified = true;
-        }
-    }
     fn title(&self) -> String {
         let unsaved = if self.data.modified { "*" } else { "" };
         let app_name = "Papercraft";
@@ -918,6 +1044,217 @@ impl GlobalContext {
             None =>
                 format!("{unsaved} - {app_name}"),
         }
+    }
+    fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        let sz_dummy = Vector2::new(1.0, 1.0);
+        match action {
+            FileAction::OpenCraft => {
+                let fs = std::fs::File::open(&file_name)
+                    .with_context(|| format!("Error opening file {}", file_name.as_ref().display()))?;
+                let fs = std::io::BufReader::new(fs);
+                let papercraft = Papercraft::load(fs)
+                    .with_context(|| format!("Error loading file {}", file_name.as_ref().display()))?;
+                self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), sz_dummy, sz_dummy);
+            }
+            FileAction::SaveAsCraft => {
+                let f = std::fs::File::create(&file_name)
+                    .with_context(|| format!("Error creating file {}", file_name.as_ref().display()))?;
+                let f = std::io::BufWriter::new(f);
+                self.data.papercraft.save(f)
+                    .with_context(|| format!("Error saving file {}", file_name.as_ref().display()))?;
+            }
+            FileAction::ImportObj => {
+                let papercraft = Papercraft::import_waveobj(file_name.as_ref())
+                    .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
+                self.data = PapercraftContext::from_papercraft(papercraft, None, sz_dummy, sz_dummy);
+                // set the modified flag
+                self.data.push_undo_action(Vec::new());
+            }
+            FileAction::UpdateObj => {
+                let mut new_papercraft = Papercraft::import_waveobj(file_name.as_ref())
+                    .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
+                new_papercraft.update_from_obj(&self.data.papercraft);
+                let tp = self.data.trans_paper.clone();
+                let ts = self.data.trans_scene.clone();
+                let original_file_name = self.data.file_name.clone();
+                self.data = PapercraftContext::from_papercraft(new_papercraft, original_file_name.as_deref(), sz_dummy, sz_dummy);
+                self.data.trans_paper = tp;
+                self.data.trans_scene = ts;
+            }
+            FileAction::ExportObj => {
+                self.data.papercraft.export_waveobj(file_name.as_ref())
+                    .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
+            }
+            FileAction::GeneratePdf => {
+                let _backup = BackupGlConfig::backup();
+                self.generate_pdf(file_name.as_ref())
+                    .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
+        let options = self.data.papercraft.options();
+        let resolution = options.resolution as f32;
+        let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
+        let page_size_mm = Vector2::from(options.page_size);
+        let page_size_inches = page_size_mm / 25.4;
+        let page_size_dots = page_size_inches * 72.0;
+        let page_size_pixels = page_size_inches * resolution;
+        let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
+
+        let pixbuf = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, page_size_pixels.x, page_size_pixels.y)
+            .ok_or_else(|| anyhow!("Unable to create output pixbuf"))?;
+        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
+        let title = match &self.data.file_name {
+            Some(f) => f.file_stem().map(|s| s.to_string_lossy()).unwrap_or_else(|| "".into()),
+            None => "untitled".into()
+        };
+        let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
+        let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
+        let cr = cairo::Context::new(&pdf)?;
+
+        unsafe {
+            gl::PixelStorei(gl::PACK_ROW_LENGTH, pixbuf.rowstride() / 4);
+
+            let fbo = glr::Framebuffer::generate();
+            let rbo = glr::Renderbuffer::generate();
+
+            let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
+            let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
+            let rb_binder = BinderRenderbuffer::bind(&rbo);
+            gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo.id());
+
+            let rbo_fbo_no_aa = 'check_aa: {
+                // multisample buffers cannot be read directly, it has to be copied to a regular one.
+                for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
+                    // check if these many samples are usable
+                    gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                    if gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                        continue;
+                    }
+
+                    // If using AA create another FBO/RBO to blit the antialiased image before reading
+                    let rbo2 = glr::Renderbuffer::generate();
+                    rb_binder.rebind(&rbo2);
+                    gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+
+                    let fbo2 = glr::Framebuffer::generate();
+                    read_fb_binder.rebind(&fbo2);
+                    gl::FramebufferRenderbuffer(read_fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo2.id());
+
+                    break 'check_aa Some((rbo2, fbo2));
+                }
+                println!("No multisample!");
+                gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                None
+            };
+            let _vp = glr::PushViewport::push(0, 0, page_size_pixels.x, page_size_pixels.y);
+
+            gl::ClearColor(1.0, 1.0, 1.0, 0.0);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
+            let gl_objs = self.data.gl_objs.as_ref().unwrap();
+            let gl_fixs = &self.gl_fixs;
+
+            let mut texturize = 0;
+
+            gl::BindVertexArray(gl_fixs.vao_paper.id());
+            if let (Some(tex), true) = (&gl_objs.textures, options.texture) {
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
+                texturize = 1;
+            }
+
+            let ortho = util_3d::ortho2d_zero(page_size_mm.x, -page_size_mm.y);
+
+            let page_count = options.pages;
+            let tab_style = options.tab_style;
+
+            for page in 0..page_count {
+                const FONT_SIZE: f32 = 3.0;
+                if options.show_self_promotion {
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                    cr.set_font_size(FONT_SIZE as f64 * 72.0 / 25.4);
+                    let x = margin_left;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    cr.move_to(x as f64 * 72.0 / 25.4, y as f64 * 72.0 / 25.4);
+                    let _ = cr.show_text(signature());
+                }
+                if options.show_page_number {
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                    cr.set_font_size(FONT_SIZE as f64 * 72.0 / 25.4);
+                    let text = format!("Page {}/{}", page + 1, page_count);
+                    let ext = cr.text_extents(&text).unwrap();
+                    let x = page_size_mm.x - margin_right;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    cr.move_to(x as f64 * 72.0 / 25.4 - ext.width, y as f64 * 72.0 / 25.4);
+                    let _ = cr.show_text(&text);
+                }
+
+                // Start render
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+                let page_pos = options.page_position(page);
+                let mt = Matrix3::from_translation(-page_pos);
+                let u = Uniforms2D {
+                    m: ortho * mt,
+                    tex: 0,
+                    frac_dash: 0.5,
+                    line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+                    texturize,
+                };
+                // Line Tabs
+                if tab_style != TabStyle::None {
+                    gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
+                }
+
+                // Solid Tabs
+                if tab_style != TabStyle::None && tab_style != TabStyle::White {
+                    gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
+                }
+
+                // Borders
+                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_border, gl::LINES);
+
+                // Textured faces
+                gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
+                gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices, gl::TRIANGLES);
+
+                // Creases
+                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_crease, gl::LINES);
+                // End render
+
+                if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
+                    read_fb_binder.rebind(&fbo);
+                    draw_fb_binder.rebind(fbo_no_aa);
+                    gl::BlitFramebuffer(0, 0, page_size_pixels.x, page_size_pixels.y, 0, 0, page_size_pixels.x, page_size_pixels.y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+                    read_fb_binder.rebind(fbo_no_aa);
+                    draw_fb_binder.rebind(&fbo);
+                }
+
+                gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
+                let data = pixbuf.pixels();
+                gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::RGBA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
+
+                cr.set_source_pixbuf(&pixbuf, 0.0, 0.0);
+                let pat = cr.source();
+                let mut mc = cairo::Matrix::identity();
+                let scale = resolution / 72.0;
+                mc.scale(scale as f64, scale as f64);
+                pat.set_matrix(mc);
+
+                let _ = cr.paint();
+
+                let _ = cr.show_page();
+                //let _ = pixbuf.savev("test.png", "png", &[]);
+            }
+            gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
+            drop(cr);
+            drop(pdf);
+        }
+        Ok(())
     }
 }
 
@@ -1043,3 +1380,4 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
         action,
     };
 }
+

@@ -2439,6 +2439,12 @@ impl PapercraftContext {
         }
         true
     }
+    pub fn push_undo_action(&mut self, action: Vec<UndoAction>) {
+        if !action.is_empty() {
+            self.undo_stack.push(action);
+        }
+        self.modified = true;
+    }
 }
 
 impl GlobalContext {
@@ -2553,12 +2559,7 @@ impl GlobalContext {
     }
 
     fn push_undo_action(&mut self, action: Vec<UndoAction>) {
-        if !action.is_empty() {
-            self.data.undo_stack.push(action);
-        }
-        if !self.data.modified {
-            self.data.modified = true;
-        }
+        self.data.push_undo_action(action);
         self.set_title(self.data.file_name.as_ref());
     }
 
@@ -2931,6 +2932,6 @@ impl GlobalContext {
     }
 }
 
-fn signature() -> &'static str {
+pub fn signature() -> &'static str {
     "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 }

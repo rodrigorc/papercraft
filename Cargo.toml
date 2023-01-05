@@ -10,6 +10,10 @@ keywords = ["papercraft", "handcraft"]
 strip = "symbols"
 lto = true
 
+[build-dependencies]
+cc = "*"
+bindgen = "*"
+
 [dependencies]
 gtk = { version = "*", features = ["v3_22"] }
 glib = "*"
@@ -27,7 +31,7 @@ smallvec = "*"
 zip = "*"
 memoffset = "*"
 bitflags = "*"
-native-dialog = "*"
+mint = "*"
 
 glutin = "*"
 glutin-winit = "*"

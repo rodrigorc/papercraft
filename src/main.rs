@@ -244,14 +244,12 @@ fn build_gl_fixs() -> Result<GLFixedObjects> {
     let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl")).with_context(|| "paper_line")?;
     let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl")).with_context(|| "quad")?;
 
-    let vao_scene = glr::VertexArray::generate();
-    let vao_paper = glr::VertexArray::generate();
+    let vao = glr::VertexArray::generate();
     let fbo_paper = None; //Some(glr::Framebuffer::generate());
     let rbo_paper = None; //Some((glr::Renderbuffer::generate(), glr::Renderbuffer::generate()));
 
     Ok(GLFixedObjects {
-        vao_scene,
-        vao_paper,
+        vao,
         fbo_paper,
         rbo_paper,
         prg_scene_solid,
@@ -263,9 +261,7 @@ fn build_gl_fixs() -> Result<GLFixedObjects> {
 }
 
 struct GLFixedObjects {
-    //VAOs are not shareable between contexts, so we need two, one for each window
-    vao_scene: glr::VertexArray,
-    vao_paper: glr::VertexArray,
+    vao: glr::VertexArray,
     fbo_paper: Option<glr::Framebuffer>,
     rbo_paper: Option<(glr::Renderbuffer, glr::Renderbuffer)>, //color, stencil
 
@@ -868,7 +864,7 @@ impl GlobalContext {
             gl::Enable(gl::DEPTH_TEST);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-            gl::BindVertexArray(gl_fixs.vao_scene.id());
+            gl::BindVertexArray(gl_fixs.vao.id());
             if let (Some(tex), true) = (&gl_objs.textures, self.data.show_textures) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
@@ -938,7 +934,7 @@ impl GlobalContext {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-            gl::BindVertexArray(gl_fixs.vao_paper.id());
+            gl::BindVertexArray(gl_fixs.vao.id());
             if let (Some(tex), true) = (&gl_objs.textures, self.data.show_textures) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
@@ -1161,7 +1157,7 @@ impl GlobalContext {
 
             let mut texturize = 0;
 
-            gl::BindVertexArray(gl_fixs.vao_paper.id());
+            gl::BindVertexArray(gl_fixs.vao.id());
             if let (Some(tex), true) = (&gl_objs.textures, options.texture) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());

@@ -74,6 +74,7 @@ fn main() {
             })
     });
     let window = window.unwrap();
+    window.set_title("Papercraft");
     let gl_window = GlWindow::new(window, &gl_config);
     let gl_context = not_current_gl_context
         .take()
@@ -130,7 +131,9 @@ fn main() {
             mouse_mode: MouseMode::Face,
             quit: false,
             file_dialog: None,
+            file_action: None,
             error_message: String::new(),
+            popup_frame_start: 0,
         })
     });
 
@@ -168,21 +171,22 @@ fn main() {
                     let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
                     let _s2 = ui.push_style_var(imgui::StyleVar::WindowRounding(0.0));
 
-                    let _w = ui.window("xxx")
+                    let _w = ui.window("Papercraft")
                         .position([0.0, 0.0], imgui::Condition::Always)
                         .size(ui.io().display_size, imgui::Condition::Always)
                         .flags(
                             imgui::WindowFlags::NO_DECORATION |
                             imgui::WindowFlags::NO_RESIZE |
                             imgui::WindowFlags::MENU_BAR |
-                            imgui::WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS
+                            imgui::WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS |
+                            imgui::WindowFlags::NO_NAV
                         )
                         .begin();
 
                     drop((_s2, _s1));
                     let mut ctx = ctx.borrow_mut();
                     ctx.build_ui(&ui);
-                    //ui.show_demo_window(&mut true);
+                    ui.show_demo_window(&mut true);
                     let new_title = ctx.title();
                     if new_title != old_title {
                         gl_window.window.set_title(&new_title);
@@ -280,7 +284,20 @@ enum FileAction {
     ImportObj,
     UpdateObj,
     ExportObj,
-    GeneratePdf, 
+    GeneratePdf,
+}
+
+impl FileAction {
+    fn title(&self) -> &'static str {
+        match self {
+            FileAction::OpenCraft => "Opening...",
+            FileAction::SaveAsCraft => "Saving...",
+            FileAction::ImportObj => "Importing...",
+            FileAction::UpdateObj => "Updating...",
+            FileAction::ExportObj => "Exporting...",
+            FileAction::GeneratePdf => "Generating PDF...",
+        }
+    }
 }
 
 struct GlobalContext {
@@ -294,18 +311,21 @@ struct GlobalContext {
     mouse_mode: MouseMode,
     quit: bool,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
+    file_action: Option<(FileAction, PathBuf)>,
     error_message: String,
+    popup_frame_start: i32,
 }
 
 impl GlobalContext {
     fn build_modal_error_message(&mut self, ui: &imgui::Ui) {
         if let Some(_pop) = ui.modal_popup_config("Error")
             .resizable(false)
+            .always_auto_resize(true)
             .opened(&mut true)
             .begin_popup()
         {
             ui.text(&self.error_message);
-            if ui.button("OK")
+            if ui.button_with_size("OK", [100.0, 0.0])
                 || ui.is_key_pressed(imgui::Key::Enter)
                 || ui.is_key_pressed(imgui::Key::KeyPadEnter)
             {
@@ -315,11 +335,47 @@ impl GlobalContext {
             }
         }
     }
+    // Returns true if the action has just been done successfully
+    fn build_modal_wait_message_and_run_file_action(&mut self, ui: &imgui::Ui) -> bool {
+        let mut ok = false;
+        if let Some(file_action) = self.file_action.take() {
+            let (action, file) = &file_action;
+            // These many frames to give time to the fading modal, should be enough
+            let run = (ui.frame_count().wrapping_sub(self.popup_frame_start)) > 10;
+            let title = action.title();
+            if run {
+                match self.run_file_action(*action, file) {
+                    Ok(()) => {
+                        ok = true;
+                    }
+                    Err(e) => {
+                        self.error_message = format!("{e:?}");
+                        ui.open_popup("Error");
+                    }
+                }
+            } else {
+                // keep the action pending, for now.
+                self.file_action = Some(file_action);
+            }
+
+            // Build the modal itself
+            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###Wait"))
+                .resizable(false)
+                .begin_popup()
+            {
+                ui.text("Please, wait...");
+                if run {
+                    ui.close_current_popup();
+                }
+            }
+        }
+        ok
+    }
     fn build_ui(&mut self, ui: &imgui::Ui) {
         let mut reset_views = false;
-        let mut file_action = None;
         let mut save_as = false;
         let mut open_file_dialog = false;
+        let mut open_wait = false;
 
         ui.menu_bar(|| {
             ui.menu("File", || {
@@ -334,8 +390,8 @@ impl GlobalContext {
                 if ui.menu_item("Save") {
                     match &self.data.file_name {
                         Some(f) => {
-                            file_action = Some((FileAction::SaveAsCraft, f.clone()));
-                            open_file_dialog = true;
+                            self.file_action = Some((FileAction::SaveAsCraft, f.clone()));
+                            open_wait = true;
                         }
                         None => save_as = true,
                     }
@@ -397,7 +453,7 @@ impl GlobalContext {
                 ui.menu_item_config("Document properties")
                     .build_with_ref(&mut self.options_opened);
                 ui.separator();
-                let b1 = ui.radio_button("Face/Island", &mut self.data.mode, MouseMode::Face); 
+                let b1 = ui.radio_button("Face/Island", &mut self.data.mode, MouseMode::Face);
                 let b2 = ui.radio_button("Split/Join edge", &mut self.data.mode, MouseMode::Edge);
                 let b3 = ui.radio_button("Tabs", &mut self.data.mode, MouseMode::Tab);
                 if b1 || b2 || b3 {
@@ -449,9 +505,10 @@ impl GlobalContext {
 
         if open_file_dialog {
             ui.open_popup("###file_dialog_modal");
-            unsafe {
-                imgui_sys::igSetNextWindowFocus();
-            }
+        }
+        if open_wait {
+            self.popup_frame_start = ui.frame_count();
+            ui.open_popup("###Wait");
         }
         if let Some((mut fd, title, action)) = self.file_dialog.take() {
             let dsp_size = Vector2::from(ui.io().display_size);
@@ -475,47 +532,33 @@ impl GlobalContext {
                     if fd2.ok() {
                         // OK FD
                         if let Some(file) = fd2.file_path_name() {
-                            if action == FileAction::OpenCraft || action == FileAction::ImportObj {
-                                reset_views = true;
-                            }
-                            match self.run_file_action(action, &file) {
-                                Ok(()) => {
-                                    finish_file_dialog = true;
-                                    //fd2.close();
-                                    ui.close_current_popup();
-                                }
-                                Err(e) => {
-                                    self.error_message = format!("{e:?}");
-                                    ui.open_popup("Error");
-                                }
-                            }
+                            self.file_action = Some((action, file.into()));
+                            self.popup_frame_start = ui.frame_count();
+                            ui.open_popup("###Wait");
                         }
                     } else {
                         // Cancel FD
                         finish_file_dialog = true;
-                        //fd2.close();
                         ui.close_current_popup();
                     }
                 }
+
+                self.build_modal_error_message(ui);
+                if self.build_modal_wait_message_and_run_file_action(ui) {
+                    finish_file_dialog = true;
+                    ui.close_current_popup();
+                }
+
                 if !finish_file_dialog {
                     // When pressing OK the FD tends to try and close itself, but if the file operation
                     // fails we want the dialog to keep on
                     self.file_dialog = Some((fd, title, action));
                 }
-                self.build_modal_error_message(ui);
             }
         }
 
-        if let Some((action, file)) = file_action {
-            match self.run_file_action(action, &file) {
-                Ok(()) => {}
-                Err(e) => {
-                    self.error_message = format!("{e:?}");
-                    ui.open_popup("Error");
-                }
-            }
-        }
         self.build_modal_error_message(ui);
+        self.build_modal_wait_message_and_run_file_action(ui);
 
         let _s1 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0]));
         let _s2 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
@@ -613,7 +656,8 @@ impl GlobalContext {
                         rebuild.insert(RebuildFlags::SCENE_REDRAW);
                     }
                 }
-                Canvas3dAction::Clicked(imgui::MouseButton::Left) => {
+                Canvas3dAction::Clicked(imgui::MouseButton::Left) => {}
+                Canvas3dAction::Released(imgui::MouseButton::Left) => {
                     ev_state.insert(ModifierType::BUTTON1_MASK);
                     let selection = self.data.scene_analyze_click(self.data.mode, size, mouse_pos);
                     match (self.data.mode, selection) {
@@ -653,7 +697,7 @@ impl GlobalContext {
                     let flags = self.data.scene_motion_notify_event(size, mouse_pos, ev_state);
                     rebuild.insert(flags);
                 }
-                Canvas3dAction::Clicked(_) | Canvas3dAction::None => {}
+                Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
             }
             self.add_rebuild(rebuild);
 
@@ -800,7 +844,7 @@ impl GlobalContext {
                     let flags = self.data.paper_motion_notify_event(size, mouse_pos, ev_state);
                     rebuild.insert(flags);
                 }
-                Canvas3dAction::Clicked(_) | Canvas3dAction::None => {}
+                Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
 
             }
             self.add_rebuild(rebuild);
@@ -1330,6 +1374,7 @@ enum Canvas3dAction {
     Hovering,
     Clicked(imgui::MouseButton),
     Pressed(imgui::MouseButton),
+    Released(imgui::MouseButton),
     Dragging(imgui::MouseButton),
 }
 
@@ -1361,6 +1406,10 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
                 Canvas3dAction::Clicked(imgui::MouseButton::Left)
             } else if ui.is_mouse_clicked(imgui::MouseButton::Right) {
                 Canvas3dAction::Clicked(imgui::MouseButton::Right)
+            } else if ui.is_mouse_released(imgui::MouseButton::Left) {
+                Canvas3dAction::Released(imgui::MouseButton::Left)
+            } else if ui.is_mouse_released(imgui::MouseButton::Right) {
+                Canvas3dAction::Released(imgui::MouseButton::Right)
             } else if ui.is_mouse_down(imgui::MouseButton::Left) {
                 Canvas3dAction::Pressed(imgui::MouseButton::Left)
             } else if ui.is_mouse_down(imgui::MouseButton::Right) {
@@ -1369,7 +1418,7 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
                 Canvas3dAction::Hovering
             }
         }
-        Canvas3dAction::None => {
+        Canvas3dAction::None | Canvas3dAction::Released(_) => {
             // If the mouse is entered while dragging, it does not count, as if captured by other
             if hovered &&
                 !ui.is_mouse_dragging(imgui::MouseButton::Left) &&

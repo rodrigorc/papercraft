@@ -50,6 +50,11 @@ impl Texture {
     pub fn id(&self) -> u32 {
         self.id
     }
+    pub fn into_id(self) -> u32 {
+        let id = self.id;
+        std::mem::forget(self);
+        id
+    }
 }
 
 

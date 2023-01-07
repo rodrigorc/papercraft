@@ -9,9 +9,10 @@ use cgmath::{
 use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
 use glutin_winit::DisplayBuilder;
+use image::DynamicImage;
 use imgui_winit_support::WinitPlatform;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-use winit::{event_loop::{EventLoopBuilder, EventLoop}, window::{WindowBuilder, Window}};
+use winit::{event_loop::{EventLoopBuilder, EventLoop}, window::{WindowBuilder, Window}, event::VirtualKeyCode};
 
 mod imgui_filedialog;
 mod waveobj;
@@ -104,6 +105,8 @@ fn main() {
     let mut ig_renderer = imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_context)
         .expect("failed to create renderer");
 
+    use imgui_glow_renderer::TextureMap;
+
     let mut last_frame = Instant::now();
 
     // Initialize papaercraft status
@@ -118,11 +121,15 @@ fn main() {
         sz_dummy
     );
 
+    let icons_tex = load_texture_from_memory(include_bytes!("icons.png"), true).unwrap();
+    let icons_tex = ig_renderer.texture_map_mut().register(icons_tex).unwrap();
+
     let gl_fixs = build_gl_fixs().unwrap();
     let ctx = Rc::new_cyclic(|this| {
         RefCell::new(GlobalContext {
             this: this.clone(),
             gl_fixs,
+            icons_tex,
             data,
             splitter_pos: 0.0,
             scene_ui_status: Canvas3dStatus::default(),
@@ -186,7 +193,7 @@ fn main() {
                     drop((_s2, _s1));
                     let mut ctx = ctx.borrow_mut();
                     ctx.build_ui(&ui);
-                    ui.show_demo_window(&mut true);
+                    //ui.show_demo_window(&mut true);
                     let new_title = ctx.title();
                     if new_title != old_title {
                         gl_window.window.set_title(&new_title);
@@ -303,6 +310,7 @@ impl FileAction {
 struct GlobalContext {
     this: Weak<RefCell<GlobalContext>>,
     gl_fixs: GLFixedObjects,
+    icons_tex: imgui::TextureId,
     data: PapercraftContext,
     splitter_pos: f32,
     scene_ui_status: Canvas3dStatus,
@@ -371,7 +379,122 @@ impl GlobalContext {
         }
         ok
     }
+
     fn build_ui(&mut self, ui: &imgui::Ui) {
+        let reset_views = self.build_menu_and_file_dialog(ui);
+
+        const PAD: f32 = 4.0;
+        let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([PAD, PAD]));
+        let _s2 = ui.push_style_var(imgui::StyleVar::ItemSpacing([0.0, 0.0]));
+        if let Some(_toolbar) = ui.child_window("toolbar")
+            .size([0.0, 48.0 + 2.0 * PAD])
+            .always_use_window_padding(true)
+            .border(false)
+            .begin()
+        {
+            let _s3 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 0.0]));
+            let n = 48.0 / 128.0;
+            let color_active = ui.style_color(imgui::StyleColor::ButtonActive);
+            let color_white = [1.0, 1.0, 1.0, 1.0].into();
+            let color_trans = [0.0, 0.0, 0.0, 0.0];
+
+            if unsafe {
+                let _t1 = ui.push_id("Face");
+                imgui_sys::igImageButton(
+                    self.icons_tex.id() as _,
+                    [48.0, 48.0].into(),
+                    [0.0, 0.0].into(),
+                    [n, n].into(),
+                    0,
+                    (if self.data.mode == MouseMode::Face { color_active } else { color_trans }).into(),
+                    color_white,
+                )
+            } {
+                self.data.mode = MouseMode::Face;
+            }
+            ui.same_line();
+            if unsafe {
+                let _t1 = ui.push_id("Edge");
+                imgui_sys::igImageButton(
+                    self.icons_tex.id() as _,
+                    [48.0, 48.0].into(),
+                    [n, 0.0].into(),
+                    [2.0*n, n].into(),
+                    0,
+                    (if self.data.mode == MouseMode::Edge { color_active } else { color_trans }).into(),
+                    color_white,
+                )
+            } {
+                self.data.mode = MouseMode::Edge;
+            }
+            ui.same_line();
+            if unsafe {
+                let _t1 = ui.push_id("Tab");
+                imgui_sys::igImageButton(
+                    self.icons_tex.id() as _,
+                    [48.0, 48.0].into(),
+                    [0.0, n].into(),
+                    [n, 2.0*n].into(),
+                    0,
+                    (if self.data.mode == MouseMode::Tab { color_active } else { color_trans }).into(),
+                    color_white,
+                )
+            } {
+                self.data.mode = MouseMode::Tab;
+            }
+        }
+        drop(_s1);
+        drop(_s2);
+
+        let _s1 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0]));
+        let _s2 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
+        let _s3 = ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered));
+        let _s4 = ui.push_style_color(imgui::StyleColor::Button, ui.style_color(imgui::StyleColor::ButtonHovered));
+
+        let size = Vector2::from(ui.content_region_avail());
+
+        if self.splitter_pos == 0.0 {
+            self.splitter_pos = size.x / 2.0;
+        }
+
+        self.build_scene(ui, self.splitter_pos);
+        let sz_scene = ui.item_rect_size();
+
+        ui.same_line();
+
+        ui.button_with_size("##vsplitter", [8.0, -1.0]);
+        if ui.is_item_active() {
+            self.splitter_pos += ui.io().mouse_delta[0];
+        }
+        self.splitter_pos = self.splitter_pos.clamp(50.0, size.x - 50.0);
+        if ui.is_item_hovered() || ui.is_item_active() {
+            ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
+        }
+
+        ui.same_line();
+
+        self.build_paper(ui);
+        let sz_paper = ui.item_rect_size();
+
+        if reset_views {
+            self.data.reset_views(sz_scene.into(), sz_paper.into());
+        }
+
+        if self.options_opened {
+            if let Some(_options) = ui.window("Options##options")
+                //.size([300.0, 300.0], imgui::Condition::Once)
+                .resizable(false)
+                .movable(true)
+                .opened(&mut self.options_opened)
+                .begin()
+            {
+                //TODO
+                ui.label_text("", "hola");
+            }
+        }
+    }
+
+    fn build_menu_and_file_dialog(&mut self, ui: &imgui::Ui) -> bool {
         let mut reset_views = false;
         let mut save_as = false;
         let mut open_file_dialog = false;
@@ -450,16 +573,33 @@ impl GlobalContext {
                         self.add_rebuild(RebuildFlags::ALL);
                     }
                 }
+
                 ui.menu_item_config("Document properties")
                     .build_with_ref(&mut self.options_opened);
+
                 ui.separator();
-                let b1 = ui.radio_button("Face/Island", &mut self.data.mode, MouseMode::Face);
-                let b2 = ui.radio_button("Split/Join edge", &mut self.data.mode, MouseMode::Edge);
-                let b3 = ui.radio_button("Tabs", &mut self.data.mode, MouseMode::Tab);
-                if b1 || b2 || b3 {
-                    ui.close_current_popup();
+
+                if ui.menu_item_config("Face/Island")
+                    .shortcut("F5")
+                    .build_with_ref(&mut (self.data.mode == MouseMode::Face))
+                {
+                    self.data.mode = MouseMode::Face;
                 }
+                if ui.menu_item_config("Split/Join edge")
+                    .shortcut("F6")
+                    .build_with_ref(&mut (self.data.mode == MouseMode::Edge))
+                {
+                    self.data.mode = MouseMode::Edge;
+                }
+                if ui.menu_item_config("Tabs")
+                    .shortcut("F7")
+                    .build_with_ref(&mut (self.data.mode == MouseMode::Tab))
+                {
+                    self.data.mode = MouseMode::Tab;
+                }
+
                 ui.separator();
+
                 if ui.menu_item("Reset views") {
                     reset_views = true;
                 }
@@ -502,6 +642,16 @@ impl GlobalContext {
                 }
             });
         });
+
+        if ui.is_key_index_pressed(VirtualKeyCode::F5 as _) {
+            self.data.mode = MouseMode::Face;
+        }
+        if ui.is_key_index_pressed(VirtualKeyCode::F6 as _) {
+            self.data.mode = MouseMode::Edge;
+        }
+        if ui.is_key_index_pressed(VirtualKeyCode::F7 as _) {
+            self.data.mode = MouseMode::Tab;
+        }
 
         if open_file_dialog {
             ui.open_popup("###file_dialog_modal");
@@ -560,52 +710,7 @@ impl GlobalContext {
         self.build_modal_error_message(ui);
         self.build_modal_wait_message_and_run_file_action(ui);
 
-        let _s1 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0]));
-        let _s2 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
-        let _s3 = ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered));
-        let _s4 = ui.push_style_color(imgui::StyleColor::Button, ui.style_color(imgui::StyleColor::ButtonHovered));
-
-        let size = Vector2::from(ui.content_region_avail());
-
-        if self.splitter_pos == 0.0 {
-            self.splitter_pos = size.x / 2.0;
-        }
-
-        self.build_scene(ui, self.splitter_pos);
-        let sz_scene = ui.item_rect_size();
-
-        ui.same_line();
-
-        ui.button_with_size("##vsplitter", [8.0, -1.0]);
-        if ui.is_item_active() {
-            self.splitter_pos += ui.io().mouse_delta[0];
-        }
-        self.splitter_pos = self.splitter_pos.clamp(50.0, size.x - 50.0);
-        if ui.is_item_hovered() || ui.is_item_active() {
-            ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
-        }
-
-        ui.same_line();
-
-        self.build_paper(ui);
-        let sz_paper = ui.item_rect_size();
-
-        if reset_views {
-            self.data.reset_views(sz_scene.into(), sz_paper.into());
-        }
-
-        if self.options_opened {
-            if let Some(_options) = ui.window("Options##options")
-                //.size([300.0, 300.0], imgui::Condition::Once)
-                .resizable(false)
-                .movable(true)
-                .opened(&mut self.options_opened)
-                .begin()
-            {
-                //TODO
-                ui.label_text("", "hola");
-            }
-        }
+        reset_views
     }
 
     fn build_scene(&mut self, ui: &imgui::Ui, width: f32) {
@@ -1314,8 +1419,6 @@ struct BackupGlConfig {
     p_buf: i32,
     p_atex: i32,
     p_tex: i32,
-    p_tex_min: i32,
-    p_tex_mag: i32,
 }
 
 impl BackupGlConfig {
@@ -1331,14 +1434,9 @@ impl BackupGlConfig {
             gl::GetIntegerv(gl::ACTIVE_TEXTURE, &mut p_atex);
             let mut p_tex = 0;
             gl::GetIntegerv(gl::TEXTURE_BINDING_2D, &mut p_tex);
-            let mut p_tex_min = 0;
-            gl::GetTexParameteriv(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, &mut p_tex_min);
-            let mut p_tex_mag = 0;
-            gl::GetTexParameteriv(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, &mut p_tex_mag);
-                BackupGlConfig {
+            BackupGlConfig {
                 p_vao, p_prg, p_buf,
                 p_atex, p_tex,
-                p_tex_min, p_tex_mag,
             }
         }
     }
@@ -1352,8 +1450,6 @@ impl Drop for BackupGlConfig {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.p_buf as _);
             gl::ActiveTexture(self.p_atex as _);
             gl::BindTexture(gl::TEXTURE_2D, self.p_tex as _);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, self.p_tex_min as _);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, self.p_tex_mag as _);
 
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::STENCIL_TEST);
@@ -1436,3 +1532,39 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
     };
 }
 
+fn premultiply_image(img: DynamicImage) -> image::RgbaImage {
+    let mut img = img.into_rgba8();
+    for p in img.pixels_mut() {
+        let a = p.0[3] as u32;
+        for i in &mut p.0[0..3] {
+            *i = (*i as u32 * a / 255) as u8;
+        }
+    }
+    img
+}
+
+fn load_texture_from_memory(data: &[u8], premultply: bool) -> Result<glow::NativeTexture> {
+    let data = std::io::Cursor::new(data);
+    let image = image::io::Reader::with_format(data, image::ImageFormat::Png)
+        .decode()?;
+    let image = if premultply {
+        premultiply_image(image)
+    } else {
+        image.into_rgba8()
+    };
+    unsafe {
+        let tex = glr::Texture::generate();
+        gl::BindTexture(gl::TEXTURE_2D, tex.id());
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::SRGB8_ALPHA8 as i32,
+            image.width() as i32, image.height() as i32, 0,
+            gl::RGBA, gl::UNSIGNED_BYTE, image.as_ptr() as _);
+        gl::GenerateMipmap(gl::TEXTURE_2D);
+        let ntex = glow::NativeTexture(NonZeroU32::new(tex.into_id()).unwrap());
+        gl::BindTexture(gl::TEXTURE_2D, 0);
+        Ok(ntex)
+    }
+}

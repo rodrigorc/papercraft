@@ -112,7 +112,7 @@ impl Model {
                 }
                 "s" => { /* smoothing is ignored */}
                 p => {
-                    println!("{}??", p);
+                    println!("{p}??");
                 }
             }
         }
@@ -170,7 +170,7 @@ pub fn solve_find_matlib_file(mtl: &Path, obj: &Path) -> Option<PathBuf> {
             return Some(dir);
         }
         // Then without the mtl path
-        dir = obj_dir.clone();
+        dir = obj_dir;
         dir.push(mtl.file_name()?);
         if dir.exists() {
             return Some(dir);
@@ -181,7 +181,7 @@ pub fn solve_find_matlib_file(mtl: &Path, obj: &Path) -> Option<PathBuf> {
             return Some(mtl.to_owned());
         }
         // Then try the same name in a local path
-        let mut dir = obj_dir.clone();
+        let mut dir = obj_dir;
         dir.push(mtl.file_name()?);
         if dir.exists() {
             return Some(dir);
@@ -246,7 +246,7 @@ impl Material {
                     data.map = Some(String::from(map));
                 }
                 p => {
-                    println!("{}??", p);
+                    println!("{p}??");
                 }
            }
         }

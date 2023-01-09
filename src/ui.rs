@@ -1,8 +1,4 @@
-use std::{collections::HashMap, ops::ControlFlow, time::Duration, path::{Path, PathBuf}, cell::Cell};
-use std::rc::Rc;
-use std::cell::RefCell;
-
-use anyhow::{Result, anyhow, Context};
+use std::{collections::HashMap, ops::ControlFlow, path::{Path, PathBuf}};
 use cgmath::{
     prelude::*,
     Deg, Rad,
@@ -11,8 +7,8 @@ use image::DynamicImage;
 
 use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle};
 use crate::util_3d::{self, Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
-use crate::util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
-use crate::glr::{self, Rgba, BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
+use crate::util_gl::{MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
+use crate::glr::{self, Rgba};
 
 // In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
 const TAB_LINE_WIDTH: f32 = 0.2;
@@ -1000,8 +996,8 @@ impl PapercraftContext {
                     return None;
                 }
                 let undo_actions = renames
-                    .iter()
-                    .map(|(_, join_result)| {
+                    .values()
+                    .map(|join_result| {
                         UndoAction::EdgeJoin { join_result: *join_result }
                     })
                     .collect();
@@ -1019,8 +1015,8 @@ impl PapercraftContext {
         }
 
         let undo_actions = renames
-            .iter()
-            .map(|(_, join_result)| {
+            .values()
+            .map(|join_result| {
                 UndoAction::EdgeJoin { join_result: *join_result }
             })
             .collect();

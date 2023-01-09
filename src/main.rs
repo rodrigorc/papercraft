@@ -1,19 +1,19 @@
-#![allow(unused_imports, dead_code)]
+#![allow(dead_code)]
+#![allow(clippy::collapsible_if)]
 
 use std::{num::NonZeroU32, ffi::CString, time::Instant, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
-    Deg, Rad,
+    Deg,
 };
 use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
 use glutin_winit::DisplayBuilder;
 use image::DynamicImage;
-use imgui::WindowFocusedFlags;
 use imgui_winit_support::WinitPlatform;
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-use winit::{event_loop::{EventLoopBuilder, EventLoop}, window::{WindowBuilder, Window}, event::VirtualKeyCode};
+use raw_window_handle::{HasRawWindowHandle};
+use winit::{event_loop::{EventLoopBuilder}, window::{WindowBuilder, Window}, event::VirtualKeyCode};
 
 mod imgui_filedialog;
 mod waveobj;
@@ -26,10 +26,10 @@ mod ui;
 
 use ui::*;
 
-use paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle};
+use paper::{Papercraft, TabStyle};
 use glr::Rgba;
-use util_3d::{Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
-use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
+use util_3d::{Matrix3, Matrix4, Vector2, Vector3};
+use util_gl::{Uniforms2D, Uniforms3D, UniformQuad};
 
 use glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
@@ -136,7 +136,6 @@ fn main() {
             scene_ui_status: Canvas3dStatus::default(),
             paper_ui_status: Canvas3dStatus::default(),
             options_opened: false,
-            mouse_mode: MouseMode::Face,
             file_dialog: None,
             file_action: None,
             error_message: String::new(),
@@ -192,8 +191,8 @@ fn main() {
 
                     drop((_s2, _s1));
                     let mut ctx = ctx.borrow_mut();
-                    let menu_actions = ctx.build_ui(&ui);
-                    ctx.run_menu_actions(&ui, &menu_actions);
+                    let menu_actions = ctx.build_ui(ui);
+                    ctx.run_menu_actions(ui, &menu_actions);
                     ctx.data.pre_render();
                     //ui.show_demo_window(&mut true);
                     let new_title = ctx.title();
@@ -206,7 +205,7 @@ fn main() {
                     }
                 }
 
-                winit_platform.prepare_render(&ui, &gl_window.window);
+                winit_platform.prepare_render(ui, &gl_window.window);
                 let draw_data = imgui_context.render();
 
                 // This is the only extra render step to add
@@ -318,7 +317,6 @@ struct GlobalContext {
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
     options_opened: bool,
-    mouse_mode: MouseMode,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
     error_message: String,
@@ -369,6 +367,7 @@ impl GlobalContext {
             .begin_popup()
         {
             ui.text(&self.error_message);
+
             if ui.button_with_size("OK", [100.0, 0.0])
                 || ui.is_key_pressed(imgui::Key::Enter)
                 || ui.is_key_pressed(imgui::Key::KeyPadEnter)
@@ -955,6 +954,7 @@ impl GlobalContext {
         if menu_actions.reset_views {
             self.data.reset_views(menu_actions.sz_scene, menu_actions.sz_paper);
         }
+
         if menu_actions.undo {
             if self.data.undo_action() {
                 self.add_rebuild(RebuildFlags::ALL);

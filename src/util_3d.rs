@@ -283,9 +283,9 @@ pub fn point_segment_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32
 }
 
 pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
-    let right = width as f32 / 2.0;
+    let right = width / 2.0;
     let left = -right;
-    let top = -height as f32 / 2.0;
+    let top = -height / 2.0;
     let bottom = -top;
     Matrix3::new(
         2.0 / (right - left), 0.0, 0.0,

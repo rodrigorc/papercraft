@@ -53,8 +53,8 @@ fn build_imgui_filedialog() -> Result<()> {
     let igfd_path = "thirdparty/ImGuiFileDialog";
 
     bindgen::Builder::default()
-        .clang_arg(format!("-I{}", dep_imgui_path))
-        .clang_arg(format!("-I{}", igfd_path))
+        .clang_arg(format!("-I{dep_imgui_path}"))
+        .clang_arg(format!("-I{igfd_path}"))
         .allowlist_function("IGFD_.*")
         .allowlist_function("free") // standard libc free to release strings
         .allowlist_type("IGFD_.*")

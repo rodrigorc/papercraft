@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, ffi::OsStr, hash::Hash};
+use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, hash::Hash};
 
 use cgmath::{One, Rad, Zero};
 use slotmap::SlotMap;
@@ -20,7 +20,7 @@ impl Papercraft {
                 let file_name = tex.file_name();
                 zip.start_file(&format!("tex/{file_name}"), options)?;
                 let mut data = Vec::new();
-                let format = image::ImageFormat::from_path(&file_name).unwrap_or(image::ImageFormat::Png);
+                let format = image::ImageFormat::from_path(file_name).unwrap_or(image::ImageFormat::Png);
                 pixbuf.write_to(&mut std::io::Cursor::new(&mut data), format)?;
                 zip.write_all(&data[..])?;
             }
@@ -255,7 +255,7 @@ impl Papercraft {
                     let v = index_v[&vx.pos().indexable()];
                     let t = index_vt[&vx.uv().indexable()];
                     let n = index_vn[&vx.normal().indexable()];
-                    write!(f, " {}/{}/{}", v, t, n)?;
+                    write!(f, " {v}/{t}/{n}")?;
                     next = flat_contour.iter().position(|(x0, _x1)| *x0 == v1);
                 }
                 writeln!(f)?;
@@ -279,12 +279,12 @@ impl Papercraft {
                 let mut full_path_buf;
                 let full_path = if let Some(dir) = dir {
                     full_path_buf = dir.to_owned();
-                    full_path_buf.push(&path);
+                    full_path_buf.push(path);
                     &full_path_buf
                 } else {
                     path
                 };
-                pixbuf.save(&full_path)?;
+                pixbuf.save(full_path)?;
             }
         }
         drop(fm);

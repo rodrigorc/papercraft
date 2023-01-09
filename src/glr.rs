@@ -853,15 +853,15 @@ impl<TGT: BinderFBOTarget> BinderFramebuffer<TGT> {
     pub fn target(&self) -> GLenum {
         TGT::TARGET
     }
-    pub fn bind(rb: &Framebuffer) -> Self {
+    pub fn bind(fb: &Framebuffer) -> Self {
         unsafe {
-            gl::BindFramebuffer(TGT::TARGET, rb.id);
+            gl::BindFramebuffer(TGT::TARGET, fb.id);
         }
         BinderFramebuffer(0, PhantomData)
     }
-    pub fn rebind(&self, rb: &Framebuffer) {
+    pub fn rebind(&self, fb: &Framebuffer) {
         unsafe {
-            gl::BindFramebuffer(TGT::TARGET, rb.id);
+            gl::BindFramebuffer(TGT::TARGET, fb.id);
         }
     }
 }

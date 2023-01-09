@@ -28,7 +28,7 @@ use ui::*;
 
 use paper::{Papercraft, TabStyle};
 use glr::Rgba;
-use util_3d::{Matrix3, Matrix4, Vector2, Vector3};
+use util_3d::{Matrix3, Vector2, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad};
 
 use glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
@@ -36,10 +36,13 @@ use glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 fn main() {
     let event_loop = EventLoopBuilder::new().build();
 
+    // We render to FBOs so we do not need depth, stencil buffers or anything fancy.
     let window_builder = WindowBuilder::new();
     let template = ConfigTemplateBuilder::new()
-        .with_depth_size(16)
-        .with_stencil_size(8);
+        .prefer_hardware_accelerated(Some(true))
+        .with_depth_size(0)
+        .with_stencil_size(0)
+    ;
 
     let display_builder = DisplayBuilder::new()
         .with_window_builder(Some(window_builder));
@@ -48,7 +51,8 @@ fn main() {
         .build(&event_loop, template, |configs| {
             configs
                 .reduce(|cfg1, cfg2| {
-                    if cfg2.num_samples() > cfg1.num_samples() {
+                    let t = |c: &Config| (c.num_samples(), c.depth_size(), c.stencil_size());
+                    if t(&cfg2) < t(&cfg1) {
                         cfg2
                     } else {
                         cfg1
@@ -57,6 +61,7 @@ fn main() {
                 .unwrap()
         })
         .unwrap();
+    //dbg!(gl_config.num_samples(), gl_config.depth_size(), gl_config.stencil_size());
 
     let raw_window_handle = window.as_ref().map(|window| window.raw_window_handle());
     let gl_display = gl_config.display();
@@ -110,7 +115,7 @@ fn main() {
 
     let mut last_frame = Instant::now();
 
-    // Initialize papaercraft status
+    // Initialize papercraft status
     let sz_dummy = Vector2::new(1.0, 1.0);
     let fs = std::fs::File::open("examples/pikachu.craft").unwrap();
     let fs = std::io::BufReader::new(fs);
@@ -132,7 +137,10 @@ fn main() {
             gl_fixs,
             icons_tex,
             data,
-            splitter_pos: 0.0,
+            splitter_pos: 1.0,
+            sz_full: Vector2::new(2.0, 1.0),
+            sz_scene: Vector2::new(1.0, 1.0),
+            sz_paper: Vector2::new(1.0, 1.0),
             scene_ui_status: Canvas3dStatus::default(),
             paper_ui_status: Canvas3dStatus::default(),
             options_opened: false,
@@ -140,6 +148,8 @@ fn main() {
             file_action: None,
             error_message: String::new(),
             popup_frame_start: 0,
+            render_scene_pending: true,
+            render_paper_pending: true,
         })
     });
 
@@ -193,6 +203,14 @@ fn main() {
                     let mut ctx = ctx.borrow_mut();
                     let menu_actions = ctx.build_ui(ui);
                     ctx.run_menu_actions(ui, &menu_actions);
+                    ctx.run_mouse_actions(ui);
+
+                    if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
+                        ctx.render_scene_pending = true;
+                    }
+                    if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
+                        ctx.render_paper_pending = true;
+                    }
                     ctx.data.pre_render();
                     //ui.show_demo_window(&mut true);
                     let new_title = ctx.title();
@@ -213,6 +231,11 @@ fn main() {
                     .render(draw_data)
                     .expect("error rendering imgui");
                 gl_window.surface.swap_buffers(&gl_context).unwrap();
+                {
+                    let mut ctx = ctx.borrow_mut();
+                    ctx.render_scene_pending = false;
+                    ctx.render_paper_pending = false;
+                }
             }
             winit::event::Event::WindowEvent {
                 event: winit::event::WindowEvent::CloseRequested,
@@ -258,13 +281,51 @@ fn build_gl_fixs() -> Result<GLFixedObjects> {
     let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl")).with_context(|| "quad")?;
 
     let vao = glr::VertexArray::generate();
-    let fbo_paper = None; //Some(glr::Framebuffer::generate());
-    let rbo_paper = None; //Some((glr::Renderbuffer::generate(), glr::Renderbuffer::generate()));
+
+    let fbo_scene = glr::Framebuffer::generate();
+    let rbo_scene_color = glr::Renderbuffer::generate();
+    let rbo_scene_depth = glr::Renderbuffer::generate();
+
+    unsafe {
+        let fb_binder = BinderDrawFramebuffer::bind(&fbo_scene);
+
+        let rb_binder = BinderRenderbuffer::bind(&rbo_scene_color);
+        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, 1, 1);
+        gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo_scene_color.id());
+
+        rb_binder.rebind(&rbo_scene_depth);
+        gl::RenderbufferStorage(rb_binder.target(), gl::DEPTH_COMPONENT, 1, 1);
+        gl::FramebufferRenderbuffer(fb_binder.target(), gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, rbo_scene_depth.id());
+    }
+
+    let fbo_paper = glr::Framebuffer::generate();
+    let rbo_paper_color = glr::Renderbuffer::generate();
+    let rbo_paper_stencil = glr::Renderbuffer::generate();
+
+    unsafe {
+        let fb_binder = BinderDrawFramebuffer::bind(&fbo_paper);
+
+        let rb_binder = BinderRenderbuffer::bind(&rbo_paper_color);
+        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, 1,1);
+        gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo_paper_color.id());
+
+        rb_binder.rebind(&rbo_paper_stencil);
+        gl::RenderbufferStorage(rb_binder.target(), gl::STENCIL_INDEX, 1, 1);
+        gl::FramebufferRenderbuffer(fb_binder.target(), gl::STENCIL_ATTACHMENT, gl::RENDERBUFFER, rbo_paper_stencil.id());
+    }
+
 
     Ok(GLFixedObjects {
         vao,
+
+        fbo_scene,
+        rbo_scene_color,
+        rbo_scene_depth,
+
         fbo_paper,
-        rbo_paper,
+        rbo_paper_color,
+        rbo_paper_stencil,
+
         prg_scene_solid,
         prg_scene_line,
         prg_paper_solid,
@@ -275,8 +336,14 @@ fn build_gl_fixs() -> Result<GLFixedObjects> {
 
 struct GLFixedObjects {
     vao: glr::VertexArray,
-    fbo_paper: Option<glr::Framebuffer>,
-    rbo_paper: Option<(glr::Renderbuffer, glr::Renderbuffer)>, //color, stencil
+
+    fbo_scene: glr::Framebuffer,
+    rbo_scene_color: glr::Renderbuffer,
+    rbo_scene_depth: glr::Renderbuffer,
+
+    fbo_paper: glr::Framebuffer,
+    rbo_paper_color: glr::Renderbuffer,
+    rbo_paper_stencil: glr::Renderbuffer,
 
     prg_scene_solid: glr::Program,
     prg_scene_line: glr::Program,
@@ -314,6 +381,9 @@ struct GlobalContext {
     icons_tex: imgui::TextureId,
     data: PapercraftContext,
     splitter_pos: f32,
+    sz_full: Vector2,
+    sz_scene: Vector2,
+    sz_paper: Vector2,
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
     options_opened: bool,
@@ -321,9 +391,11 @@ struct GlobalContext {
     file_action: Option<(FileAction, PathBuf)>,
     error_message: String,
     popup_frame_start: i32,
+    render_scene_pending: bool,
+    render_paper_pending: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct MenuActions {
     open: bool,
     save: bool,
@@ -335,27 +407,6 @@ struct MenuActions {
     quit: bool,
     reset_views: bool,
     undo: bool,
-    sz_scene: Vector2,
-    sz_paper: Vector2,
-}
-
-impl Default for MenuActions {
-    fn default() -> Self {
-        MenuActions {
-            open: false,
-            save: false,
-            save_as: false,
-            import_obj: false,
-            update_obj: false,
-            export_obj: false,
-            generate_pdf: false,
-            quit: false,
-            reset_views: false,
-            undo: false,
-            sz_scene: Vector2::zero(),
-            sz_paper: Vector2::zero(),
-        }
-    }
 }
 
 impl GlobalContext {
@@ -416,7 +467,7 @@ impl GlobalContext {
     }
 
     fn build_ui(&mut self, ui: &imgui::Ui) -> MenuActions {
-        let mut menu_actions = self.build_menu_and_file_dialog(ui);
+        let menu_actions = self.build_menu_and_file_dialog(ui);
 
         const PAD: f32 = 4.0;
         let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([PAD, PAD]));
@@ -445,7 +496,7 @@ impl GlobalContext {
                     color_white,
                 )
             } {
-                self.data.mode = MouseMode::Face;
+                self.set_mouse_mode(MouseMode::Face);
             }
             ui.same_line();
             if unsafe {
@@ -460,7 +511,7 @@ impl GlobalContext {
                     color_white,
                 )
             } {
-                self.data.mode = MouseMode::Edge;
+                self.set_mouse_mode(MouseMode::Edge);
             }
             ui.same_line();
             if unsafe {
@@ -475,7 +526,7 @@ impl GlobalContext {
                     color_white,
                 )
             } {
-                self.data.mode = MouseMode::Tab;
+                self.set_mouse_mode(MouseMode::Tab);
             }
         }
         drop(_s1);
@@ -488,12 +539,16 @@ impl GlobalContext {
 
         let size = Vector2::from(ui.content_region_avail());
 
-        if self.splitter_pos == 0.0 {
-            self.splitter_pos = size.x / 2.0;
+        let sz_full = Vector2::from(ui.content_region_avail());
+        if self.sz_full != sz_full {
+            if self.sz_full.x > 1.0 {
+                self.splitter_pos = self.splitter_pos * sz_full.x / self.sz_full.x;
+            }
+            self.sz_full = sz_full;
         }
 
         self.build_scene(ui, self.splitter_pos);
-        menu_actions.sz_scene = ui.item_rect_size().into();
+        let sz_scene = Vector2::from(ui.item_rect_size());
 
         ui.same_line();
 
@@ -501,7 +556,7 @@ impl GlobalContext {
         if ui.is_item_active() {
             self.splitter_pos += ui.io().mouse_delta[0];
         }
-        self.splitter_pos = self.splitter_pos.clamp(50.0, size.x - 50.0);
+        self.splitter_pos = self.splitter_pos.clamp(50.0, (size.x - 50.0).max(50.0));
         if ui.is_item_hovered() || ui.is_item_active() {
             ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
         }
@@ -509,7 +564,72 @@ impl GlobalContext {
         ui.same_line();
 
         self.build_paper(ui);
-        menu_actions.sz_paper = ui.item_rect_size().into();
+        let sz_paper = Vector2::from(ui.item_rect_size());
+
+        if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
+            self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+            self.sz_scene = sz_scene;
+
+            self.data.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
+            self.data.trans_scene.persp_inv = self.data.trans_scene.persp.invert().unwrap();
+
+            let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
+            unsafe {
+                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
+
+                'no_aa: {
+                    for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
+                        gl::GetError(); //clear error
+                        rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
+                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
+                        rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
+                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::DEPTH_COMPONENT, x, y);
+
+                        if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                            continue;
+                        }
+                        break 'no_aa;
+                    }
+
+                    rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
+                    gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
+                    rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
+                    gl::RenderbufferStorage(rb_binder.target(), gl::DEPTH_COMPONENT, x, y);
+                }
+            }
+        }
+
+        if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
+            self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+            self.sz_paper = sz_paper;
+            let x = sz_paper.x as i32;
+            let y = sz_paper.y as i32;
+            self.data.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
+
+            unsafe {
+                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
+
+                'no_aa: {
+                    for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
+                        gl::GetError(); //clear error
+                        rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
+                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
+                        rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
+                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::STENCIL_INDEX, x, y);
+
+                        if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                            continue;
+                        }
+                        break 'no_aa;
+                    }
+
+                    rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
+                    gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
+                    rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
+                    gl::RenderbufferStorage(rb_binder.target(), gl::STENCIL_INDEX, x, y);
+                }
+            }
+        }
 
         if self.options_opened {
             if let Some(_options) = ui.window("Options##options")
@@ -590,25 +710,26 @@ impl GlobalContext {
                     .shortcut("F5")
                     .build_with_ref(&mut (self.data.mode == MouseMode::Face))
                 {
-                    self.data.mode = MouseMode::Face;
+                    self.set_mouse_mode(MouseMode::Face);
                 }
                 if ui.menu_item_config("Split/Join edge")
                     .shortcut("F6")
                     .build_with_ref(&mut (self.data.mode == MouseMode::Edge))
                 {
-                    self.data.mode = MouseMode::Edge;
+                    self.set_mouse_mode(MouseMode::Edge);
                 }
                 if ui.menu_item_config("Tabs")
                     .shortcut("F7")
                     .build_with_ref(&mut (self.data.mode == MouseMode::Tab))
                 {
-                    self.data.mode = MouseMode::Tab;
+                    self.set_mouse_mode(MouseMode::Tab);
                 }
 
                 ui.separator();
 
                 if ui.menu_item("Reset views") {
                     menu_actions.reset_views = true;
+                    self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
                 if ui.menu_item("Repack pieces") {
                     let undo = self.data.pack_islands();
@@ -655,13 +776,13 @@ impl GlobalContext {
         };
         if !is_popup_open {
             if ui.is_key_index_pressed(VirtualKeyCode::F5 as _) {
-                self.data.mode = MouseMode::Face;
+                self.set_mouse_mode(MouseMode::Face);
             }
             if ui.is_key_index_pressed(VirtualKeyCode::F6 as _) {
-                self.data.mode = MouseMode::Edge;
+                self.set_mouse_mode(MouseMode::Edge);
             }
             if ui.is_key_index_pressed(VirtualKeyCode::F7 as _) {
-                self.data.mode = MouseMode::Tab;
+                self.set_mouse_mode(MouseMode::Tab);
             }
             if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::Z as _) {
                 menu_actions.undo = true;
@@ -682,100 +803,10 @@ impl GlobalContext {
             .border(true)
             .begin()
         {
-            let size = Vector2::from(ui.content_region_avail());
-            if size.x <= 0.0 || size.y <= 0.0 {
-                return;
-            }
             let pos = Vector2::from(ui.cursor_screen_pos());
             let dsp_size = Vector2::from(ui.io().display_size);
-            let ratio = size.x / size.y;
-            let pos_y2 = dsp_size.y - pos.y - size.y;
-            let wnd_x = -1.0 - 2.0 * pos.x / size.x;
-            let wnd_y = -1.0 - 2.0 * pos_y2 / size.y;
-            let wnd_width = 2.0 * dsp_size.x / size.x;
-            let wnd_height = 2.0 * dsp_size.y / size.y;
-
-            let mouse_pos = Vector2::from(ui.io().mouse_pos) - pos;
-            let mut rebuild = RebuildFlags::empty();
-            let mut ev_state = ModifierType::empty();
-            if ui.io().key_shift {
-                ev_state.insert(ModifierType::SHIFT_MASK);
-            }
-            if ui.io().key_ctrl {
-                ev_state.insert(ModifierType::CONTROL_MASK);
-            }
 
             canvas3d(ui, &mut self.scene_ui_status);
-
-            match &self.scene_ui_status.action {
-                Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
-                    let flags = self.data.scene_motion_notify_event(size, mouse_pos, ev_state);
-                    rebuild.insert(flags);
-                    'zoom: {
-                        let dz = match ui.io().mouse_wheel {
-                            x if x < 0.0 => 1.0 / 1.1,
-                            x if x > 0.0 => 1.1,
-                            _ => break 'zoom,
-                        };
-                        self.data.trans_scene.scale *= dz;
-                        self.data.trans_scene.recompute_obj();
-                        rebuild.insert(RebuildFlags::SCENE_REDRAW);
-                    }
-                }
-                Canvas3dAction::Clicked(imgui::MouseButton::Left) => {}
-                Canvas3dAction::Released(imgui::MouseButton::Left) => {
-                    ev_state.insert(ModifierType::BUTTON1_MASK);
-                    let selection = self.data.scene_analyze_click(self.data.mode, size, mouse_pos);
-                    match (self.data.mode, selection) {
-                        (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                            let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
-                                self.data.try_join_strip(i_edge)
-                            } else {
-                                self.data.edge_toggle_cut(i_edge, i_face)
-                            };
-                            if let Some(undo) = undo {
-                                self.data.push_undo_action(undo);
-                            }
-                            rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                        }
-                        (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                            self.data.papercraft.edge_toggle_tab(i_edge);
-                            self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                            rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                        }
-                        (_, ClickResult::Face(f)) => {
-                            let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK));
-                            rebuild.insert(flags);
-                        }
-                        (_, ClickResult::None) => {
-                            let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK));
-                            rebuild.insert(flags);
-                        }
-                        _ => {}
-                    };
-                }
-                Canvas3dAction::Dragging(bt) => {
-                    match bt {
-                        imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
-                        imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
-                        _ => ()
-                    }
-                    let flags = self.data.scene_motion_notify_event(size, mouse_pos, ev_state);
-                    rebuild.insert(flags);
-                }
-                Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
-            }
-            self.add_rebuild(rebuild);
-
-            let mx_ortho = cgmath::ortho(
-                wnd_x, wnd_x + wnd_width,
-                wnd_y, wnd_y + wnd_height,
-                1.0, -1.0
-            );
-            self.data.trans_scene.persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
-            let f = self.data.trans_scene.persp[1][1];
-            self.data.trans_scene.persp[0][0] = f / ratio;
-            self.data.trans_scene.persp_inv = self.data.trans_scene.persp.invert().unwrap();
 
             let draws = ui.get_window_draw_list();
             draws.add_callback({
@@ -784,23 +815,35 @@ impl GlobalContext {
                     let this = this.upgrade().unwrap();
                     let mut this = this.borrow_mut();
 
-                    if pos.y >= dsp_size.y || pos.x >= dsp_size.x {
-                        return;
-                    }
-
                     unsafe {
-                        let _backup = BackupGlConfig::backup();
+                        gl::Disable(gl::SCISSOR_TEST);
 
-                        gl::Scissor(
-                            pos.x as i32,
-                            pos_y2 as i32,
-                            size.x as i32,
-                            size.y as i32,
+                        if this.render_scene_pending {
+                            let _backup = BackupGlConfig::backup();
+                            let _draw_fb_binder = BinderDrawFramebuffer::bind(&this.gl_fixs.fbo_scene);
+                            let _vp = glr::PushViewport::push(0, 0, this.sz_scene.x as i32, this.sz_scene.y as i32);
+                            this.render_scene();
+                        }
+
+                        // blit the FBO to the real FB
+                        let pos_y2 = dsp_size.y - pos.y - this.sz_scene.y;
+                        let x = pos.x as i32;
+                        let y = pos_y2 as i32;
+                        let width = this.sz_scene.x as i32;
+                        let height = this.sz_scene.y as i32;
+
+                        let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
+                        gl::BlitFramebuffer(
+                            0, 0, width, height,
+                            x, y, x + width, y + height,
+                            gl::COLOR_BUFFER_BIT, gl::NEAREST
                         );
-                        this.scene_render(mx_ortho);
+                        gl::Enable(gl::SCISSOR_TEST);
                     }
                 }
             }).build();
+        } else {
+            self.scene_ui_status = Canvas3dStatus::default();
         }
     }
 
@@ -812,120 +855,10 @@ impl GlobalContext {
             .border(true)
             .begin()
         {
-            let size = Vector2::from(ui.content_region_avail());
-            if size.x <= 0.0 || size.y <= 0.0 {
-                return;
-            }
             let pos = Vector2::from(ui.cursor_screen_pos());
             let dsp_size = Vector2::from(ui.io().display_size);
-            //let ratio = size.x / size.y;
-            let pos_y2 = dsp_size.y - pos.y - size.y;
-            let wnd_x = -1.0 - 2.0 * pos.x / size.x;
-            let wnd_y = -1.0 - 2.0 * pos_y2 / size.y;
-            let wnd_width = 2.0 * dsp_size.x / size.x;
-            let wnd_height = 2.0 * dsp_size.y / size.y;
-
-            let mouse_pos = Vector2::from(ui.io().mouse_pos) - pos;
-            let mut rebuild = RebuildFlags::empty();
-            let mut ev_state = ModifierType::empty();
-            if ui.io().key_shift {
-                ev_state.insert(ModifierType::SHIFT_MASK);
-            }
-            if ui.io().key_ctrl {
-                ev_state.insert(ModifierType::CONTROL_MASK);
-            }
 
             canvas3d(ui, &mut self.paper_ui_status);
-
-            match &self.paper_ui_status.action {
-                Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
-                    if self.paper_ui_status.action == Canvas3dAction::Hovering {
-                        self.data.rotation_center = None;
-                        self.data.grabbed_island = false;
-                    }
-
-                    let flags = self.data.paper_motion_notify_event(size, mouse_pos, ev_state);
-                    rebuild.insert(flags);
-
-                    'zoom: {
-                        let dz = match ui.io().mouse_wheel {
-                            x if x < 0.0 => 1.0 / 1.1,
-                            x if x > 0.0 => 1.1,
-                            _ => break 'zoom,
-                        };
-                        let pos = mouse_pos - size / 2.0;
-                        self.data.trans_paper.mx = Matrix3::from_translation(pos) * Matrix3::from_scale(dz) * Matrix3::from_translation(-pos) * self.data.trans_paper.mx;
-                        rebuild.insert(RebuildFlags::PAPER_REDRAW);
-                    }
-                }
-                Canvas3dAction::Clicked(imgui::MouseButton::Left) => {
-                    ev_state.insert(ModifierType::BUTTON1_MASK);
-
-                    let selection = self.data.paper_analyze_click(self.data.mode, size, mouse_pos);
-                    match (self.data.mode, selection) {
-                        (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                            self.data.grabbed_island = false;
-
-                            let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
-                                self.data.try_join_strip(i_edge)
-                            } else {
-                                self.data.edge_toggle_cut(i_edge, i_face)
-                            };
-                            if let Some(undo) = undo {
-                                self.data.push_undo_action(undo);
-                            }
-                            rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                        }
-                        (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                            self.data.papercraft.edge_toggle_tab(i_edge);
-                            self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                            rebuild.insert(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                        }
-                        (_, ClickResult::Face(f)) => {
-                            rebuild.insert(self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK)));
-                            let undo_action = self.data.selected_islands
-                                .iter()
-                                .map(|&i_island| {
-                                    let island = self.data.papercraft.island_by_key(i_island).unwrap();
-                                    UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
-                                })
-                                .collect();
-                            self.data.push_undo_action(undo_action);
-                            self.data.grabbed_island = true;
-                        }
-                        (_, ClickResult::None) => {
-                            rebuild.insert(self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK)));
-                            self.data.grabbed_island = false;
-                        }
-                        _ => {}
-                    }
-                }
-                Canvas3dAction::Dragging(bt) => {
-                    match bt {
-                        imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
-                        imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
-                        _ => ()
-                    }
-                    let flags = self.data.paper_motion_notify_event(size, mouse_pos, ev_state);
-                    rebuild.insert(flags);
-                }
-                Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
-
-            }
-            self.add_rebuild(rebuild);
-
-            let mx_ortho = cgmath::ortho(
-                wnd_x, wnd_x + wnd_width,
-                wnd_y, wnd_y + wnd_height,
-                1.0, -1.0
-            );
-            let mx_ortho = Matrix3::new(
-                mx_ortho[0][0], mx_ortho[0][1], mx_ortho[0][3],
-                mx_ortho[1][0], mx_ortho[1][1], mx_ortho[1][3],
-                mx_ortho[3][0], mx_ortho[3][1], mx_ortho[3][3],
-            );
-
-            self.data.trans_paper.ortho = util_3d::ortho2d(size.x, size.y);
 
             let draws = ui.get_window_draw_list();
             draws.add_callback({
@@ -935,24 +868,40 @@ impl GlobalContext {
                     let mut this = this.borrow_mut();
 
                     unsafe {
-                        let _backup = BackupGlConfig::backup();
+                        gl::Disable(gl::SCISSOR_TEST);
 
-                        gl::Scissor(
-                            pos.x as i32,
-                            pos_y2 as i32,
-                            size.x as i32,
-                            size.y as i32,
+                        if this.render_paper_pending {
+                            let _backup = BackupGlConfig::backup();
+                            let _draw_fb_binder = BinderDrawFramebuffer::bind(&this.gl_fixs.fbo_paper);
+                            let _vp = glr::PushViewport::push(0, 0, this.sz_paper.x as i32, this.sz_paper.y as i32);
+                            this.render_paper();
+                        }
+
+                        // blit the FBO to the real FB
+                        let pos_y2 = dsp_size.y - pos.y - this.sz_paper.y;
+                        let x = pos.x as i32;
+                        let y = pos_y2 as i32;
+                        let width = this.sz_paper.x as i32;
+                        let height = this.sz_paper.y as i32;
+
+                        let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
+                        gl::BlitFramebuffer(
+                            0, 0, width, height,
+                            x, y, x + width, y + height,
+                            gl::COLOR_BUFFER_BIT, gl::NEAREST
                         );
-                        this.paper_render(size, mx_ortho);
+                        gl::Enable(gl::SCISSOR_TEST);
                     }
-            }
+                }
             }).build();
+        } else {
+            self.paper_ui_status = Canvas3dStatus::default();
         }
     }
 
     fn run_menu_actions(&mut self, ui: &imgui::Ui, menu_actions: &MenuActions) {
         if menu_actions.reset_views {
-            self.data.reset_views(menu_actions.sz_scene, menu_actions.sz_paper);
+            self.data.reset_views(self.sz_scene, self.sz_paper);
         }
 
         if menu_actions.undo {
@@ -1077,7 +1026,156 @@ impl GlobalContext {
         self.build_modal_wait_message_and_run_file_action(ui);
     }
 
-    fn scene_render(&mut self, mx_gui: Matrix4) {
+    fn run_mouse_actions(&mut self, ui: &imgui::Ui) {
+        let mut ev_state = ModifierType::empty();
+        if ui.io().key_shift {
+            ev_state.insert(ModifierType::SHIFT_MASK);
+        }
+        if ui.io().key_ctrl {
+            ev_state.insert(ModifierType::CONTROL_MASK);
+        }
+
+        let mouse_pos = self.scene_ui_status.mouse_pos;
+        match &self.scene_ui_status.action {
+            Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
+                let flags = self.data.scene_motion_notify_event(self.sz_scene, mouse_pos, ev_state);
+                self.add_rebuild(flags);
+                'zoom: {
+                    let dz = match ui.io().mouse_wheel {
+                        x if x < 0.0 => 1.0 / 1.1,
+                        x if x > 0.0 => 1.1,
+                        _ => break 'zoom,
+                    };
+                    self.data.trans_scene.scale *= dz;
+                    self.data.trans_scene.recompute_obj();
+                    self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                }
+            }
+            Canvas3dAction::Clicked(imgui::MouseButton::Left) => {}
+            Canvas3dAction::Released(imgui::MouseButton::Left) => {
+                ev_state.insert(ModifierType::BUTTON1_MASK);
+                let selection = self.data.scene_analyze_click(self.data.mode, self.sz_scene, mouse_pos);
+                match (self.data.mode, selection) {
+                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
+                        let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
+                            self.data.try_join_strip(i_edge)
+                        } else {
+                            self.data.edge_toggle_cut(i_edge, i_face)
+                        };
+                        if let Some(undo) = undo {
+                            self.data.push_undo_action(undo);
+                        }
+                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
+                    }
+                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                        self.data.papercraft.edge_toggle_tab(i_edge);
+                        self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
+                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
+                    }
+                    (_, ClickResult::Face(f)) => {
+                        let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK));
+                        self.add_rebuild(flags);
+                    }
+                    (_, ClickResult::None) => {
+                        let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK));
+                        self.add_rebuild(flags);
+                    }
+                    _ => {}
+                };
+            }
+            Canvas3dAction::Dragging(bt) => {
+                match bt {
+                    imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
+                    imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
+                    _ => ()
+                }
+                let flags = self.data.scene_motion_notify_event(self.sz_scene, mouse_pos, ev_state);
+                self.add_rebuild(flags);
+            }
+            Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
+        }
+
+        let mouse_pos = self.paper_ui_status.mouse_pos;
+        match &self.paper_ui_status.action {
+            Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
+                if self.paper_ui_status.action == Canvas3dAction::Hovering {
+                    self.data.rotation_center = None;
+                    self.data.grabbed_island = false;
+                }
+
+                let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
+                self.add_rebuild(flags);
+
+                'zoom: {
+                    let dz = match ui.io().mouse_wheel {
+                        x if x < 0.0 => 1.0 / 1.1,
+                        x if x > 0.0 => 1.1,
+                        _ => break 'zoom,
+                    };
+                    let pos = mouse_pos - self.sz_paper / 2.0;
+                    self.data.trans_paper.mx = Matrix3::from_translation(pos) * Matrix3::from_scale(dz) * Matrix3::from_translation(-pos) * self.data.trans_paper.mx;
+                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                }
+            }
+            Canvas3dAction::Clicked(imgui::MouseButton::Left) => {
+                ev_state.insert(ModifierType::BUTTON1_MASK);
+
+                let selection = self.data.paper_analyze_click(self.data.mode, self.sz_paper, mouse_pos);
+                match (self.data.mode, selection) {
+                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
+                        self.data.grabbed_island = false;
+
+                        let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
+                            self.data.try_join_strip(i_edge)
+                        } else {
+                            self.data.edge_toggle_cut(i_edge, i_face)
+                        };
+                        if let Some(undo) = undo {
+                            self.data.push_undo_action(undo);
+                        }
+                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
+                    }
+                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                        self.data.papercraft.edge_toggle_tab(i_edge);
+                        self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
+                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
+                    }
+                    (_, ClickResult::Face(f)) => {
+                        let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK));
+                        self.add_rebuild(flags);
+                        let undo_action = self.data.selected_islands
+                            .iter()
+                            .map(|&i_island| {
+                                let island = self.data.papercraft.island_by_key(i_island).unwrap();
+                                UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
+                            })
+                            .collect();
+                        self.data.push_undo_action(undo_action);
+                        self.data.grabbed_island = true;
+                    }
+                    (_, ClickResult::None) => {
+                        let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK));
+                        self.add_rebuild(flags);
+                        self.data.grabbed_island = false;
+                    }
+                    _ => {}
+                }
+            }
+            Canvas3dAction::Dragging(bt) => {
+                match bt {
+                    imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
+                    imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
+                    _ => ()
+                }
+                let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
+                self.add_rebuild(flags);
+            }
+            Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
+        }
+
+    }
+
+    fn render_scene(&mut self) {
         let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = &self.gl_fixs;
 
@@ -1085,7 +1183,7 @@ impl GlobalContext {
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
         let mut u = Uniforms3D {
-            m: mx_gui * self.data.trans_scene.persp * self.data.trans_scene.view,
+            m: self.data.trans_scene.persp * self.data.trans_scene.view,
             mnormal: self.data.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
             tex: 0,
@@ -1098,7 +1196,7 @@ impl GlobalContext {
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
             gl::Enable(gl::BLEND);
             gl::Enable(gl::DEPTH_TEST);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             gl::BindVertexArray(gl_fixs.vao.id());
             if let (Some(tex), true) = (&gl_objs.textures, self.data.show_textures) {
@@ -1135,30 +1233,19 @@ impl GlobalContext {
             }
         }
     }
-    fn paper_render(&mut self, size: Vector2, mx_gui: Matrix3) {
+    fn render_paper(&mut self) {
         let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = &self.gl_fixs;
 
         let mut u = Uniforms2D {
-            m: mx_gui * self.data.trans_paper.ortho * self.data.trans_paper.mx,
+            m: self.data.trans_paper.ortho * self.data.trans_paper.mx,
             tex: 0,
             frac_dash: 0.5,
             line_color: Rgba::new(0.0, 0.0, 0.0, 0.0),
             texturize: 0,
         };
 
-        let width = size.x as i32;
-        let height = size.y as i32;
-
         unsafe {
-             let mut draw_fb_binder = if let Some(fbo) = &gl_fixs.fbo_paper {
-                let binder = BinderDrawFramebuffer::new();
-                binder.rebind(fbo);
-                Some(binder)
-            } else {
-                None
-            };
-
             gl::ClearColor(0.7, 0.7, 0.7, 1.0);
             gl::ClearStencil(1);
             gl::StencilMask(0xff);
@@ -1168,7 +1255,7 @@ impl GlobalContext {
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
 
             gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             gl::BindVertexArray(gl_fixs.vao.id());
             if let (Some(tex), true) = (&gl_objs.textures, self.data.show_textures) {
@@ -1229,7 +1316,6 @@ impl GlobalContext {
             gl::Enable(gl::STENCIL_TEST);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::KEEP);
 
-
             if self.data.highlight_overlaps {
                 // Draw the overlapped highlight if "1 < STENCIL"
                 let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.9) };
@@ -1248,25 +1334,17 @@ impl GlobalContext {
             }
 
             gl::Disable(gl::STENCIL_TEST);
-
-            // If there is an FBO, blit to the real FB
-            if draw_fb_binder.take().is_some() { // check and drop
-                let fbo = gl_fixs.fbo_paper.as_ref().unwrap();
-                let _read_fb_binder = BinderReadFramebuffer::bind(fbo);
-                gl::BlitFramebuffer(0, 0, width, height, 0, 0, width, height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-            }
         }
     }
 
     fn add_rebuild(&mut self, flags: RebuildFlags) {
         self.data.rebuild.insert(flags);
-        if flags.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
-            //self.wpaper.queue_render();
-        }
-        if flags.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
-            //self.wscene.queue_render();
-        }
     }
+    fn set_mouse_mode(&mut self, mode: MouseMode) {
+        self.data.mode = mode;
+        self.add_rebuild(RebuildFlags::SELECTION | RebuildFlags::SCENE_REDRAW | RebuildFlags::PAPER_REDRAW);
+    }
+
     fn title(&self) -> String {
         let unsaved = if self.data.modified { "*" } else { "" };
         let app_name = "Papercraft";
@@ -1278,7 +1356,6 @@ impl GlobalContext {
         }
     }
     fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
-        let sz_dummy = Vector2::new(1.0, 1.0);
         match action {
             FileAction::OpenCraft => {
                 let fs = std::fs::File::open(&file_name)
@@ -1286,7 +1363,7 @@ impl GlobalContext {
                 let fs = std::io::BufReader::new(fs);
                 let papercraft = Papercraft::load(fs)
                     .with_context(|| format!("Error loading file {}", file_name.as_ref().display()))?;
-                self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), sz_dummy, sz_dummy);
+                self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), self.sz_scene, self.sz_paper);
             }
             FileAction::SaveAsCraft => {
                 let f = std::fs::File::create(&file_name)
@@ -1298,7 +1375,7 @@ impl GlobalContext {
             FileAction::ImportObj => {
                 let papercraft = Papercraft::import_waveobj(file_name.as_ref())
                     .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
-                self.data = PapercraftContext::from_papercraft(papercraft, None, sz_dummy, sz_dummy);
+                self.data = PapercraftContext::from_papercraft(papercraft, None, self.sz_scene, self.sz_paper);
                 // set the modified flag
                 self.data.push_undo_action(Vec::new());
             }
@@ -1309,7 +1386,7 @@ impl GlobalContext {
                 let tp = self.data.trans_paper.clone();
                 let ts = self.data.trans_scene.clone();
                 let original_file_name = self.data.file_name.clone();
-                self.data = PapercraftContext::from_papercraft(new_papercraft, original_file_name.as_deref(), sz_dummy, sz_dummy);
+                self.data = PapercraftContext::from_papercraft(new_papercraft, original_file_name.as_deref(), self.sz_scene, self.sz_paper);
                 self.data.trans_paper = tp;
                 self.data.trans_scene = ts;
             }
@@ -1544,14 +1621,23 @@ impl Drop for BackupGlConfig {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Canvas3dStatus {
+    mouse_pos: Vector2,
     action: Canvas3dAction,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+impl Default for Canvas3dStatus {
+    fn default() -> Self {
+        Self {
+            mouse_pos: Vector2::zero(),
+            action: Canvas3dAction::None,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum Canvas3dAction {
-    #[default]
     None,
     Hovering,
     Clicked(imgui::MouseButton),
@@ -1566,6 +1652,8 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
         ui.content_region_avail(),
     );
     let hovered = ui.is_item_hovered();
+    let pos = Vector2::from(ui.item_rect_min());
+    let mouse_pos = Vector2::from(ui.io().mouse_pos) - pos;
 
     let action = match &st.action {
         Canvas3dAction::Dragging(bt) => {
@@ -1614,6 +1702,7 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
     };
 
     *st = Canvas3dStatus {
+        mouse_pos,
         action,
     };
 }

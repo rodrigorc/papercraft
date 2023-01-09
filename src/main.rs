@@ -10,6 +10,7 @@ use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
 use glutin_winit::DisplayBuilder;
 use image::DynamicImage;
+use imgui::WindowFocusedFlags;
 use imgui_winit_support::WinitPlatform;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use winit::{event_loop::{EventLoopBuilder, EventLoop}, window::{WindowBuilder, Window}, event::VirtualKeyCode};
@@ -136,7 +137,6 @@ fn main() {
             paper_ui_status: Canvas3dStatus::default(),
             options_opened: false,
             mouse_mode: MouseMode::Face,
-            quit: false,
             file_dialog: None,
             file_action: None,
             error_message: String::new(),
@@ -192,14 +192,16 @@ fn main() {
 
                     drop((_s2, _s1));
                     let mut ctx = ctx.borrow_mut();
-                    ctx.build_ui(&ui);
+                    let menu_actions = ctx.build_ui(&ui);
+                    ctx.run_menu_actions(&ui, &menu_actions);
+                    ctx.data.pre_render();
                     //ui.show_demo_window(&mut true);
                     let new_title = ctx.title();
                     if new_title != old_title {
                         gl_window.window.set_title(&new_title);
                         old_title = new_title;
                     }
-                    if ctx.quit {
+                    if menu_actions.quit {
                         *control_flow = winit::event_loop::ControlFlow::Exit;
                     }
                 }
@@ -317,11 +319,45 @@ struct GlobalContext {
     paper_ui_status: Canvas3dStatus,
     options_opened: bool,
     mouse_mode: MouseMode,
-    quit: bool,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
     error_message: String,
     popup_frame_start: i32,
+}
+
+#[derive(Debug)]
+struct MenuActions {
+    open: bool,
+    save: bool,
+    save_as: bool,
+    import_obj: bool,
+    update_obj: bool,
+    export_obj: bool,
+    generate_pdf: bool,
+    quit: bool,
+    reset_views: bool,
+    undo: bool,
+    sz_scene: Vector2,
+    sz_paper: Vector2,
+}
+
+impl Default for MenuActions {
+    fn default() -> Self {
+        MenuActions {
+            open: false,
+            save: false,
+            save_as: false,
+            import_obj: false,
+            update_obj: false,
+            export_obj: false,
+            generate_pdf: false,
+            quit: false,
+            reset_views: false,
+            undo: false,
+            sz_scene: Vector2::zero(),
+            sz_paper: Vector2::zero(),
+        }
+    }
 }
 
 impl GlobalContext {
@@ -380,8 +416,8 @@ impl GlobalContext {
         ok
     }
 
-    fn build_ui(&mut self, ui: &imgui::Ui) {
-        let reset_views = self.build_menu_and_file_dialog(ui);
+    fn build_ui(&mut self, ui: &imgui::Ui) -> MenuActions {
+        let mut menu_actions = self.build_menu_and_file_dialog(ui);
 
         const PAD: f32 = 4.0;
         let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([PAD, PAD]));
@@ -458,7 +494,7 @@ impl GlobalContext {
         }
 
         self.build_scene(ui, self.splitter_pos);
-        let sz_scene = ui.item_rect_size();
+        menu_actions.sz_scene = ui.item_rect_size().into();
 
         ui.same_line();
 
@@ -474,11 +510,7 @@ impl GlobalContext {
         ui.same_line();
 
         self.build_paper(ui);
-        let sz_paper = ui.item_rect_size();
-
-        if reset_views {
-            self.data.reset_views(sz_scene.into(), sz_paper.into());
-        }
+        menu_actions.sz_paper = ui.item_rect_size().into();
 
         if self.options_opened {
             if let Some(_options) = ui.window("Options##options")
@@ -492,86 +524,62 @@ impl GlobalContext {
                 ui.label_text("", "hola");
             }
         }
+        menu_actions
     }
 
-    fn build_menu_and_file_dialog(&mut self, ui: &imgui::Ui) -> bool {
-        let mut reset_views = false;
-        let mut save_as = false;
-        let mut open_file_dialog = false;
-        let mut open_wait = false;
+    fn build_menu_and_file_dialog(&mut self, ui: &imgui::Ui) -> MenuActions {
+        let mut menu_actions = MenuActions::default();
 
         ui.menu_bar(|| {
             ui.menu("File", || {
                 let title = "Open...";
-                if ui.menu_item(title) {
-                    let mut fd = imgui_filedialog::FileDialog::new();
-                    fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
-                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
-                    self.file_dialog = Some((fd, title, FileAction::OpenCraft));
-                    open_file_dialog = true;
+                if ui.menu_item_config(title)
+                    .shortcut("Ctrl+O")
+                    .build()
+                {
+                    menu_actions.open = true;
                 }
-                if ui.menu_item("Save") {
-                    match &self.data.file_name {
-                        Some(f) => {
-                            self.file_action = Some((FileAction::SaveAsCraft, f.clone()));
-                            open_wait = true;
-                        }
-                        None => save_as = true,
-                    }
+                if ui.menu_item_config("Save")
+                    .shortcut("Ctrl+S")
+                    .build()
+                {
+                    menu_actions.save = true;
                 }
                 let title = "Save as...";
-                if ui.menu_item(title) || save_as {
-                    let mut fd = imgui_filedialog::FileDialog::new();
-                    fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
-                        imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
-                    self.file_dialog = Some((fd, title, FileAction::SaveAsCraft));
-                    open_file_dialog = true;
+                if ui.menu_item(title) {
+                    menu_actions.save_as = true;
                 }
                 let title = "Import OBJ...";
                 if ui.menu_item(title) {
-                    let mut fd = imgui_filedialog::FileDialog::new();
-                    fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
-                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
-                    self.file_dialog = Some((fd, title, FileAction::ImportObj));
-                    open_file_dialog = true;
+                    menu_actions.import_obj = true;
                 }
                 let title = "Update with new OBJ...";
                 if ui.menu_item(title) {
-                    let mut fd = imgui_filedialog::FileDialog::new();
-                    fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
-                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
-                    self.file_dialog = Some((fd, title, FileAction::UpdateObj));
-                    open_file_dialog = true;
+                    menu_actions.update_obj = true;
                 }
                 let title = "Export OBJ...";
                 if ui.menu_item(title) {
-                    let mut fd = imgui_filedialog::FileDialog::new();
-                    fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
-                        imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
-                    self.file_dialog = Some((fd, title, FileAction::ExportObj));
-                    open_file_dialog = true;
+                    menu_actions.export_obj = true;
                 }
                 let title = "Generate PDF...";
                 if ui.menu_item(title) {
-                    let mut fd = imgui_filedialog::FileDialog::new();
-                    fd.open("fd", "", "PDF document (*.pdf) {.pdf},All files {.*}", "", "", 1,
-                        imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
-                    self.file_dialog = Some((fd, title, FileAction::GeneratePdf));
-                    open_file_dialog = true;
+                    menu_actions.generate_pdf = true;
                 }
                 ui.separator();
-                if ui.menu_item("Quit") {
-                    self.quit = true;
+                if ui.menu_item_config("Quit")
+                    .shortcut("Ctrl+Q")
+                    .build()
+                {
+                    menu_actions.quit = true;
                 }
             });
             ui.menu("Edit", || {
                 if ui.menu_item_config("Undo")
+                    .shortcut("Ctrl+Z")
                     .enabled(self.data.can_undo())
                     .build()
                 {
-                    if self.data.undo_action() {
-                        self.add_rebuild(RebuildFlags::ALL);
-                    }
+                    menu_actions.undo = true;
                 }
 
                 ui.menu_item_config("Document properties")
@@ -601,7 +609,7 @@ impl GlobalContext {
                 ui.separator();
 
                 if ui.menu_item("Reset views") {
-                    reset_views = true;
+                    menu_actions.reset_views = true;
                 }
                 if ui.menu_item("Repack pieces") {
                     let undo = self.data.pack_islands();
@@ -643,74 +651,28 @@ impl GlobalContext {
             });
         });
 
-        if ui.is_key_index_pressed(VirtualKeyCode::F5 as _) {
-            self.data.mode = MouseMode::Face;
-        }
-        if ui.is_key_index_pressed(VirtualKeyCode::F6 as _) {
-            self.data.mode = MouseMode::Edge;
-        }
-        if ui.is_key_index_pressed(VirtualKeyCode::F7 as _) {
-            self.data.mode = MouseMode::Tab;
-        }
-
-        if open_file_dialog {
-            ui.open_popup("###file_dialog_modal");
-        }
-        if open_wait {
-            self.popup_frame_start = ui.frame_count();
-            ui.open_popup("###Wait");
-        }
-        if let Some((mut fd, title, action)) = self.file_dialog.take() {
-            let dsp_size = Vector2::from(ui.io().display_size);
-            let min_size: [f32; 2] = (dsp_size * 0.75).into();
-            let max_size: [f32; 2] = dsp_size.into();
-            unsafe {
-                imgui_sys::igSetNextWindowSizeConstraints(
-                    min_size.into(),
-                    max_size.into(),
-                    None,
-                    std::ptr::null_mut(),
-                );
-            };
-            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###file_dialog_modal"))
-                .opened(&mut true)
-                .begin_popup()
-            {
-                let mut finish_file_dialog = false;
-                let size = ui.content_region_avail();
-                if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
-                    if fd2.ok() {
-                        // OK FD
-                        if let Some(file) = fd2.file_path_name() {
-                            self.file_action = Some((action, file.into()));
-                            self.popup_frame_start = ui.frame_count();
-                            ui.open_popup("###Wait");
-                        }
-                    } else {
-                        // Cancel FD
-                        finish_file_dialog = true;
-                        ui.close_current_popup();
-                    }
-                }
-
-                self.build_modal_error_message(ui);
-                if self.build_modal_wait_message_and_run_file_action(ui) {
-                    finish_file_dialog = true;
-                    ui.close_current_popup();
-                }
-
-                if !finish_file_dialog {
-                    // When pressing OK the FD tends to try and close itself, but if the file operation
-                    // fails we want the dialog to keep on
-                    self.file_dialog = Some((fd, title, action));
-                }
+        let is_popup_open = unsafe {
+            imgui_sys::igIsPopupOpen(std::ptr::null(), imgui_sys::ImGuiPopupFlags_AnyPopup as i32)
+        };
+        if !is_popup_open {
+            if ui.is_key_index_pressed(VirtualKeyCode::F5 as _) {
+                self.data.mode = MouseMode::Face;
+            }
+            if ui.is_key_index_pressed(VirtualKeyCode::F6 as _) {
+                self.data.mode = MouseMode::Edge;
+            }
+            if ui.is_key_index_pressed(VirtualKeyCode::F7 as _) {
+                self.data.mode = MouseMode::Tab;
+            }
+            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::Z as _) {
+                menu_actions.undo = true;
+            }
+            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::Q as _) {
+                menu_actions.quit = true;
             }
         }
 
-        self.build_modal_error_message(ui);
-        self.build_modal_wait_message_and_run_file_action(ui);
-
-        reset_views
+        menu_actions
     }
 
     fn build_scene(&mut self, ui: &imgui::Ui, width: f32) {
@@ -816,7 +778,6 @@ impl GlobalContext {
             self.data.trans_scene.persp[0][0] = f / ratio;
             self.data.trans_scene.persp_inv = self.data.trans_scene.persp.invert().unwrap();
 
-            self.data.pre_render();
             let draws = ui.get_window_draw_list();
             draws.add_callback({
                 let this = self.this.clone();
@@ -967,7 +928,6 @@ impl GlobalContext {
 
             self.data.trans_paper.ortho = util_3d::ortho2d(size.x, size.y);
 
-            self.data.pre_render();
             let draws = ui.get_window_draw_list();
             draws.add_callback({
                 let this = self.this.clone();
@@ -989,6 +949,132 @@ impl GlobalContext {
             }
             }).build();
         }
+    }
+
+    fn run_menu_actions(&mut self, ui: &imgui::Ui, menu_actions: &MenuActions) {
+        if menu_actions.reset_views {
+            self.data.reset_views(menu_actions.sz_scene, menu_actions.sz_paper);
+        }
+        if menu_actions.undo {
+            if self.data.undo_action() {
+                self.add_rebuild(RebuildFlags::ALL);
+            }
+        }
+        let mut save_as = false;
+        let mut open_file_dialog = false;
+        let mut open_wait = false;
+
+        if menu_actions.open {
+            let mut fd = imgui_filedialog::FileDialog::new();
+            fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
+                imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+            self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
+            open_file_dialog = true;
+        }
+        if menu_actions.save {
+            match &self.data.file_name {
+                Some(f) => {
+                    self.file_action = Some((FileAction::SaveAsCraft, f.clone()));
+                    open_wait = true;
+                }
+                None => save_as = true,
+            }
+        }
+        if menu_actions.save_as || save_as {
+            let mut fd = imgui_filedialog::FileDialog::new();
+            fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
+                imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
+            self.file_dialog = Some((fd, "Save as...", FileAction::SaveAsCraft));
+            open_file_dialog = true;
+        }
+        if menu_actions.import_obj {
+            let mut fd = imgui_filedialog::FileDialog::new();
+            fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+            self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportObj));
+            open_file_dialog = true;
+        }
+        if menu_actions.update_obj {
+            let mut fd = imgui_filedialog::FileDialog::new();
+            fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+            self.file_dialog = Some((fd, "Update with new OBJ...", FileAction::UpdateObj));
+            open_file_dialog = true;
+        }
+        if menu_actions.export_obj {
+            let mut fd = imgui_filedialog::FileDialog::new();
+            fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
+            self.file_dialog = Some((fd, "Export OBJ...", FileAction::ExportObj));
+            open_file_dialog = true;
+        }
+        if menu_actions.generate_pdf {
+            let mut fd = imgui_filedialog::FileDialog::new();
+            fd.open("fd", "", "PDF document (*.pdf) {.pdf},All files {.*}", "", "", 1,
+                imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
+            self.file_dialog = Some((fd, "Generate PDF...", FileAction::GeneratePdf));
+            open_file_dialog = true;
+        }
+
+        // There are two Wait modals and two Error modals. One pair over the FileDialog, the other to be opened directly ("Save").
+
+        if open_file_dialog {
+            ui.open_popup("###file_dialog_modal");
+        }
+        if open_wait {
+            self.popup_frame_start = ui.frame_count();
+            ui.open_popup("###Wait");
+        }
+
+        if let Some((mut fd, title, action)) = self.file_dialog.take() {
+            let dsp_size = Vector2::from(ui.io().display_size);
+            let min_size: [f32; 2] = (dsp_size * 0.75).into();
+            let max_size: [f32; 2] = dsp_size.into();
+            unsafe {
+                imgui_sys::igSetNextWindowSizeConstraints(
+                    min_size.into(),
+                    max_size.into(),
+                    None,
+                    std::ptr::null_mut(),
+                );
+            };
+            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###file_dialog_modal"))
+                .opened(&mut true)
+                .begin_popup()
+            {
+                let mut finish_file_dialog = false;
+                let size = ui.content_region_avail();
+                if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
+                    if fd2.ok() {
+                        // OK FD
+                        if let Some(file) = fd2.file_path_name() {
+                            self.file_action = Some((action, file.into()));
+                            self.popup_frame_start = ui.frame_count();
+                            ui.open_popup("###Wait");
+                        }
+                    } else {
+                        // Cancel FD
+                        finish_file_dialog = true;
+                        ui.close_current_popup();
+                    }
+                }
+
+                self.build_modal_error_message(ui);
+                if self.build_modal_wait_message_and_run_file_action(ui) {
+                    finish_file_dialog = true;
+                    ui.close_current_popup();
+                }
+
+                if !finish_file_dialog {
+                    // When pressing OK the FD tends to try and close itself, but if the file operation
+                    // fails we want the dialog to keep on
+                    self.file_dialog = Some((fd, title, action));
+                }
+            }
+        }
+
+        self.build_modal_error_message(ui);
+        self.build_modal_wait_message_and_run_file_action(ui);
     }
 
     fn scene_render(&mut self, mx_gui: Matrix4) {

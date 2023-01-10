@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(clippy::collapsible_if)]
 
-use std::{num::NonZeroU32, ffi::CString, time::Instant, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
+use std::{num::NonZeroU32, ffi::CString, time::{Instant, Duration}, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
@@ -13,7 +13,9 @@ use glutin_winit::DisplayBuilder;
 use image::DynamicImage;
 use imgui_winit_support::WinitPlatform;
 use raw_window_handle::{HasRawWindowHandle};
-use winit::{event_loop::{EventLoopBuilder}, window::{WindowBuilder, Window}, event::VirtualKeyCode};
+use winit::{event, event_loop::{EventLoopBuilder}, window::{WindowBuilder, Window}, event::VirtualKeyCode};
+use imgui_glow_renderer::TextureMap;
+
 
 mod imgui_filedialog;
 mod waveobj;
@@ -88,6 +90,8 @@ fn main() {
         .unwrap()
         .make_current(&gl_window.surface)
         .unwrap();
+    // Enable v-sync to avoid consuming too much CPU
+    let _ = gl_window.surface.set_swap_interval(&gl_context, glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
 
     let mut imgui_context = imgui::Context::create();
     imgui_context.set_ini_filename(None);
@@ -110,10 +114,6 @@ fn main() {
     };
     let mut ig_renderer = imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_context)
         .expect("failed to create renderer");
-
-    use imgui_glow_renderer::TextureMap;
-
-    let mut last_frame = Instant::now();
 
     // Initialize papercraft status
     let sz_dummy = Vector2::new(1.0, 1.0);
@@ -147,107 +147,159 @@ fn main() {
             file_dialog: None,
             file_action: None,
             error_message: String::new(),
-            popup_frame_start: 0,
+            popup_time_start: Instant::now(),
             render_scene_pending: true,
             render_paper_pending: true,
         })
     });
-
     imgui_context.io_mut().config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
-    let mut old_title = String::new();
 
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            winit::event::Event::NewEvents(_) => {
-                let now = Instant::now();
-                imgui_context
-                    .io_mut()
-                    .update_delta_time(now.duration_since(last_frame));
-                last_frame = now;
+    //In Linux convert fatal signals to panics to save the crash backup
+    #[cfg(target_os="linux")]
+    {
+        use signal_hook::consts::signal::*;
+        use signal_hook::iterator::SignalsInfo;
+        let event_loop = event_loop.create_proxy();
+        std::thread::spawn(move || {
+            let sigs = vec![SIGHUP, SIGINT, SIGTERM];
+            let mut signals: SignalsInfo = SignalsInfo::new(&sigs).unwrap();
+            for _ in &mut signals {
+                let _ = event_loop.send_event(());
+                break;
             }
-            winit::event::Event::MainEventsCleared => {
-                winit_platform
-                    .prepare_frame(imgui_context.io_mut(), &gl_window.window)
-                    .unwrap();
-                gl_window.window.request_redraw();
-            }
-            winit::event::Event::RedrawEventsCleared => {
-                *control_flow = winit::event_loop::ControlFlow::Poll;
-            }
-            winit::event::Event::RedrawRequested(_) => {
-                // The renderer assumes you'll be clearing the buffer yourself
-                let gl = ig_renderer.gl_context();
-                unsafe {
-                    gl.clear_color(0.0, 0.0, 0.0, 1.0);
-                    gl.clear(glow::COLOR_BUFFER_BIT);
-                };
+        });
+    }
 
-                let ui = imgui_context.frame();
-                {
-                    let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
-                    let _s2 = ui.push_style_var(imgui::StyleVar::WindowRounding(0.0));
-
-                    let _w = ui.window("Papercraft")
-                        .position([0.0, 0.0], imgui::Condition::Always)
-                        .size(ui.io().display_size, imgui::Condition::Always)
-                        .flags(
-                            imgui::WindowFlags::NO_DECORATION |
-                            imgui::WindowFlags::NO_RESIZE |
-                            imgui::WindowFlags::MENU_BAR |
-                            imgui::WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS |
-                            imgui::WindowFlags::NO_NAV
-                        )
-                        .begin();
-
-                    drop((_s2, _s1));
-                    let mut ctx = ctx.borrow_mut();
-                    let menu_actions = ctx.build_ui(ui);
-                    ctx.run_menu_actions(ui, &menu_actions);
-                    ctx.run_mouse_actions(ui);
-
-                    if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
-                        ctx.render_scene_pending = true;
-                    }
-                    if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
-                        ctx.render_paper_pending = true;
-                    }
-                    ctx.data.pre_render();
-                    //ui.show_demo_window(&mut true);
-                    let new_title = ctx.title();
-                    if new_title != old_title {
-                        gl_window.window.set_title(&new_title);
-                        old_title = new_title;
-                    }
-                    if menu_actions.quit {
-                        *control_flow = winit::event_loop::ControlFlow::Exit;
+    // Main loop, if it panics or somewhat crashes, try to save a backup
+    let ctx0 = Rc::clone(&ctx);
+    let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let mut old_title = String::new();
+        let mut last_frame = Instant::now();
+        // The main loop will keep on rendering for 500 ms or 10 frames after the last input,
+        // whatever is longer. The frames are needed in case a file operation takes a lot of time,
+        // we want at least a render just after that.
+        let mut last_input_time = Instant::now();
+        let mut last_input_frame: u32 = 0;
+        event_loop.run(move |event, _, control_flow| {
+            match event {
+                event::Event::NewEvents(_) => {
+                    let now = Instant::now();
+                    imgui_context
+                        .io_mut()
+                        .update_delta_time(now.duration_since(last_frame));
+                    last_frame = now;
+                }
+                event::Event::MainEventsCleared => {
+                    winit_platform
+                        .prepare_frame(imgui_context.io_mut(), &gl_window.window)
+                        .unwrap();
+                    gl_window.window.request_redraw();
+                }
+                event::Event::RedrawEventsCleared => {
+                    let now = Instant::now();
+                    // If the mouse is down, redraw all the time, maybe the user is dragging.
+                    let mouse = unsafe { imgui_sys::igIsAnyMouseDown() };
+                    last_input_frame += 1;
+                    if mouse || now.duration_since(last_input_time) < Duration::from_millis(500) || last_input_frame < 10 {
+                        *control_flow = winit::event_loop::ControlFlow::Poll;
+                    } else {
+                        *control_flow = winit::event_loop::ControlFlow::Wait;
                     }
                 }
+                event::Event::RedrawRequested(_) => {
+                    // The renderer assumes you'll be clearing the buffer yourself
+                    let gl = ig_renderer.gl_context();
+                    unsafe {
+                        gl.clear_color(0.0, 0.0, 0.0, 1.0);
+                        gl.clear(glow::COLOR_BUFFER_BIT);
+                    };
 
-                winit_platform.prepare_render(ui, &gl_window.window);
-                let draw_data = imgui_context.render();
+                    let ui = imgui_context.frame();
+                    {
+                        let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
+                        let _s2 = ui.push_style_var(imgui::StyleVar::WindowRounding(0.0));
 
-                // This is the only extra render step to add
-                ig_renderer
-                    .render(draw_data)
-                    .expect("error rendering imgui");
-                gl_window.surface.swap_buffers(&gl_context).unwrap();
-                {
-                    let mut ctx = ctx.borrow_mut();
-                    ctx.render_scene_pending = false;
-                    ctx.render_paper_pending = false;
+                        let _w = ui.window("Papercraft")
+                            .position([0.0, 0.0], imgui::Condition::Always)
+                            .size(ui.io().display_size, imgui::Condition::Always)
+                            .flags(
+                                imgui::WindowFlags::NO_DECORATION |
+                                imgui::WindowFlags::NO_RESIZE |
+                                imgui::WindowFlags::MENU_BAR |
+                                imgui::WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS |
+                                imgui::WindowFlags::NO_NAV
+                                )
+                            .begin();
+
+                        drop((_s2, _s1));
+                        let mut ctx = ctx.borrow_mut();
+                        let menu_actions = ctx.build_ui(ui);
+                        ctx.run_menu_actions(ui, &menu_actions);
+                        ctx.run_mouse_actions(ui);
+
+                        if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
+                            ctx.render_scene_pending = true;
+                        }
+                        if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
+                            ctx.render_paper_pending = true;
+                        }
+                        ctx.data.pre_render();
+                        //ui.show_demo_window(&mut true);
+                        let new_title = ctx.title();
+                        if new_title != old_title {
+                            gl_window.window.set_title(&new_title);
+                            old_title = new_title;
+                        }
+                        if menu_actions.quit {
+                            *control_flow = winit::event_loop::ControlFlow::Exit;
+                        }
+                    }
+
+                    winit_platform.prepare_render(ui, &gl_window.window);
+                    let draw_data = imgui_context.render();
+
+                    // This is the only extra render step to add
+                    ig_renderer
+                        .render(draw_data)
+                        .expect("error rendering imgui");
+                    gl_window.surface.swap_buffers(&gl_context).unwrap();
+                    {
+                        let mut ctx = ctx.borrow_mut();
+                        ctx.render_scene_pending = false;
+                        ctx.render_paper_pending = false;
+                    }
+                }
+                event::Event::UserEvent(()) | //Signal
+                event::Event::WindowEvent {
+                    event: event::WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    //TODO: option to save before exit
+                    *control_flow = winit::event_loop::ControlFlow::Exit;
+                }
+                event::Event::DeviceEvent { .. } => {
+                    // Ignore deviceevents, they are not used and they wake up the loop needlessly
+                }
+                event => {
+                    last_input_time = Instant::now();
+                    last_input_frame = 0;
+                    winit_platform.handle_event(imgui_context.io_mut(), &gl_window.window, &event);
                 }
             }
-            winit::event::Event::WindowEvent {
-                event: winit::event::WindowEvent::CloseRequested,
-                ..
-            } => {
-                *control_flow = winit::event_loop::ControlFlow::Exit;
-            }
-            event => {
-                winit_platform.handle_event(imgui_context.io_mut(), &gl_window.window, &event);
+        });
+    }));
+    if let Err(e) = maybe_fatal {
+        let ctx = ctx0.borrow();
+        if ctx.data.modified {
+            let mut dir = std::env::temp_dir();
+            dir.push(format!("crashed-{}.craft", std::process::id()));
+            eprintln!("Papercraft panicked! Saving backup at \"{}\"", dir.display());
+            if let Err(e) = ctx.save_as_craft(dir) {
+                eprintln!("backup failed with {e:?}");
             }
         }
-    });
+        std::panic::resume_unwind(e);
+    }
 }
 
 
@@ -390,7 +442,7 @@ struct GlobalContext {
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
     error_message: String,
-    popup_frame_start: i32,
+    popup_time_start: Instant,
     render_scene_pending: bool,
     render_paper_pending: bool,
 }
@@ -434,32 +486,33 @@ impl GlobalContext {
         let mut ok = false;
         if let Some(file_action) = self.file_action.take() {
             let (action, file) = &file_action;
-            // These many frames to give time to the fading modal, should be enough
-            let run = (ui.frame_count().wrapping_sub(self.popup_frame_start)) > 10;
             let title = action.title();
-            if run {
-                match self.run_file_action(*action, file) {
-                    Ok(()) => {
-                        ok = true;
-                    }
-                    Err(e) => {
-                        self.error_message = format!("{e:?}");
-                        ui.open_popup("Error");
-                    }
-                }
-            } else {
-                // keep the action pending, for now.
-                self.file_action = Some(file_action);
-            }
-
+            let mut res = None;
             // Build the modal itself
             if let Some(_pop) = ui.modal_popup_config(&format!("{title}###Wait"))
                 .resizable(false)
                 .begin_popup()
             {
                 ui.text("Please, wait...");
+
+                // Give time to the fading modal, should be enough
+                let run = self.popup_time_start.elapsed() > Duration::from_millis(250);
                 if run {
+                    res = Some(self.run_file_action(*action, file));
                     ui.close_current_popup();
+                }
+            }
+            match res {
+                None => {
+                    // keep the action pending, for now.
+                    self.file_action = Some(file_action);
+                }
+                Some(Ok(())) => {
+                    ok = true;
+                }
+                Some(Err(e)) => {
+                    self.error_message = format!("{e:?}");
+                    ui.open_popup("Error");
                 }
             }
         }
@@ -790,6 +843,12 @@ impl GlobalContext {
             if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::Q as _) {
                 menu_actions.quit = true;
             }
+            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::O as _) {
+                menu_actions.open = true;
+            }
+            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::S as _) {
+                menu_actions.save = true;
+            }
         }
 
         menu_actions
@@ -971,7 +1030,7 @@ impl GlobalContext {
             ui.open_popup("###file_dialog_modal");
         }
         if open_wait {
-            self.popup_frame_start = ui.frame_count();
+            self.popup_time_start = Instant::now();
             ui.open_popup("###Wait");
         }
 
@@ -998,7 +1057,7 @@ impl GlobalContext {
                         // OK FD
                         if let Some(file) = fd2.file_path_name() {
                             self.file_action = Some((action, file.into()));
-                            self.popup_frame_start = ui.frame_count();
+                            self.popup_time_start = Instant::now();
                             ui.open_popup("###Wait");
                         }
                     } else {
@@ -1051,7 +1110,27 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 }
             }
-            Canvas3dAction::Clicked(imgui::MouseButton::Left) => {}
+            Canvas3dAction::DoubleClicked(imgui::MouseButton::Left) => {
+                let selection = self.data.scene_analyze_click(MouseMode::Face,self.sz_scene, mouse_pos);
+                if let ClickResult::Face(i_face) = selection {
+                    let gl_objs = self.data.gl_objs.as_ref().unwrap();
+                    // Compute the average of all the faces flat with the selected one, and move it to the center of the paper.
+                    // Some vertices are counted twice, but they tend to be in diagonally opposed so the compensate, and it is an approximation anyways.
+                    let mut center = Vector2::zero();
+                    let mut n = 0.0;
+                    for i_face in self.data.papercraft.get_flat_faces(i_face) {
+                        let idx = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                        for i in idx .. idx + 3 {
+                            center += gl_objs.paper_vertices[i].pos;
+                            n += 1.0;
+                        }
+                    }
+                    center /= n;
+                    self.data.trans_paper.mx[2][0] = -center.x * self.data.trans_paper.mx[0][0];
+                    self.data.trans_paper.mx[2][1] = -center.y * self.data.trans_paper.mx[1][1];
+                    self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                }
+            }
             Canvas3dAction::Released(imgui::MouseButton::Left) => {
                 ev_state.insert(ModifierType::BUTTON1_MASK);
                 let selection = self.data.scene_analyze_click(self.data.mode, self.sz_scene, mouse_pos);
@@ -1092,7 +1171,7 @@ impl GlobalContext {
                 let flags = self.data.scene_motion_notify_event(self.sz_scene, mouse_pos, ev_state);
                 self.add_rebuild(flags);
             }
-            Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
+            _ => {}
         }
 
         let mouse_pos = self.paper_ui_status.mouse_pos;
@@ -1117,7 +1196,8 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 }
             }
-            Canvas3dAction::Clicked(imgui::MouseButton::Left) => {
+            Canvas3dAction::Clicked(imgui::MouseButton::Left) |
+            Canvas3dAction::DoubleClicked(imgui::MouseButton::Left) => {
                 ev_state.insert(ModifierType::BUTTON1_MASK);
 
                 let selection = self.data.paper_analyze_click(self.data.mode, self.sz_paper, mouse_pos);
@@ -1170,7 +1250,7 @@ impl GlobalContext {
                 let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
                 self.add_rebuild(flags);
             }
-            Canvas3dAction::Clicked(_) | Canvas3dAction::Released(_) | Canvas3dAction::None => {}
+            _ => {}
         }
 
     }
@@ -1357,53 +1437,66 @@ impl GlobalContext {
     }
     fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
         match action {
-            FileAction::OpenCraft => {
-                let fs = std::fs::File::open(&file_name)
-                    .with_context(|| format!("Error opening file {}", file_name.as_ref().display()))?;
-                let fs = std::io::BufReader::new(fs);
-                let papercraft = Papercraft::load(fs)
-                    .with_context(|| format!("Error loading file {}", file_name.as_ref().display()))?;
-                self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), self.sz_scene, self.sz_paper);
-            }
-            FileAction::SaveAsCraft => {
-                let f = std::fs::File::create(&file_name)
-                    .with_context(|| format!("Error creating file {}", file_name.as_ref().display()))?;
-                let f = std::io::BufWriter::new(f);
-                self.data.papercraft.save(f)
-                    .with_context(|| format!("Error saving file {}", file_name.as_ref().display()))?;
-            }
-            FileAction::ImportObj => {
-                let papercraft = Papercraft::import_waveobj(file_name.as_ref())
-                    .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
-                self.data = PapercraftContext::from_papercraft(papercraft, None, self.sz_scene, self.sz_paper);
-                // set the modified flag
-                self.data.push_undo_action(Vec::new());
-            }
-            FileAction::UpdateObj => {
-                let mut new_papercraft = Papercraft::import_waveobj(file_name.as_ref())
-                    .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
-                new_papercraft.update_from_obj(&self.data.papercraft);
-                let tp = self.data.trans_paper.clone();
-                let ts = self.data.trans_scene.clone();
-                let original_file_name = self.data.file_name.clone();
-                self.data = PapercraftContext::from_papercraft(new_papercraft, original_file_name.as_deref(), self.sz_scene, self.sz_paper);
-                self.data.trans_paper = tp;
-                self.data.trans_scene = ts;
-            }
-            FileAction::ExportObj => {
-                self.data.papercraft.export_waveobj(file_name.as_ref())
-                    .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
-            }
-            FileAction::GeneratePdf => {
-                let _backup = BackupGlConfig::backup();
-                self.generate_pdf(file_name.as_ref())
-                    .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
-            }
+            FileAction::OpenCraft => self.open_craft(file_name)?,
+            FileAction::SaveAsCraft => self.save_as_craft(file_name)?,
+            FileAction::ImportObj => self.import_obj(file_name)?,
+            FileAction::UpdateObj => self.update_obj(file_name)?,
+            FileAction::ExportObj => self.export_obj(file_name)?,
+            FileAction::GeneratePdf => self.generate_pdf(file_name)?,
         }
         Ok(())
     }
-
-    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn open_craft(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        let fs = std::fs::File::open(&file_name)
+            .with_context(|| format!("Error opening file {}", file_name.as_ref().display()))?;
+        let fs = std::io::BufReader::new(fs);
+        let papercraft = Papercraft::load(fs)
+            .with_context(|| format!("Error loading file {}", file_name.as_ref().display()))?;
+        self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), self.sz_scene, self.sz_paper);
+        Ok(())
+    }
+    fn save_as_craft(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        let f = std::fs::File::create(&file_name)
+            .with_context(|| format!("Error creating file {}", file_name.as_ref().display()))?;
+        let f = std::io::BufWriter::new(f);
+        self.data.papercraft.save(f)
+            .with_context(|| format!("Error saving file {}", file_name.as_ref().display()))?;
+        Ok(())
+    }
+    fn import_obj(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        let papercraft = Papercraft::import_waveobj(file_name.as_ref())
+            .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
+        self.data = PapercraftContext::from_papercraft(papercraft, None, self.sz_scene, self.sz_paper);
+        // set the modified flag
+        self.data.push_undo_action(Vec::new());
+        Ok(())
+    }
+    fn update_obj(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        let mut new_papercraft = Papercraft::import_waveobj(file_name.as_ref())
+            .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
+        new_papercraft.update_from_obj(&self.data.papercraft);
+        let tp = self.data.trans_paper.clone();
+        let ts = self.data.trans_scene.clone();
+        let original_file_name = self.data.file_name.clone();
+        self.data = PapercraftContext::from_papercraft(new_papercraft, original_file_name.as_deref(), self.sz_scene, self.sz_paper);
+        self.data.trans_paper = tp;
+        self.data.trans_scene = ts;
+        Ok(())
+    }
+    fn export_obj(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        self.data.papercraft.export_waveobj(file_name.as_ref())
+            .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
+        Ok(())
+    }
+    fn generate_pdf(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        unsafe { gl::Disable(gl::SCISSOR_TEST); }
+        let _backup = BackupGlConfig::backup();
+        self.generate_pdf_impl(file_name.as_ref())
+            .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
+        unsafe { gl::Enable(gl::SCISSOR_TEST); }
+        Ok(())
+    }
+    fn generate_pdf_impl(&self, file_name: &Path) -> anyhow::Result<()> {
         let options = self.data.papercraft.options();
         let resolution = options.resolution as f32;
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
@@ -1644,6 +1737,7 @@ enum Canvas3dAction {
     Pressed(imgui::MouseButton),
     Released(imgui::MouseButton),
     Dragging(imgui::MouseButton),
+    DoubleClicked(imgui::MouseButton),
 }
 
 fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
@@ -1665,13 +1759,17 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
                 Canvas3dAction::None
             }
         }
-        Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) | Canvas3dAction::Clicked(_) => {
+        Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) | Canvas3dAction::Clicked(_) | Canvas3dAction::DoubleClicked(_) => {
             if !hovered {
                 Canvas3dAction::None
             } else if ui.is_mouse_dragging(imgui::MouseButton::Left) {
                 Canvas3dAction::Dragging(imgui::MouseButton::Left)
             } else if ui.is_mouse_dragging(imgui::MouseButton::Right) {
                 Canvas3dAction::Dragging(imgui::MouseButton::Right)
+            } else if ui.is_mouse_double_clicked(imgui::MouseButton::Left) {
+                Canvas3dAction::DoubleClicked(imgui::MouseButton::Left)
+            } else if ui.is_mouse_double_clicked(imgui::MouseButton::Right) {
+                Canvas3dAction::DoubleClicked(imgui::MouseButton::Right)
             } else if ui.is_mouse_clicked(imgui::MouseButton::Left) {
                 Canvas3dAction::Clicked(imgui::MouseButton::Left)
             } else if ui.is_mouse_clicked(imgui::MouseButton::Right) {

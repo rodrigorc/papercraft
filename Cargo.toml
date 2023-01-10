@@ -33,6 +33,7 @@ image = { version = "*", default_features = false, features = ["png", "jpeg", "j
 glutin = "*"
 glutin-winit = "*"
 raw-window-handle = "*"
+signal-hook = "*"
 
 [dependencies.imgui]
 version = "*"

@@ -2,6 +2,7 @@
 #![allow(clippy::collapsible_if)]
 
 use std::{num::NonZeroU32, ffi::CString, time::{Instant, Duration}, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
+use std::io::Read;
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
@@ -35,7 +36,25 @@ use util_gl::{Uniforms2D, Uniforms3D, UniformQuad};
 
 use glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+/// Long
+struct Cli {
+    #[arg(value_name = "CRAFT_FILE")]
+    name: Option<PathBuf>,
+
+    #[arg(short, long, value_name = "OBJ_FILE")]
+    import: Option<PathBuf>,
+
+    #[arg(long, help = "Uses Dear ImGui light theme instead of the default dark one")]
+    light: bool,
+}
+
 fn main() {
+    let cli = Cli::parse();
+
     let event_loop = EventLoopBuilder::new().build();
 
     // We render to FBOs so we do not need depth, stencil buffers or anything fancy.
@@ -83,6 +102,7 @@ fn main() {
             })
     });
     let window = window.unwrap();
+    window.set_ime_allowed(true);
     window.set_title("Papercraft");
     let gl_window = GlWindow::new(window, &gl_config);
     let gl_context = not_current_gl_context
@@ -95,6 +115,7 @@ fn main() {
 
     let mut imgui_context = imgui::Context::create();
     imgui_context.set_ini_filename(None);
+
     let mut winit_platform = WinitPlatform::init(&mut imgui_context);
     winit_platform.attach_window(
         imgui_context.io_mut(),
@@ -102,9 +123,20 @@ fn main() {
         imgui_winit_support::HiDpiMode::Rounded,
     );
     //imgui_context.set_clipboard_backend(MyClip);
+
+    let mut ttf = Vec::new();
+    flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
+
     imgui_context
         .fonts()
-        .add_font(&[imgui::FontSource::DefaultFontData { config: None }]);
+        .add_font(&[
+            //imgui::FontSource::DefaultFontData { config: None },
+            imgui::FontSource::TtfData {
+                data: &ttf,
+                size_pixels: 18.0,
+                config: None
+            },
+        ]);
     imgui_context.io_mut().font_global_scale = (1.0 / winit_platform.hidpi_factor()) as f32;
 
     let gl = unsafe {
@@ -117,15 +149,26 @@ fn main() {
 
     // Initialize papercraft status
     let sz_dummy = Vector2::new(1.0, 1.0);
-    let fs = std::fs::File::open("examples/pikachu.craft").unwrap();
-    let fs = std::io::BufReader::new(fs);
-    let papercraft = Papercraft::load(fs).unwrap();
+    let papercraft = Papercraft::empty();
     let data = PapercraftContext::from_papercraft(
         papercraft,
-        Some(&PathBuf::from("test")),
+        None,
         sz_dummy,
         sz_dummy
     );
+
+    if cli.light {
+        unsafe { imgui_sys::igStyleColorsLight(std::ptr::null_mut()); }
+    }
+    let mut cmd_file_action = match cli {
+        Cli { name: Some(name), .. }  => {
+            Some((FileAction::OpenCraft, name))
+        }
+        Cli { import: Some(import), .. }  => {
+            Some((FileAction::ImportObj, import))
+        }
+        _ => { None }
+    };
 
     let icons_tex = load_texture_from_memory(include_bytes!("icons.png"), true).unwrap();
     let icons_tex = ig_renderer.texture_map_mut().register(icons_tex).unwrap();
@@ -146,7 +189,8 @@ fn main() {
             options_opened: false,
             file_dialog: None,
             file_action: None,
-            error_message: String::new(),
+            error_message: None,
+            confirmable_action: None,
             popup_time_start: Instant::now(),
             render_scene_pending: true,
             render_paper_pending: true,
@@ -165,7 +209,6 @@ fn main() {
             let mut signals: SignalsInfo = SignalsInfo::new(&sigs).unwrap();
             for _ in &mut signals {
                 let _ = event_loop.send_event(());
-                break;
             }
         });
     }
@@ -180,6 +223,8 @@ fn main() {
         // we want at least a render just after that.
         let mut last_input_time = Instant::now();
         let mut last_input_frame: u32 = 0;
+        let mut quit_requested = BoolWithConfirm::None;
+
         event_loop.run(move |event, _, control_flow| {
             match event {
                 event::Event::NewEvents(_) => {
@@ -200,7 +245,7 @@ fn main() {
                     // If the mouse is down, redraw all the time, maybe the user is dragging.
                     let mouse = unsafe { imgui_sys::igIsAnyMouseDown() };
                     last_input_frame += 1;
-                    if mouse || now.duration_since(last_input_time) < Duration::from_millis(500) || last_input_frame < 10 {
+                    if mouse || now.duration_since(last_input_time) < Duration::from_millis(1000) || last_input_frame < 60 {
                         *control_flow = winit::event_loop::ControlFlow::Poll;
                     } else {
                         *control_flow = winit::event_loop::ControlFlow::Wait;
@@ -215,6 +260,8 @@ fn main() {
                     };
 
                     let ui = imgui_context.frame();
+                    //ui.show_demo_window(&mut true);
+
                     {
                         let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
                         let _s2 = ui.push_style_var(imgui::StyleVar::WindowRounding(0.0));
@@ -233,6 +280,13 @@ fn main() {
 
                         drop((_s2, _s1));
                         let mut ctx = ctx.borrow_mut();
+
+                        if let Some(cmd_file_action) = cmd_file_action.take() {
+                            ctx.popup_time_start = Instant::now();
+                            ctx.file_action = Some(cmd_file_action);
+                            ui.open_popup("###Wait");
+                        }
+
                         let menu_actions = ctx.build_ui(ui);
                         ctx.run_menu_actions(ui, &menu_actions);
                         ctx.run_mouse_actions(ui);
@@ -244,14 +298,25 @@ fn main() {
                             ctx.render_paper_pending = true;
                         }
                         ctx.data.pre_render();
-                        //ui.show_demo_window(&mut true);
-                        let new_title = ctx.title();
+                        let new_title = ctx.title(true);
                         if new_title != old_title {
                             gl_window.window.set_title(&new_title);
                             old_title = new_title;
                         }
-                        if menu_actions.quit {
-                            *control_flow = winit::event_loop::ControlFlow::Exit;
+
+                        match (quit_requested, menu_actions.quit) {
+                            (_, BoolWithConfirm::Confirmed) | (BoolWithConfirm::Confirmed, _) => {
+                                *control_flow = winit::event_loop::ControlFlow::Exit;
+                            }
+                            (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested) => {
+                                quit_requested = BoolWithConfirm::None;
+                                ctx.open_confirmation_dialog(ui,
+                                    "Quit?",
+                                    "The model has not been save, continue anyway?",
+                                    |a| a.quit = BoolWithConfirm::Confirmed
+                                );
+                            }
+                            (BoolWithConfirm::None, BoolWithConfirm::None) => {}
                         }
                     }
 
@@ -274,8 +339,9 @@ fn main() {
                     event: event::WindowEvent::CloseRequested,
                     ..
                 } => {
-                    //TODO: option to save before exit
-                    *control_flow = winit::event_loop::ControlFlow::Exit;
+                    last_input_time = Instant::now();
+                    last_input_frame = 0;
+                    quit_requested = ctx.borrow().check_modified();
                 }
                 event::Event::DeviceEvent { .. } => {
                     // Ignore deviceevents, they are not used and they wake up the loop needlessly
@@ -441,22 +507,31 @@ struct GlobalContext {
     options_opened: bool,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
-    error_message: String,
+    error_message: Option<String>,
+    confirmable_action: Option<(String, String, Box<dyn Fn(&mut MenuActions)>)>,
     popup_time_start: Instant,
     render_scene_pending: bool,
     render_paper_pending: bool,
 }
 
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+enum BoolWithConfirm {
+    #[default]
+    None,
+    Requested,
+    Confirmed,
+}
+
 #[derive(Debug, Default)]
 struct MenuActions {
-    open: bool,
+    open: BoolWithConfirm,
     save: bool,
     save_as: bool,
-    import_obj: bool,
-    update_obj: bool,
+    import_obj: BoolWithConfirm,
+    update_obj: BoolWithConfirm,
     export_obj: bool,
     generate_pdf: bool,
-    quit: bool,
+    quit: BoolWithConfirm,
     reset_views: bool,
     undo: bool,
 }
@@ -469,7 +544,9 @@ impl GlobalContext {
             .opened(&mut true)
             .begin_popup()
         {
-            ui.text(&self.error_message);
+            ui.text(&self.error_message.as_deref().unwrap_or_default());
+
+            ui.separator();
 
             if ui.button_with_size("OK", [100.0, 0.0])
                 || ui.is_key_pressed(imgui::Key::Enter)
@@ -477,7 +554,45 @@ impl GlobalContext {
             {
                 if !ui.is_window_appearing() {
                     ui.close_current_popup();
+                    self.error_message = None;
                 }
+            }
+        }
+    }
+    fn build_confirm_message(&mut self, ui: &imgui::Ui, menu_actions: &mut MenuActions) {
+        let mut closed = None;
+        if let Some(action) = self.confirmable_action.take() {
+            let (title, message, _) = &action;
+            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###Confirm"))
+                .resizable(false)
+                .always_auto_resize(true)
+                .opened(&mut true)
+                .begin_popup()
+            {
+                ui.text(&message);
+
+                ui.separator();
+
+                if ui.button_with_size("Cancel", [100.0, 0.0]) {
+                    if !ui.is_window_appearing() {
+                        ui.close_current_popup();
+                        closed = Some(false);
+                    }
+                }
+                ui.same_line();
+                if ui.button_with_size("Continue", [100.0, 0.0]) {
+                    if !ui.is_window_appearing() {
+                        ui.close_current_popup();
+                        closed = Some(true);
+                    }
+                }
+            }
+            if let Some(cont) = closed {
+                if cont {
+                    (action.2)(menu_actions);
+                }
+            } else {
+                self.confirmable_action = Some(action);
             }
         }
     }
@@ -511,7 +626,7 @@ impl GlobalContext {
                     ok = true;
                 }
                 Some(Err(e)) => {
-                    self.error_message = format!("{e:?}");
+                    self.error_message = Some(format!("{e:?}"));
                     ui.open_popup("Error");
                 }
             }
@@ -520,11 +635,13 @@ impl GlobalContext {
     }
 
     fn build_ui(&mut self, ui: &imgui::Ui) -> MenuActions {
-        let menu_actions = self.build_menu_and_file_dialog(ui);
+        let mut menu_actions = self.build_menu_and_file_dialog(ui);
 
         const PAD: f32 = 4.0;
-        let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([PAD, PAD]));
-        let _s2 = ui.push_style_var(imgui::StyleVar::ItemSpacing([0.0, 0.0]));
+        let _s = (
+            ui.push_style_var(imgui::StyleVar::WindowPadding([PAD, PAD])),
+            ui.push_style_var(imgui::StyleVar::ItemSpacing([0.0, 0.0])),
+        );
         if let Some(_toolbar) = ui.child_window("toolbar")
             .size([0.0, 48.0 + 2.0 * PAD])
             .always_use_window_padding(true)
@@ -582,107 +699,124 @@ impl GlobalContext {
                 self.set_mouse_mode(MouseMode::Tab);
             }
         }
-        drop(_s1);
-        drop(_s2);
+        drop(_s);
 
-        let _s1 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0]));
-        let _s2 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
-        let _s3 = ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered));
-        let _s4 = ui.push_style_color(imgui::StyleColor::Button, ui.style_color(imgui::StyleColor::ButtonHovered));
+        let _s = (
+            ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0])),
+            ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0])),
+            ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered)),
+            ui.push_style_color(imgui::StyleColor::Button, ui.style_color(imgui::StyleColor::ButtonHovered)),
+        );
 
-        let size = Vector2::from(ui.content_region_avail());
+        if let Some(_main_area) = ui.child_window("main_area")
+            .size([0.0, -ui.frame_height()])
+            .begin() {
+            let sz_full = Vector2::from(ui.content_region_avail());
 
-        let sz_full = Vector2::from(ui.content_region_avail());
-        if self.sz_full != sz_full {
-            if self.sz_full.x > 1.0 {
-                self.splitter_pos = self.splitter_pos * sz_full.x / self.sz_full.x;
+            if self.sz_full != sz_full {
+                if self.sz_full.x > 1.0 {
+                    self.splitter_pos = self.splitter_pos * sz_full.x / self.sz_full.x;
+                }
+                self.sz_full = sz_full;
             }
-            self.sz_full = sz_full;
-        }
 
-        self.build_scene(ui, self.splitter_pos);
-        let sz_scene = Vector2::from(ui.item_rect_size());
+            self.build_scene(ui, self.splitter_pos);
+            let sz_scene = Vector2::from(ui.item_rect_size());
 
-        ui.same_line();
+            ui.same_line();
 
-        ui.button_with_size("##vsplitter", [8.0, -1.0]);
-        if ui.is_item_active() {
-            self.splitter_pos += ui.io().mouse_delta[0];
-        }
-        self.splitter_pos = self.splitter_pos.clamp(50.0, (size.x - 50.0).max(50.0));
-        if ui.is_item_hovered() || ui.is_item_active() {
-            ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
-        }
+            ui.button_with_size("##vsplitter", [8.0, -1.0]);
+            if ui.is_item_active() {
+                self.splitter_pos += ui.io().mouse_delta[0];
+            }
+            self.splitter_pos = self.splitter_pos.clamp(50.0, (sz_full.x - 50.0).max(50.0));
+            if ui.is_item_hovered() || ui.is_item_active() {
+                ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
+            }
 
-        ui.same_line();
+            ui.same_line();
 
-        self.build_paper(ui);
-        let sz_paper = Vector2::from(ui.item_rect_size());
+            self.build_paper(ui);
 
-        if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
-            self.add_rebuild(RebuildFlags::SCENE_REDRAW);
-            self.sz_scene = sz_scene;
 
-            self.data.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
-            self.data.trans_scene.persp_inv = self.data.trans_scene.persp.invert().unwrap();
+            let sz_paper = Vector2::from(ui.item_rect_size());
 
-            let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
-            unsafe {
-                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
+            if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
+                self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                self.sz_scene = sz_scene;
 
-                'no_aa: {
-                    for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
-                        gl::GetError(); //clear error
+                self.data.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
+                self.data.trans_scene.persp_inv = self.data.trans_scene.persp.invert().unwrap();
+
+                let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
+                unsafe {
+                    let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
+
+                    'no_aa: {
+                        for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
+                            gl::GetError(); //clear error
+                            rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
+                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
+                            rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
+                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::DEPTH_COMPONENT, x, y);
+
+                            if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                                continue;
+                            }
+                            break 'no_aa;
+                        }
+
                         rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
+                        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
                         rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::DEPTH_COMPONENT, x, y);
-
-                        if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
-                            continue;
-                        }
-                        break 'no_aa;
+                        gl::RenderbufferStorage(rb_binder.target(), gl::DEPTH_COMPONENT, x, y);
                     }
-
-                    rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                    gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
-                    rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                    gl::RenderbufferStorage(rb_binder.target(), gl::DEPTH_COMPONENT, x, y);
                 }
             }
-        }
 
-        if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
-            self.add_rebuild(RebuildFlags::PAPER_REDRAW);
-            self.sz_paper = sz_paper;
-            let x = sz_paper.x as i32;
-            let y = sz_paper.y as i32;
-            self.data.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
+            if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                self.sz_paper = sz_paper;
+                let x = sz_paper.x as i32;
+                let y = sz_paper.y as i32;
+                self.data.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
 
-            unsafe {
-                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
+                unsafe {
+                    let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
 
-                'no_aa: {
-                    for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
-                        gl::GetError(); //clear error
+                    'no_aa: {
+                        for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
+                            gl::GetError(); //clear error
+                            rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
+                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
+                            rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
+                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::STENCIL_INDEX, x, y);
+
+                            if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                                continue;
+                            }
+                            break 'no_aa;
+                        }
+
                         rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
+                        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
                         rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                        gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::STENCIL_INDEX, x, y);
-
-                        if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
-                            continue;
-                        }
-                        break 'no_aa;
+                        gl::RenderbufferStorage(rb_binder.target(), gl::STENCIL_INDEX, x, y);
                     }
-
-                    rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                    gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
-                    rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                    gl::RenderbufferStorage(rb_binder.target(), gl::STENCIL_INDEX, x, y);
                 }
             }
+
         }
+        drop(_s);
+
+        let pos: [f32; 2] = (Vector2::from(ui.cursor_screen_pos()) + Vector2::new(4.0, 0.0)).into();
+        ui.set_cursor_screen_pos(pos);
+        let status_text = match self.data.mode {
+            MouseMode::Face => "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it.",
+            MouseMode::Edge => "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads.",
+            MouseMode::Tab => "Tab mode. Click on an edge to swap the side of a tab.",
+        };
+        ui.text(status_text);
 
         if self.options_opened {
             if let Some(_options) = ui.window("Options##options")
@@ -693,12 +827,24 @@ impl GlobalContext {
                 .begin()
             {
                 //TODO
-                ui.label_text("", "hola");
+                ui.text("hola");
             }
         }
+
+        self.build_modal_error_message(ui);
+        self.build_modal_wait_message_and_run_file_action(ui);
+        self.build_confirm_message(ui, &mut menu_actions);
+
         menu_actions
     }
 
+    fn check_modified(&self) -> BoolWithConfirm {
+        if self.data.modified {
+            BoolWithConfirm::Requested
+        } else {
+            BoolWithConfirm::Confirmed
+        }
+    }
     fn build_menu_and_file_dialog(&mut self, ui: &imgui::Ui) -> MenuActions {
         let mut menu_actions = MenuActions::default();
 
@@ -709,7 +855,7 @@ impl GlobalContext {
                     .shortcut("Ctrl+O")
                     .build()
                 {
-                    menu_actions.open = true;
+                    menu_actions.open = self.check_modified();
                 }
                 if ui.menu_item_config("Save")
                     .shortcut("Ctrl+S")
@@ -723,11 +869,11 @@ impl GlobalContext {
                 }
                 let title = "Import OBJ...";
                 if ui.menu_item(title) {
-                    menu_actions.import_obj = true;
+                    menu_actions.import_obj = self.check_modified();
                 }
                 let title = "Update with new OBJ...";
                 if ui.menu_item(title) {
-                    menu_actions.update_obj = true;
+                    menu_actions.update_obj = self.check_modified();
                 }
                 let title = "Export OBJ...";
                 if ui.menu_item(title) {
@@ -742,7 +888,7 @@ impl GlobalContext {
                     .shortcut("Ctrl+Q")
                     .build()
                 {
-                    menu_actions.quit = true;
+                    menu_actions.quit = self.check_modified();
                 }
             });
             ui.menu("Edit", || {
@@ -841,10 +987,10 @@ impl GlobalContext {
                 menu_actions.undo = true;
             }
             if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::Q as _) {
-                menu_actions.quit = true;
+                menu_actions.quit = self.check_modified();
             }
             if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::O as _) {
-                menu_actions.open = true;
+                menu_actions.open = self.check_modified();
             }
             if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::S as _) {
                 menu_actions.save = true;
@@ -958,6 +1104,15 @@ impl GlobalContext {
         }
     }
 
+    fn open_confirmation_dialog(&mut self, ui: &imgui::Ui, title: &str, message: &str, f: impl Fn(&mut MenuActions) + 'static) {
+        self.confirmable_action = Some((
+            String::from(title),
+            String::from(message),
+            Box::new(f),
+        ));
+        ui.open_popup("###Confirm");
+    }
+
     fn run_menu_actions(&mut self, ui: &imgui::Ui, menu_actions: &MenuActions) {
         if menu_actions.reset_views {
             self.data.reset_views(self.sz_scene, self.sz_paper);
@@ -972,12 +1127,22 @@ impl GlobalContext {
         let mut open_file_dialog = false;
         let mut open_wait = false;
 
-        if menu_actions.open {
-            let mut fd = imgui_filedialog::FileDialog::new();
-            fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
-                imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
-            self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
-            open_file_dialog = true;
+        match menu_actions.open {
+            BoolWithConfirm::Requested => {
+                self.open_confirmation_dialog(ui,
+                    "Load model",
+                    "The model has not been save, continue anyway?",
+                    |a| a.open = BoolWithConfirm::Confirmed
+                );
+            }
+            BoolWithConfirm::Confirmed => {
+                let mut fd = imgui_filedialog::FileDialog::new();
+                fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
+                    imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+                self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
+                open_file_dialog = true;
+            }
+            BoolWithConfirm::None => {}
         }
         if menu_actions.save {
             match &self.data.file_name {
@@ -995,19 +1160,39 @@ impl GlobalContext {
             self.file_dialog = Some((fd, "Save as...", FileAction::SaveAsCraft));
             open_file_dialog = true;
         }
-        if menu_actions.import_obj {
-            let mut fd = imgui_filedialog::FileDialog::new();
-            fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
-                imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
-            self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportObj));
-            open_file_dialog = true;
+        match menu_actions.import_obj {
+            BoolWithConfirm::Requested => {
+                self.open_confirmation_dialog(ui,
+                    "Import model",
+                    "The model has not been save, continue anyway?",
+                    |a| a.import_obj = BoolWithConfirm::Confirmed
+                );
+            }
+            BoolWithConfirm::Confirmed => {
+                let mut fd = imgui_filedialog::FileDialog::new();
+                fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                    imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+                self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportObj));
+                open_file_dialog = true;
+            }
+            BoolWithConfirm::None => {}
         }
-        if menu_actions.update_obj {
-            let mut fd = imgui_filedialog::FileDialog::new();
-            fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
-                imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
-            self.file_dialog = Some((fd, "Update with new OBJ...", FileAction::UpdateObj));
-            open_file_dialog = true;
+        match menu_actions.update_obj {
+            BoolWithConfirm::Requested => {
+                self.open_confirmation_dialog(ui,
+                    "Update model",
+                    "This model is not saved and this operation cannot be undone.\nContinue anyway?",
+                    |a| a.update_obj = BoolWithConfirm::Confirmed
+                );
+            }
+            BoolWithConfirm::Confirmed => {
+                let mut fd = imgui_filedialog::FileDialog::new();
+                fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                    imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+                self.file_dialog = Some((fd, "Update with new OBJ...", FileAction::UpdateObj));
+                open_file_dialog = true;
+            }
+            BoolWithConfirm::None => {}
         }
         if menu_actions.export_obj {
             let mut fd = imgui_filedialog::FileDialog::new();
@@ -1080,9 +1265,6 @@ impl GlobalContext {
                 }
             }
         }
-
-        self.build_modal_error_message(ui);
-        self.build_modal_wait_message_and_run_file_action(ui);
     }
 
     fn run_mouse_actions(&mut self, ui: &imgui::Ui) {
@@ -1179,7 +1361,7 @@ impl GlobalContext {
             Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
                 if self.paper_ui_status.action == Canvas3dAction::Hovering {
                     self.data.rotation_center = None;
-                    self.data.grabbed_island = false;
+                    self.data.grabbed_island = None;
                 }
 
                 let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
@@ -1203,7 +1385,7 @@ impl GlobalContext {
                 let selection = self.data.paper_analyze_click(self.data.mode, self.sz_paper, mouse_pos);
                 match (self.data.mode, selection) {
                     (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                        self.data.grabbed_island = false;
+                        self.data.grabbed_island = None;
 
                         let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
                             self.data.try_join_strip(i_edge)
@@ -1223,20 +1405,19 @@ impl GlobalContext {
                     (_, ClickResult::Face(f)) => {
                         let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK));
                         self.add_rebuild(flags);
-                        let undo_action = self.data.selected_islands
+                        let undo_action: Vec<_> = self.data.selected_islands
                             .iter()
                             .map(|&i_island| {
                                 let island = self.data.papercraft.island_by_key(i_island).unwrap();
                                 UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
                             })
                             .collect();
-                        self.data.push_undo_action(undo_action);
-                        self.data.grabbed_island = true;
+                        self.data.grabbed_island.get_or_insert_with(Vec::new).extend(undo_action);
                     }
                     (_, ClickResult::None) => {
                         let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK));
                         self.add_rebuild(flags);
-                        self.data.grabbed_island = false;
+                        self.data.grabbed_island = None;
                     }
                     _ => {}
                 }
@@ -1249,6 +1430,28 @@ impl GlobalContext {
                 }
                 let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
                 self.add_rebuild(flags);
+
+                //Scroll timer, if rotating the piece do not do the scroll, it will not go well.
+                'scroll: {
+                    if !ev_state.contains(ModifierType::SHIFT_MASK) && self.data.grabbed_island.is_some() {
+                        let delta = if mouse_pos.x < 5.0 {
+                            Vector2::new((-mouse_pos.x).max(5.0).min(25.0), 0.0)
+                        } else if mouse_pos.x > self.sz_paper.x - 5.0 {
+                            Vector2::new(-(mouse_pos.x - self.sz_paper.x).max(5.0).min(25.0), 0.0)
+                        } else if mouse_pos.y < 5.0 {
+                            Vector2::new(0.0, (-mouse_pos.y).max(5.0).min(25.0))
+                        } else if mouse_pos.y > self.sz_paper.y - 5.0 {
+                            Vector2::new(0.0, -(mouse_pos.y - self.sz_paper.y).max(5.0).min(25.0))
+                        } else {
+                            break 'scroll;
+                        };
+                        let delta = delta / 2.0;
+                        self.data.last_cursor_pos += delta;
+                        self.data.trans_paper.mx = Matrix3::from_translation(delta) * self.data.trans_paper.mx;
+                        let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
+                        self.add_rebuild(flags | RebuildFlags::PAPER_REDRAW);
+                    }
+                }
             }
             _ => {}
         }
@@ -1425,22 +1628,43 @@ impl GlobalContext {
         self.add_rebuild(RebuildFlags::SELECTION | RebuildFlags::SCENE_REDRAW | RebuildFlags::PAPER_REDRAW);
     }
 
-    fn title(&self) -> String {
-        let unsaved = if self.data.modified { "*" } else { "" };
+    fn title(&self, with_unsaved_check: bool) -> String {
+        let unsaved = if with_unsaved_check && self.data.modified { "*" } else { "" };
         let app_name = "Papercraft";
         match &self.data.file_name {
-            Some(f) =>
-                format!("{unsaved}{} - {app_name}", f.display()),
-            None =>
-                format!("{unsaved} - {app_name}"),
+            Some(f) => {
+                let name = if let Some(name) = f.file_name() {
+                    name.to_string_lossy()
+                } else {
+                    f.as_os_str().to_string_lossy()
+                };
+                format!("{unsaved}{name} - {app_name}")
+            }
+            None => {
+                if unsaved.is_empty() {
+                    app_name.to_owned()
+                } else {
+                    format!("{unsaved} - {app_name}")
+                }
+            }
         }
     }
     fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
         match action {
             FileAction::OpenCraft => self.open_craft(file_name)?,
-            FileAction::SaveAsCraft => self.save_as_craft(file_name)?,
-            FileAction::ImportObj => self.import_obj(file_name)?,
-            FileAction::UpdateObj => self.update_obj(file_name)?,
+            FileAction::SaveAsCraft => {
+                self.save_as_craft(&file_name)?;
+                self.data.modified = false;
+                self.data.file_name = Some(file_name.as_ref().to_owned());
+            }
+            FileAction::ImportObj => {
+                self.import_obj(file_name)?;
+                self.data.modified = true;
+            }
+            FileAction::UpdateObj => {
+                self.update_obj(file_name)?;
+                self.data.modified = true;
+            }
             FileAction::ExportObj => self.export_obj(file_name)?,
             FileAction::GeneratePdf => self.generate_pdf(file_name)?,
         }
@@ -1467,8 +1691,6 @@ impl GlobalContext {
         let papercraft = Papercraft::import_waveobj(file_name.as_ref())
             .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
         self.data = PapercraftContext::from_papercraft(papercraft, None, self.sz_scene, self.sz_paper);
-        // set the modified flag
-        self.data.push_undo_action(Vec::new());
         Ok(())
     }
     fn update_obj(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
@@ -1510,10 +1732,7 @@ impl GlobalContext {
             .with_context(|| anyhow!("Unable to create output pixbuf"))?;
         let stride = pixbuf.stride();
         let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
-        let title = match &self.data.file_name {
-            Some(f) => f.file_stem().map(|s| s.to_string_lossy()).unwrap_or_else(|| "".into()),
-            None => "untitled".into()
-        };
+        let title  = self.title(false);
         let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
         let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
         let cr = cairo::Context::new(&pdf)?;

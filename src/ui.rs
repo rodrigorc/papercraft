@@ -64,7 +64,6 @@ bitflags::bitflags! {
     pub struct ModifierType: u32 {
         const BUTTON1_MASK = 0x0001;
         const BUTTON2_MASK = 0x0002;
-        const BUTTON3_MASK = 0x0004;
         const SHIFT_MASK = 0x0008;
         const CONTROL_MASK = 0x0010;
     }
@@ -101,7 +100,8 @@ pub struct PapercraftContext {
     pub selected_face: Option<FaceIndex>,
     pub selected_edge: Option<EdgeIndex>,
     pub selected_islands: Vec<IslandKey>,
-    pub grabbed_island: bool,
+    // Contains the UndoActions if these islands are to be moved, the actual grabbed islands are selected_islands
+    pub grabbed_island: Option<Vec<UndoAction>>,
 
     pub last_cursor_pos: Vector2,
     pub rotation_center: Option<Vector2>,
@@ -261,7 +261,7 @@ impl PapercraftContext {
             selected_face: None,
             selected_edge: None,
             selected_islands: Vec::new(),
-            grabbed_island: false,
+            grabbed_island: None,
             last_cursor_pos: Vector2::zero(),
             rotation_center: None,
             mode: MouseMode::Face,
@@ -1197,7 +1197,7 @@ impl PapercraftContext {
             self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
             self.trans_scene.recompute_obj();
             RebuildFlags::SCENE_REDRAW
-        } else if ev_state.contains(ModifierType::BUTTON2_MASK) || ev_state.contains(ModifierType::BUTTON3_MASK) {
+        } else if ev_state.contains(ModifierType::BUTTON2_MASK) {
             // Translate
             let delta = delta / 50.0;
             self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
@@ -1213,15 +1213,18 @@ impl PapercraftContext {
     pub fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: ModifierType) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
-        if ev_state.contains(ModifierType::BUTTON2_MASK) || ev_state.contains(ModifierType::BUTTON3_MASK) {
+        if ev_state.contains(ModifierType::BUTTON2_MASK) {
             // Translate
             self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
             RebuildFlags::PAPER_REDRAW
-        } else if ev_state.contains(ModifierType::BUTTON1_MASK) && self.grabbed_island {
+        } else if ev_state.contains(ModifierType::BUTTON1_MASK) && self.grabbed_island.is_some() {
             // Move island
             if !self.selected_islands.is_empty() {
-                let rotating = ev_state.contains(ModifierType::SHIFT_MASK);
+                // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
+                let undo = std::mem::take(self.grabbed_island.as_mut().unwrap());
+                self.push_undo_action(undo);
 
+                let rotating = ev_state.contains(ModifierType::SHIFT_MASK);
                 if !rotating {
                     if let Some(c) = &mut self.rotation_center {
                         *c += delta;
@@ -1286,7 +1289,7 @@ impl PapercraftContext {
     }
     pub fn undo_action(&mut self) -> bool {
         //Do not undo while grabbing or the stack will be messed up
-        if self.grabbed_island {
+        if self.grabbed_island.is_some() {
             return false;
         }
 
@@ -1329,9 +1332,10 @@ impl PapercraftContext {
         true
     }
     pub fn push_undo_action(&mut self, action: Vec<UndoAction>) {
-        if !action.is_empty() {
-            self.undo_stack.push(action);
+        if action.is_empty() {
+            return;
         }
+        self.undo_stack.push(action);
         self.modified = true;
     }
 }

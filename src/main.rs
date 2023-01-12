@@ -29,7 +29,7 @@ mod ui;
 
 use ui::*;
 
-use paper::{Papercraft, TabStyle};
+use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad};
@@ -186,7 +186,8 @@ fn main() {
             sz_paper: Vector2::new(1.0, 1.0),
             scene_ui_status: Canvas3dStatus::default(),
             paper_ui_status: Canvas3dStatus::default(),
-            options_opened: false,
+            options_opened: None,
+            option_button_height: 0.0,
             file_dialog: None,
             file_action: None,
             error_message: None,
@@ -260,7 +261,7 @@ fn main() {
                     };
 
                     let ui = imgui_context.frame();
-                    //ui.show_demo_window(&mut true);
+                    ui.show_demo_window(&mut true);
 
                     {
                         let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
@@ -504,7 +505,8 @@ struct GlobalContext {
     sz_paper: Vector2,
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
-    options_opened: bool,
+    options_opened: Option<PaperOptions>,
+    option_button_height: f32,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
     error_message: Option<String>,
@@ -818,24 +820,240 @@ impl GlobalContext {
         };
         ui.text(status_text);
 
-        if self.options_opened {
-            if let Some(_options) = ui.window("Options##options")
-                //.size([300.0, 300.0], imgui::Condition::Once)
-                .resizable(false)
-                .movable(true)
-                .opened(&mut self.options_opened)
-                .begin()
-            {
-                //TODO
-                ui.text("hola");
-            }
-        }
-
+        self.build_options_dialog(ui);
         self.build_modal_error_message(ui);
         self.build_modal_wait_message_and_run_file_action(ui);
         self.build_confirm_message(ui, &mut menu_actions);
 
         menu_actions
+    }
+
+    fn build_options_dialog(&mut self, ui: &imgui::Ui) {
+        let options = match self.options_opened.as_mut() {
+            Some(o) => o,
+            None => return,
+        };
+        let mut options_opened = true;
+        if let Some(_options) = ui.window("Document properties##options")
+            .size([600.0, 400.0], imgui::Condition::Once)
+            .resizable(true)
+            .scroll_bar(false)
+            .movable(true)
+            .opened(&mut options_opened)
+            .begin()
+        {
+            let size = Vector2::from(ui.content_region_avail());
+            if let Some(_ops) = ui.child_window("options")
+                .size([size.x, -self.option_button_height])
+                .horizontal_scrollbar(true)
+                .begin()
+            {
+                if ui.collapsing_header("Model", imgui::TreeNodeFlags::empty()) {
+                    ui.set_next_item_width(100.0);
+                    ui.input_float("Scale", &mut options.scale).display_format("%g").build();
+                    ui.same_line_with_spacing(0.0, 50.0);
+                    ui.checkbox("Textured", &mut options.texture);
+
+                    if let Some(_t) = ui.tree_node_config("Tabs")
+                        //.flags(imgui::TreeNodeFlags::DEFAULT_OPEN)
+                        .push()
+                    {
+                        static TAB_STYLES: &[TabStyle] = &[
+                            TabStyle::Textured,
+                            TabStyle::HalfTextured,
+                            TabStyle::White,
+                            TabStyle::None,
+                        ];
+                        fn fmt_tab_style(s: TabStyle) -> &'static str {
+                            match s {
+                                TabStyle::Textured => "Textured",
+                                TabStyle::HalfTextured => "Half textured",
+                                TabStyle::White => "White",
+                                TabStyle::None => "None",
+                            }
+                        }
+                        let mut i_tab_style = TAB_STYLES.iter().position(|s| *s == options.tab_style).unwrap_or(0);
+                        ui.set_next_item_width(150.0);
+                        if ui.combo("Style", &mut i_tab_style, TAB_STYLES, |s| fmt_tab_style(*s).into()) {
+                            options.tab_style = TAB_STYLES[i_tab_style];
+                        }
+                        ui.same_line_with_spacing(0.0, 25.0);
+                        ui.set_next_item_width(100.0);
+                        ui.input_float("Width", &mut options.tab_width).display_format("%g").build();
+
+                        ui.same_line_with_spacing(0.0, 25.0);
+                        ui.set_next_item_width(100.0);
+                        ui.input_float("Angle", &mut options.tab_angle).display_format("%g").build();
+                    }
+                    if let Some(_t) = ui.tree_node("Folds") {
+                        static FOLD_STYLES: &[FoldStyle] = &[
+                            FoldStyle::Full,
+                            FoldStyle::FullAndOut,
+                            FoldStyle::Out,
+                            FoldStyle::In,
+                            FoldStyle::InAndOut,
+                            FoldStyle::None,
+                        ];
+                        fn fmt_fold_style(s: FoldStyle) -> &'static str {
+                            match s {
+                                FoldStyle::Full => "Full line",
+                                FoldStyle::FullAndOut => "Full & out segment",
+                                FoldStyle::Out => "Out segment",
+                                FoldStyle::In => "In segment",
+                                FoldStyle::InAndOut => "Out & in segment",
+                                FoldStyle::None => "None",
+                            }
+                        }
+                        let mut i_fold_style = FOLD_STYLES.iter().position(|s| *s == options.fold_style).unwrap_or(0);
+                        ui.set_next_item_width(150.0);
+                        if ui.combo("Style", &mut i_fold_style, FOLD_STYLES, |s| fmt_fold_style(*s).into()) {
+                            options.fold_style = FOLD_STYLES[i_fold_style];
+                        }
+                        ui.same_line_with_spacing(0.0, 25.0);
+                        ui.set_next_item_width(100.0);
+                        ui.input_float("Length", &mut options.fold_line_len).display_format("%g").build();
+                        ui.same_line_with_spacing(0.0, 25.0);
+                        ui.set_next_item_width(100.0);
+                        ui.input_float("Line width", &mut options.fold_line_width).display_format("%g").build();
+                    }
+                    if let Some(_t) = ui.tree_node("Information") {
+                        let n_pieces = self.data.papercraft.num_islands();
+                        let n_tabs = self.data.papercraft.model().edges()
+                            .filter(|(e, _)| matches!(self.data.papercraft.edge_status(*e), paper::EdgeStatus::Cut(_)))
+                            .count();
+                        let bbox = util_3d::bounding_box_3d(
+                            self.data.papercraft.model()
+                            .vertices()
+                            .map(|(_, v)| v.pos())
+                            );
+                        let model_size = (bbox.1 - bbox.0) * options.scale;
+                        let Vector3 { x, y, z } = model_size;
+                        ui.text(&format!("Number of pieces: {n_pieces}\nNumber of tabs: {n_tabs}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
+                    }
+                }
+                if ui.collapsing_header("Page layout", imgui::TreeNodeFlags::empty()) {
+                    ui.set_next_item_width(100.0);
+
+                    let mut i = options.pages as _;
+                    ui.input_int("Pages", &mut i).build();
+                    options.pages = i.clamp(1, 1000) as _;
+
+                    ui.same_line_with_spacing(0.0, 25.0);
+                    ui.set_next_item_width(100.0);
+
+                    let mut i = options.page_cols as _;
+                    ui.input_int("Columns", &mut i).build();
+                    options.page_cols = i.clamp(1, options.pages as _) as _;
+
+                    ui.set_next_item_width(200.0);
+                    ui.checkbox("Print Papercraft signature", &mut options.show_self_promotion);
+
+                    ui.same_line_with_spacing(0.0, 50.0);
+                    ui.set_next_item_width(200.0);
+                    ui.checkbox("Print page number", &mut options.show_page_number);
+                }
+                if ui.collapsing_header("Paper size", imgui::TreeNodeFlags::empty()) {
+                    ui.set_next_item_width(100.0);
+                    ui.input_float("Width", &mut options.page_size.0).display_format("%g").build();
+                    ui.same_line_with_spacing(0.0, 25.0);
+                    ui.set_next_item_width(100.0);
+                    ui.input_float("Height", &mut options.page_size.1).display_format("%g").build();
+                    ui.same_line_with_spacing(0.0, 25.0);
+                    ui.set_next_item_width(100.0);
+                    let mut resolution = options.resolution as f32;
+                    ui.input_float("DPI", &mut resolution).display_format("%g").build();
+                    options.resolution = resolution as u32;
+
+                    struct PaperSize {
+                        name: &'static str,
+                        size: Vector2,
+                    }
+                    static PAPER_SIZES: &[PaperSize] = &[
+                        PaperSize {
+                            name: "A4",
+                            size: Vector2::new(210.0, 297.0),
+
+                        },
+                        PaperSize {
+                            name: "A3",
+                            size: Vector2::new(297.0, 420.0),
+                        },
+                        PaperSize {
+                            name: "Letter",
+                            size: Vector2::new(215.9, 279.4),
+                        },
+                        PaperSize {
+                            name: "Legal",
+                            size: Vector2::new(215.9, 355.6),
+                        },
+                    ];
+
+                    let paper_size = Vector2::from(options.page_size);
+                    let mut i_paper_size = PAPER_SIZES.iter().position(|s| s.size == paper_size || s.size == Vector2::new(paper_size.y, paper_size.x)).unwrap_or(usize::MAX);
+                    ui.set_next_item_width(150.0);
+                    if ui.combo("##", &mut i_paper_size, PAPER_SIZES, |t| t.name.into()) {
+                        let portrait = options.page_size.1 >= options.page_size.0;
+                        options.page_size = PAPER_SIZES[i_paper_size].size.into();
+                        if !portrait {
+                            std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
+                        }
+                    }
+                    let mut portrait = options.page_size.1 >= options.page_size.0;
+                    let old_portrait = portrait;
+                    ui.radio_button("Portrait", &mut portrait, true);
+                    ui.radio_button("Landscape", &mut portrait, false);
+                    if portrait != old_portrait {
+                        std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
+                    }
+                }
+                if ui.collapsing_header("Margins", imgui::TreeNodeFlags::empty()) {
+                    ui.set_next_item_width(75.0);
+                    ui.input_float("Top", &mut options.margin.0).display_format("%g").build();
+                    ui.same_line_with_spacing(0.0, 25.0);
+                    ui.set_next_item_width(75.0);
+                    ui.input_float("Left", &mut options.margin.1).display_format("%g").build();
+                    ui.same_line_with_spacing(0.0, 25.0);
+                    ui.set_next_item_width(75.0);
+                    ui.input_float("Right", &mut options.margin.2).display_format("%g").build();
+                    ui.same_line_with_spacing(0.0, 25.0);
+                    ui.set_next_item_width(75.0);
+                    ui.input_float("Bottom", &mut options.margin.3).display_format("%g").build();
+                }
+            }
+
+
+            let mut apply_options = None;
+            let pos1 = Vector2::from(ui.cursor_screen_pos());
+            ui.separator();
+            if ui.button_with_size("OK", [100.0, 0.0]) {
+                apply_options = self.options_opened.take();
+            }
+            ui.same_line();
+            if ui.button_with_size("Cancel", [100.0, 0.0]) {
+                self.options_opened = None;
+            }
+            ui.same_line();
+            if ui.button_with_size("Apply", [100.0, 0.0]) {
+                apply_options = self.options_opened.clone();
+            }
+            // Compute the height of the buttons to avoid having an external scrollbar
+            let pos2 = Vector2::from(ui.cursor_screen_pos());
+            self.option_button_height = pos2.y - pos1.y;
+
+            if let Some(options) = apply_options {
+                let island_pos = self.data.papercraft.islands()
+                    .map(|(_, island)| (island.root_face(), (island.rotation(), island.location())))
+                    .collect();
+                self.data.show_textures = options.texture;
+                let old_options = self.data.papercraft.set_options(options);
+                self.data.push_undo_action(vec![UndoAction::DocConfig { options: old_options, island_pos }]);
+                self.add_rebuild(RebuildFlags::ALL);
+            }
+        }
+        // If the windows was closed
+        if !options_opened {
+            self.options_opened = None;
+        }
     }
 
     fn check_modified(&self) -> BoolWithConfirm {
@@ -900,8 +1118,16 @@ impl GlobalContext {
                     menu_actions.undo = true;
                 }
 
-                ui.menu_item_config("Document properties")
-                    .build_with_ref(&mut self.options_opened);
+                ui.separator();
+
+                if ui.menu_item_config("Document properties")
+                    .build_with_ref(&mut self.options_opened.is_some())
+                {
+                    self.options_opened = match self.options_opened {
+                        Some(_) => None,
+                        None => Some(self.data.papercraft.options().clone()),
+                    }
+                }
 
                 ui.separator();
 
@@ -938,6 +1164,7 @@ impl GlobalContext {
             });
             ui.menu("View", || {
                 if ui.menu_item_config("Textures")
+                    .enabled(self.data.papercraft.options().texture)
                     .build_with_ref(&mut self.data.show_textures)
                 {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
@@ -1119,8 +1346,17 @@ impl GlobalContext {
         }
 
         if menu_actions.undo {
-            if self.data.undo_action() {
-                self.add_rebuild(RebuildFlags::ALL);
+            match self.data.undo_action() {
+                UndoResult::Model => {
+                    self.add_rebuild(RebuildFlags::ALL);
+                }
+                UndoResult::ModelAndOptions => {
+                    if let Some(o) = self.options_opened.as_mut() {
+                        *o = self.data.papercraft.options().clone();
+                    }
+                    self.add_rebuild(RebuildFlags::ALL);
+                }
+                UndoResult::False => {},
             }
         }
         let mut save_as = false;

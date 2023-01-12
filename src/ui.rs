@@ -210,6 +210,13 @@ impl PaperDrawFaceArgs {
     }
 }
 
+// Might be bitflags
+pub enum UndoResult {
+    False,
+    Model,
+    ModelAndOptions,
+}
+
 impl PapercraftContext {
     fn default_transformations(obj: Matrix4, sz_scene: Vector2, sz_paper: Vector2, ops: &PaperOptions) -> (Transformation3D, TransformationPaper) {
         let page = Vector2::from(ops.page_size);
@@ -250,6 +257,7 @@ impl PapercraftContext {
         let obj = mscale * mcenter;
 
         let (trans_scene, trans_paper) = Self::default_transformations(obj, sz_scene, sz_paper, papercraft.options());
+        let show_textures = papercraft.options().texture;
 
         PapercraftContext {
             file_name: file_name.map(|f| f.to_owned()),
@@ -265,7 +273,7 @@ impl PapercraftContext {
             last_cursor_pos: Vector2::zero(),
             rotation_center: None,
             mode: MouseMode::Face,
-            show_textures: true,
+            show_textures,
             show_tabs: true,
             show_3d_lines: true,
             xray_selection: true,
@@ -1287,16 +1295,18 @@ impl PapercraftContext {
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
-    pub fn undo_action(&mut self) -> bool {
+    pub fn undo_action(&mut self) -> UndoResult {
         //Do not undo while grabbing or the stack will be messed up
         if self.grabbed_island.is_some() {
-            return false;
+            return UndoResult::False;
         }
 
         let action_pack = match self.undo_stack.pop() {
-            None => return false,
+            None => return UndoResult::False,
             Some(a) => a,
         };
+
+        let mut res = UndoResult::Model;
 
         for action in action_pack.into_iter().rev() {
             match action {
@@ -1326,10 +1336,11 @@ impl PapercraftContext {
                         let island = self.papercraft.island_by_key_mut(i_island).unwrap();
                         island.reset_transformation(i_root_face, rot, loc);
                     }
+                    res = UndoResult::ModelAndOptions;
                 }
             }
         }
-        true
+        res
     }
     pub fn push_undo_action(&mut self, action: Vec<UndoAction>) {
         if action.is_empty() {

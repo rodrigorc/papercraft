@@ -606,6 +606,9 @@ impl GlobalContext {
             let title = action.title();
             let mut res = None;
             // Build the modal itself
+            unsafe {
+                imgui_sys::igSetNextWindowSize([150.0, 0.0].into(), imgui::Condition::Once as _);
+            }
             if let Some(_pop) = ui.modal_popup_config(&format!("{title}###Wait"))
                 .resizable(false)
                 .begin_popup()
@@ -1749,6 +1752,7 @@ impl GlobalContext {
             frac_dash: 0.5,
             line_color: Rgba::new(0.0, 0.0, 0.0, 0.0),
             texturize: 0,
+            notex_color: Rgba::new(0.75, 0.75, 0.75, 1.0),
         };
 
         unsafe {
@@ -2055,6 +2059,7 @@ impl GlobalContext {
                     frac_dash: 0.5,
                     line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                     texturize,
+                    notex_color: Rgba::new(1.0, 1.0, 1.0, 1.0),
                 };
                 // Line Tabs
                 if tab_style != TabStyle::None {

@@ -21,6 +21,7 @@ void main(void) {
 #version 140
 
 uniform bool texturize;
+uniform vec4 notex_color;
 uniform sampler2DArray tex;
 
 in vec3 v_uv;
@@ -32,7 +33,7 @@ void main(void) {
     if (texturize) {
         c = texture(tex, v_uv);
     } else {
-        c = vec4(1.0, 1.0, 1.0, 1.0);
+        c = notex_color;
     }
     out_frag_color = mix(c, vec4(v_color.rgb, 1.0), v_color.a);
 }

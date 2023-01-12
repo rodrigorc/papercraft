@@ -21,6 +21,7 @@ crate::uniform! {
         pub frac_dash: f32,
         pub line_color: Rgba,
         pub texturize: i32,
+        pub notex_color: Rgba,
     }
     pub struct UniformQuad {
         pub color: Rgba,

@@ -261,7 +261,7 @@ fn main() {
                     };
 
                     let ui = imgui_context.frame();
-                    ui.show_demo_window(&mut true);
+                    //ui.show_demo_window(&mut true);
 
                     {
                         let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
@@ -1450,11 +1450,6 @@ impl GlobalContext {
         if open_file_dialog {
             ui.open_popup("###file_dialog_modal");
         }
-        if open_wait {
-            self.popup_time_start = Instant::now();
-            ui.open_popup("###Wait");
-        }
-
         if let Some((mut fd, title, action)) = self.file_dialog.take() {
             let dsp_size = Vector2::from(ui.io().display_size);
             let min_size: [f32; 2] = (dsp_size * 0.75).into();
@@ -1475,31 +1470,23 @@ impl GlobalContext {
                 let size = ui.content_region_avail();
                 if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
                     if fd2.ok() {
-                        // OK FD
                         if let Some(file) = fd2.file_path_name() {
                             self.file_action = Some((action, file.into()));
-                            self.popup_time_start = Instant::now();
-                            ui.open_popup("###Wait");
+                            open_wait = true;
                         }
-                    } else {
-                        // Cancel FD
-                        finish_file_dialog = true;
-                        ui.close_current_popup();
                     }
-                }
-
-                self.build_modal_error_message(ui);
-                if self.build_modal_wait_message_and_run_file_action(ui) {
                     finish_file_dialog = true;
                     ui.close_current_popup();
                 }
-
                 if !finish_file_dialog {
-                    // When pressing OK the FD tends to try and close itself, but if the file operation
-                    // fails we want the dialog to keep on
                     self.file_dialog = Some((fd, title, action));
                 }
             }
+        }
+
+        if open_wait {
+            self.popup_time_start = Instant::now();
+            ui.open_popup("###Wait");
         }
     }
 

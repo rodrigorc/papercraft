@@ -13,7 +13,7 @@ use glutin_winit::DisplayBuilder;
 use image::DynamicImage;
 use imgui_winit_support::WinitPlatform;
 use raw_window_handle::{HasRawWindowHandle};
-use winit::{event, event_loop::{EventLoopBuilder}, window::{WindowBuilder, Window}, event::VirtualKeyCode};
+use winit::{event, event_loop::EventLoopBuilder, window::{WindowBuilder, Window}};
 use imgui_glow_renderer::TextureMap;
 
 
@@ -584,7 +584,7 @@ impl GlobalContext {
 
             if ui.button_with_size("OK", [ui.current_font_size() * 5.5, 0.0])
                 || ui.is_key_pressed(imgui::Key::Enter)
-                || ui.is_key_pressed(imgui::Key::KeyPadEnter)
+                || ui.is_key_pressed(imgui::Key::KeypadEnter)
             {
                 if !ui.is_window_appearing() {
                     ui.close_current_popup();
@@ -722,8 +722,9 @@ impl GlobalContext {
             ui.push_style_var(imgui::StyleVar::WindowPadding([pad, pad])),
             ui.push_style_var(imgui::StyleVar::ItemSpacing([0.0, 0.0])),
         );
+        let btn_sz = ui.current_font_size() * 3.0;
         if let Some(_toolbar) = ui.child_window("toolbar")
-            .size([0.0, ui.current_font_size() * 3.0 + 2.0 * pad])
+            .size([0.0, btn_sz + 3.5 * pad]) //There should be a better way...
             .always_use_window_padding(true)
             .border(false)
             .begin()
@@ -731,53 +732,33 @@ impl GlobalContext {
             let _s3 = ui.push_style_var(imgui::StyleVar::ItemSpacing([ui.current_font_size() / 8.0, 0.0]));
             //The texture image is 128x128 pixels, but each image is 48x48
             let n = 48.0 / 128.0;
-            let btn_sz = ui.current_font_size() * 3.0;
             let color_active = ui.style_color(imgui::StyleColor::ButtonActive);
-            let color_white = [1.0, 1.0, 1.0, 1.0].into();
             let color_trans = [0.0, 0.0, 0.0, 0.0];
 
-            if unsafe {
-                let _t1 = ui.push_id("Face");
-                imgui_sys::igImageButton(
-                    self.icons_tex.id() as _,
-                    [btn_sz, btn_sz].into(),
-                    [0.0, 0.0].into(),
-                    [n, n].into(),
-                    0,
-                    (if self.data.mode == MouseMode::Face { color_active } else { color_trans }).into(),
-                    color_white,
-                )
-            } {
+            if ui.image_button_config("Face", self.icons_tex, [btn_sz, btn_sz])
+                .uv0([0.0, 0.0])
+                .uv1([n, n])
+                .background_col(if self.data.mode == MouseMode::Face { color_active } else { color_trans })
+                .build()
+            {
                 self.set_mouse_mode(MouseMode::Face);
             }
             ui.same_line();
-            if unsafe {
-                let _t1 = ui.push_id("Edge");
-                imgui_sys::igImageButton(
-                    self.icons_tex.id() as _,
-                    [btn_sz, btn_sz].into(),
-                    [n, 0.0].into(),
-                    [2.0*n, n].into(),
-                    0,
-                    (if self.data.mode == MouseMode::Edge { color_active } else { color_trans }).into(),
-                    color_white,
-                )
-            } {
+            if ui.image_button_config("Edge", self.icons_tex, [btn_sz, btn_sz])
+                .uv0([n, 0.0])
+                .uv1([2.0*n, n])
+                .background_col(if self.data.mode == MouseMode::Edge { color_active } else { color_trans })
+                .build()
+            {
                 self.set_mouse_mode(MouseMode::Edge);
             }
             ui.same_line();
-            if unsafe {
-                let _t1 = ui.push_id("Tab");
-                imgui_sys::igImageButton(
-                    self.icons_tex.id() as _,
-                    [btn_sz, btn_sz].into(),
-                    [0.0, n].into(),
-                    [n, 2.0*n].into(),
-                    0,
-                    (if self.data.mode == MouseMode::Tab { color_active } else { color_trans }).into(),
-                    color_white,
-                )
-            } {
+            if ui.image_button_config("Tab", self.icons_tex, [btn_sz, btn_sz])
+                .uv0([0.0, n])
+                .uv1([n, 2.0*n])
+                .background_col(if self.data.mode == MouseMode::Tab { color_active } else { color_trans })
+                .build()
+            {
                 self.set_mouse_mode(MouseMode::Tab);
             }
         }
@@ -1283,25 +1264,25 @@ impl GlobalContext {
             imgui_sys::igIsPopupOpen(std::ptr::null(), imgui_sys::ImGuiPopupFlags_AnyPopup as i32)
         };
         if !is_popup_open {
-            if ui.is_key_index_pressed(VirtualKeyCode::F5 as _) {
+            if ui.is_key_pressed(imgui::Key::F5) {
                 self.set_mouse_mode(MouseMode::Face);
             }
-            if ui.is_key_index_pressed(VirtualKeyCode::F6 as _) {
+            if ui.is_key_pressed(imgui::Key::F6) {
                 self.set_mouse_mode(MouseMode::Edge);
             }
-            if ui.is_key_index_pressed(VirtualKeyCode::F7 as _) {
+            if ui.is_key_pressed(imgui::Key::F7) {
                 self.set_mouse_mode(MouseMode::Tab);
             }
-            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::Z as _) {
+            if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::Z) {
                 menu_actions.undo = true;
             }
-            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::Q as _) {
+            if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::Q) {
                 menu_actions.quit = self.check_modified();
             }
-            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::O as _) {
+            if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::O) {
                 menu_actions.open = self.check_modified();
             }
-            if ui.io().key_ctrl && ui.is_key_index_pressed(VirtualKeyCode::S as _) {
+            if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::S) {
                 menu_actions.save = true;
             }
         }

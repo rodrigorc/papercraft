@@ -64,6 +64,5 @@ version = "*"
 version = "0.11"
 
 [patch.crates-io.glow]
-#path = "thirdparty/glow"
 git = "https://github.com/grovesNL/glow"
 rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"

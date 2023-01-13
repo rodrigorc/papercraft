@@ -27,6 +27,10 @@ mod ui;
 
 use ui::*;
 
+static LOGO_PNG: &'static [u8] = include_bytes!("papercraft.png");
+static KARLA_TTF_Z: &'static [u8] = include_bytes!("Karla-Regular.ttf.z");
+static ICONS_PNG: &'static [u8] = include_bytes!("icons.png");
+
 use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
@@ -83,6 +87,8 @@ fn main() {
     //dbg!(gl_config.num_samples(), gl_config.depth_size(), gl_config.stencil_size());
     let window = window.unwrap();
     window.set_title("Papercraft");
+    let icon = load_icon_from_memory(LOGO_PNG).unwrap();
+    window.set_window_icon(Some(icon));
     window.set_ime_allowed(true);
     let raw_window_handle = Some(window.raw_window_handle());
     let gl_display = gl_config.display();
@@ -122,7 +128,7 @@ fn main() {
     //imgui_context.set_clipboard_backend(MyClip);
 
     let mut ttf = Vec::new();
-    flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
+    flate2::read::ZlibDecoder::new(KARLA_TTF_Z).read_to_end(&mut ttf).unwrap();
 
     let hidpi_factor = winit_platform.hidpi_factor() as f32;
     let fonts = imgui_context.fonts();
@@ -185,8 +191,11 @@ fn main() {
         _ => { None }
     };
 
-    let icons_tex = load_texture_from_memory(include_bytes!("icons.png"), true).unwrap();
+    let (icons_tex, _) = load_texture_from_memory(ICONS_PNG, true).unwrap();
     let icons_tex = ig_renderer.texture_map_mut().register(icons_tex).unwrap();
+
+    let (logo_tex, logo_size) = load_texture_from_memory(LOGO_PNG, true).unwrap();
+    let logo_tex = ig_renderer.texture_map_mut().register(logo_tex).unwrap();
 
     let gl_fixs = build_gl_fixs().unwrap();
     let ctx = Rc::new_cyclic(|this| {
@@ -194,7 +203,7 @@ fn main() {
             this: this.clone(),
             gl_fixs,
             _font_default, font_big, font_small,
-            icons_tex,
+            icons_tex, logo_tex, logo_size,
             data,
             splitter_pos: 1.0,
             sz_full: Vector2::new(2.0, 1.0),
@@ -518,6 +527,8 @@ struct GlobalContext {
     font_big: imgui::FontId,
     font_small: imgui::FontId,
     icons_tex: imgui::TextureId,
+    logo_tex: imgui::TextureId,
+    logo_size: Vector2,
     data: PapercraftContext,
     splitter_pos: f32,
     sz_full: Vector2,
@@ -631,6 +642,12 @@ impl GlobalContext {
             .begin()
         {
             let sz_full = Vector2::from(ui.content_region_avail());
+            let f = ui.current_font_size();
+            let logo_height = f * 8.0;
+            let logo_width = self.logo_size.x * logo_height / self.logo_size.y;
+            advance_cursor_pixels(ui, (sz_full.x - logo_width) / 2.0, 0.0);
+            imgui::Image::new(self.logo_tex, [logo_width, logo_height])
+                .build(ui);
             let _s = ui.push_font(self.font_big);
             center_text(ui, "Papercraft", sz_full.x);
             drop(_s);
@@ -2332,11 +2349,11 @@ fn premultiply_image(img: DynamicImage) -> image::RgbaImage {
     img
 }
 
-fn load_texture_from_memory(data: &[u8], premultply: bool) -> Result<glow::NativeTexture> {
+fn load_texture_from_memory(data: &[u8], premultiply: bool) -> Result<(glow::NativeTexture, Vector2)> {
     let data = std::io::Cursor::new(data);
     let image = image::io::Reader::with_format(data, image::ImageFormat::Png)
         .decode()?;
-    let image = if premultply {
+    let image = if premultiply {
         premultiply_image(image)
     } else {
         image.into_rgba8()
@@ -2354,8 +2371,19 @@ fn load_texture_from_memory(data: &[u8], premultply: bool) -> Result<glow::Nativ
         gl::GenerateMipmap(gl::TEXTURE_2D);
         let ntex = glow::NativeTexture(NonZeroU32::new(tex.into_id()).unwrap());
         gl::BindTexture(gl::TEXTURE_2D, 0);
-        Ok(ntex)
+        Ok((ntex, Vector2::new(image.width() as f32, image.height() as f32)))
     }
+}
+
+fn load_icon_from_memory(data: &[u8]) -> Result<winit::window::Icon> {
+    let data = std::io::Cursor::new(data);
+    let image = image::io::Reader::with_format(data, image::ImageFormat::Png)
+        .decode()?;
+    let image = image.into_rgba8();
+    let w = image.width();
+    let h = image.height();
+    let icon = winit::window::Icon::from_rgba(image.into_vec(), w, h)?;
+    Ok(icon)
 }
 
 fn scale_size(s: Vector2, v: Vector2) -> Vector2 {
@@ -2364,9 +2392,12 @@ fn scale_size(s: Vector2, v: Vector2) -> Vector2 {
 
 fn advance_cursor(ui: &imgui::Ui, x: f32, y: f32) { 
     let f = ui.current_font_size();
+    advance_cursor_pixels(ui, f * x, f * y);
+}
+fn advance_cursor_pixels(ui: &imgui::Ui, x: f32, y: f32) { 
     let mut pos: [f32; 2] = ui.cursor_screen_pos();
-    pos[0] += f * x;
-    pos[1] += f * y;
+    pos[0] += x;
+    pos[1] += y;
     ui.set_cursor_screen_pos(pos);
 }
 fn center_text(ui: &imgui::Ui, s: &str, w: f32) {

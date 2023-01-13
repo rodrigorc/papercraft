@@ -651,35 +651,45 @@ impl PapercraftContext {
                         &mut p[..]
                     };
 
-                    if tab_style == TabStyle::Textured || tab_style == TabStyle::HalfTextured {
-                        //Now we have to compute the texture coordinates of `p` in the adjacent face
-                        let plane_b = self.papercraft.face_plane(face_b);
-                        let vs_b = face_b.index_vertices().map(|v| {
-                            let v = &self.papercraft.model()[v];
-                            let p = plane_b.project(&v.pos());
-                            (v, p)
-                        });
-                        let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
-                        let mx_b_inv = mx_b.invert().unwrap();
-                        let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
+                    if tab_style != TabStyle::None {
+                        let uvs: Vec<Vector2> = if tab_style == TabStyle::White {
+                            vec![Vector2::zero(); 4]
+                        } else {
+                            //Now we have to compute the texture coordinates of `p` in the adjacent face
+                            let plane_b = self.papercraft.face_plane(face_b);
+                            let vs_b = face_b.index_vertices().map(|v| {
+                                let v = &self.papercraft.model()[v];
+                                let p = plane_b.project(&v.pos());
+                                (v, p)
+                            });
+                            let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
+                            let mx_b_inv = mx_b.invert().unwrap();
+                            let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 
-                        // mx_b_inv converts from paper to local face_b coordinates
-                        // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
-                        // mxx do both convertions at once
-                        let mxx = Matrix3::from(mx_basis) * mx_b_inv;
+                            // mx_b_inv converts from paper to local face_b coordinates
+                            // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
+                            // mxx do both convertions at once
+                            let mxx = Matrix3::from(mx_basis) * mx_b_inv;
 
-                        let uvs: Vec<Vector2> = p.iter().map(|px| {
-                            //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
-                            let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
-                            let uv0 = vs_b[0].0.uv();
-                            let uv1 = vs_b[1].0.uv();
-                            let uv2 = vs_b[2].0.uv();
-                            uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
-                        }).collect();
+                            p.iter().map(|px| {
+                                //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
+                                let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
+                                let uv0 = vs_b[0].0.uv();
+                                let uv1 = vs_b[1].0.uv();
+                                let uv2 = vs_b[2].0.uv();
+                                uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
+                            }).collect()
+                        };
 
                         let mat = face_b.material();
-                        let root_color = Rgba::new(1.0, 1.0, 1.0, 0.0);
-                        let tip_color = Rgba::new(1.0, 1.0, 1.0, if tab_style == TabStyle::HalfTextured { 1.0 } else { 0.0 });
+                        let (root_alpha, tip_alpha) = match tab_style {
+                            TabStyle::Textured => (0.0, 0.0),
+                            TabStyle::HalfTextured => (0.0, 1.0),
+                            TabStyle::White => (1.0, 1.0),
+                            TabStyle::None => (0.0, 0.0),
+                        };
+                        let root_color = Rgba::new(1.0, 1.0, 1.0, root_alpha);
+                        let tip_color = Rgba::new(1.0, 1.0, 1.0, tip_alpha);
                         if just_one_tri {
                             args.vertices_tab.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color });
                             args.vertices_tab.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color });

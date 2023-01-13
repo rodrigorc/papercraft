@@ -5,7 +5,7 @@ authors = ["Rodrigo Rivas Costa <rodrigorivascosta@gmail.com>"]
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/rodrigorc/papercraft"
-description = "A program to unwrap 3D paper models"
+description = "Papercraft is a tool to unwrap 3D models"
 keywords = ["papercraft", "handcraft"]
 
 [profile.release]
@@ -38,6 +38,7 @@ glutin = "*"
 glutin-winit = "*"
 raw-window-handle = "0.5"
 signal-hook = "*"
+opener = "*"
 
 [dependencies.imgui]
 version = "*"

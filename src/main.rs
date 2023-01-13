@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #![allow(clippy::collapsible_if)]
 
 use std::{num::NonZeroU32, ffi::CString, time::{Instant, Duration}, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
@@ -82,8 +81,10 @@ fn main() {
         })
         .unwrap();
     //dbg!(gl_config.num_samples(), gl_config.depth_size(), gl_config.stencil_size());
-
-    let raw_window_handle = window.as_ref().map(|window| window.raw_window_handle());
+    let window = window.unwrap();
+    window.set_title("Papercraft");
+    window.set_ime_allowed(true);
+    let raw_window_handle = Some(window.raw_window_handle());
     let gl_display = gl_config.display();
     let context_attributes = ContextAttributesBuilder::new()
         .build(raw_window_handle);
@@ -100,9 +101,6 @@ fn main() {
                     .expect("failed to create context")
             })
     });
-    let window = window.unwrap();
-    window.set_ime_allowed(true);
-    window.set_title("Papercraft");
     let gl_window = GlWindow::new(window, &gl_config);
     let gl_context = not_current_gl_context
         .take()
@@ -127,15 +125,28 @@ fn main() {
     flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
 
     let hidpi_factor = winit_platform.hidpi_factor() as f32;
-    imgui_context
-        .fonts()
-        .add_font(&[
-            //imgui::FontSource::DefaultFontData { config: None },
+    let fonts = imgui_context.fonts();
+    let _font_default = fonts.add_font(&[
             imgui::FontSource::TtfData {
                 data: &ttf,
                 size_pixels: (18.0 * hidpi_factor).floor(),
                 config: None
             },
+        ]);
+    let font_big = fonts.add_font(&[
+            imgui::FontSource::TtfData {
+                data: &ttf,
+                size_pixels: (28.0 * hidpi_factor).floor(),
+                config: None
+            },
+        ]);
+    let font_small = fonts.add_font(&[
+            imgui::FontSource::TtfData {
+                data: &ttf,
+                size_pixels: (12.0 * hidpi_factor).floor(),
+                config: None
+            },
+            imgui::FontSource::DefaultFontData { config: None }, // For the © in the about window :/
         ]);
     imgui_context.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
     imgui_context.io_mut().font_allow_user_scaling = true;
@@ -182,6 +193,7 @@ fn main() {
         RefCell::new(GlobalContext {
             this: this.clone(),
             gl_fixs,
+            _font_default, font_big, font_small,
             icons_tex,
             data,
             splitter_pos: 1.0,
@@ -191,6 +203,7 @@ fn main() {
             scene_ui_status: Canvas3dStatus::default(),
             paper_ui_status: Canvas3dStatus::default(),
             options_opened: None,
+            about_visible: false,
             option_button_height: 0.0,
             file_dialog: None,
             file_action: None,
@@ -501,6 +514,9 @@ impl FileAction {
 struct GlobalContext {
     this: Weak<RefCell<GlobalContext>>,
     gl_fixs: GLFixedObjects,
+    _font_default: imgui::FontId,
+    font_big: imgui::FontId,
+    font_small: imgui::FontId,
     icons_tex: imgui::TextureId,
     data: PapercraftContext,
     splitter_pos: f32,
@@ -511,6 +527,7 @@ struct GlobalContext {
     paper_ui_status: Canvas3dStatus,
     options_opened: Option<PaperOptions>,
     option_button_height: f32,
+    about_visible: bool,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
     error_message: Option<String>,
@@ -600,6 +617,42 @@ impl GlobalContext {
             } else {
                 self.confirmable_action = Some(action);
             }
+        }
+    }
+    fn build_about(&mut self, ui: &imgui::Ui) {
+        if !self.about_visible {
+            return;
+        }
+        if let Some(_options) = ui.window("About...###about")
+            .movable(true)
+            .resizable(false)
+            .always_auto_resize(true)
+            .opened(&mut self.about_visible)
+            .begin()
+        {
+            let sz_full = Vector2::from(ui.content_region_avail());
+            let _s = ui.push_font(self.font_big);
+            center_text(ui, "Papercraft", sz_full.x);
+            drop(_s);
+            advance_cursor(ui, 0.0, 1.0);
+            center_text(ui, &format!("Version {}", env!("CARGO_PKG_VERSION")), sz_full.x);
+            advance_cursor(ui, 0.0, 1.0);
+            center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
+            advance_cursor(ui, 0.0, 0.5);
+            center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
+            advance_cursor(ui, 0.0, 0.5);
+            let _s = ui.push_font(self.font_small);
+            center_text(ui, "© Copyright 2022 - Rodrigo Rivas Costa", sz_full.x);
+            center_text(ui, "This program comes with absolutely no warranty.", sz_full.x);
+            center_url(
+                ui, 
+                "See the GNU General Public License, version 3 or later for details.", "gpl3",
+                Some("https://www.gnu.org/licenses/gpl-3.0.html"),
+                sz_full.x
+            );
+            drop(_s);
+
+            //TODO: list third party SW
         }
     }
     // Returns true if the action has just been done successfully
@@ -824,8 +877,8 @@ impl GlobalContext {
         }
         drop(_s);
 
-        let pos: [f32; 2] = (Vector2::from(ui.cursor_screen_pos()) + Vector2::new(4.0, 0.0)).into();
-        ui.set_cursor_screen_pos(pos);
+        advance_cursor(ui, 0.25, 0.0);
+
         let status_text = match self.data.mode {
             MouseMode::Face => "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it.",
             MouseMode::Edge => "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads.",
@@ -837,6 +890,7 @@ impl GlobalContext {
         self.build_modal_error_message(ui);
         self.build_modal_wait_message_and_run_file_action(ui);
         self.build_confirm_message(ui, &mut menu_actions);
+        self.build_about(ui);
 
         menu_actions
     }
@@ -847,7 +901,7 @@ impl GlobalContext {
             None => return,
         };
         let mut options_opened = true;
-        if let Some(_options) = ui.window("Document properties##options")
+        if let Some(_options) = ui.window("Document properties...###options")
             .size([600.0, 400.0], imgui::Condition::Once)
             .resizable(true)
             .scroll_bar(false)
@@ -1203,9 +1257,8 @@ impl GlobalContext {
                 }
             });
             ui.menu("Help", || {
-                if ui.menu_item("About...") {
-                    //TODO
-                }
+                ui.menu_item_config("About...")
+                    .build_with_ref(&mut self.about_visible);
             });
         });
 
@@ -1358,7 +1411,6 @@ impl GlobalContext {
         if menu_actions.reset_views {
             self.data.reset_views(self.sz_scene, self.sz_paper);
         }
-
         if menu_actions.undo {
             match self.data.undo_action() {
                 UndoResult::Model => {
@@ -1373,6 +1425,7 @@ impl GlobalContext {
                 UndoResult::False => {},
             }
         }
+
         let mut save_as = false;
         let mut open_file_dialog = false;
         let mut open_wait = false;
@@ -2307,4 +2360,35 @@ fn load_texture_from_memory(data: &[u8], premultply: bool) -> Result<glow::Nativ
 
 fn scale_size(s: Vector2, v: Vector2) -> Vector2 {
     Vector2::new(s.x * v.x, s.y * v.y)
+}
+
+fn advance_cursor(ui: &imgui::Ui, x: f32, y: f32) { 
+    let f = ui.current_font_size();
+    let mut pos: [f32; 2] = ui.cursor_screen_pos();
+    pos[0] += f * x;
+    pos[1] += f * y;
+    ui.set_cursor_screen_pos(pos);
+}
+fn center_text(ui: &imgui::Ui, s: &str, w: f32) {
+    let ss = ui.calc_text_size(s);
+    let mut pos: [f32; 2] = ui.cursor_screen_pos();
+    pos[0] += (w - ss[0]) / 2.0;
+    ui.set_cursor_screen_pos(pos);
+    ui.text(s);
+}
+fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
+    let ss = ui.calc_text_size(s);
+    let mut pos: [f32; 2] = ui.cursor_screen_pos();
+    let pos0 = pos;
+    pos[0] += (w - ss[0]) / 2.0;
+    ui.set_cursor_screen_pos(pos);
+    let _s = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 1.0, 1.0]);
+    ui.text(s);
+    ui.set_cursor_screen_pos(pos0);
+    if ui.invisible_button(id, ss) {
+        let _ = opener::open_browser(cmd.unwrap_or(s));
+    }
+    if ui.is_item_hovered() {
+        ui.set_mouse_cursor(Some(imgui::MouseCursor::Hand));
+    }
 }

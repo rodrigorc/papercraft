@@ -25,7 +25,6 @@ mod glr;
 mod util_3d;
 mod util_gl;
 mod ui;
-//mod options_dlg;
 
 use ui::*;
 
@@ -120,24 +119,32 @@ fn main() {
     winit_platform.attach_window(
         imgui_context.io_mut(),
         &gl_window.window,
-        imgui_winit_support::HiDpiMode::Rounded,
+        imgui_winit_support::HiDpiMode::Default,
     );
     //imgui_context.set_clipboard_backend(MyClip);
 
     let mut ttf = Vec::new();
     flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
 
+    let hidpi_factor = winit_platform.hidpi_factor() as f32;
     imgui_context
         .fonts()
         .add_font(&[
             //imgui::FontSource::DefaultFontData { config: None },
             imgui::FontSource::TtfData {
                 data: &ttf,
-                size_pixels: 18.0,
+                size_pixels: (18.0 * hidpi_factor).floor(),
                 config: None
             },
         ]);
-    imgui_context.io_mut().font_global_scale = (1.0 / winit_platform.hidpi_factor()) as f32;
+    imgui_context.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
+    imgui_context.io_mut().font_allow_user_scaling = true;
+
+    let style = imgui_context.style_mut();
+    //style.scale_all_sizes(hidpi_factor);
+    if cli.light {
+        style.use_light_colors();
+    }
 
     let gl = unsafe {
         let dsp = gl_context.display();
@@ -157,9 +164,6 @@ fn main() {
         sz_dummy
     );
 
-    if cli.light {
-        unsafe { imgui_sys::igStyleColorsLight(std::ptr::null_mut()); }
-    }
     let mut cmd_file_action = match cli {
         Cli { name: Some(name), .. }  => {
             Some((FileAction::OpenCraft, name))
@@ -550,7 +554,7 @@ impl GlobalContext {
 
             ui.separator();
 
-            if ui.button_with_size("OK", [100.0, 0.0])
+            if ui.button_with_size("OK", [ui.current_font_size() * 5.5, 0.0])
                 || ui.is_key_pressed(imgui::Key::Enter)
                 || ui.is_key_pressed(imgui::Key::KeyPadEnter)
             {
@@ -575,14 +579,14 @@ impl GlobalContext {
 
                 ui.separator();
 
-                if ui.button_with_size("Cancel", [100.0, 0.0]) {
+                if ui.button_with_size("Cancel", [ui.current_font_size() * 5.5, 0.0]) {
                     if !ui.is_window_appearing() {
                         ui.close_current_popup();
                         closed = Some(false);
                     }
                 }
                 ui.same_line();
-                if ui.button_with_size("Continue", [100.0, 0.0]) {
+                if ui.button_with_size("Continue", [ui.current_font_size() * 5.5, 0.0]) {
                     if !ui.is_window_appearing() {
                         ui.close_current_popup();
                         closed = Some(true);
@@ -642,19 +646,22 @@ impl GlobalContext {
     fn build_ui(&mut self, ui: &imgui::Ui) -> MenuActions {
         let mut menu_actions = self.build_menu_and_file_dialog(ui);
 
-        const PAD: f32 = 4.0;
+        let pad: f32 = ui.current_font_size() / 4.0;
+
         let _s = (
-            ui.push_style_var(imgui::StyleVar::WindowPadding([PAD, PAD])),
+            ui.push_style_var(imgui::StyleVar::WindowPadding([pad, pad])),
             ui.push_style_var(imgui::StyleVar::ItemSpacing([0.0, 0.0])),
         );
         if let Some(_toolbar) = ui.child_window("toolbar")
-            .size([0.0, 48.0 + 2.0 * PAD])
+            .size([0.0, ui.current_font_size() * 3.0 + 2.0 * pad])
             .always_use_window_padding(true)
             .border(false)
             .begin()
         {
-            let _s3 = ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 0.0]));
+            let _s3 = ui.push_style_var(imgui::StyleVar::ItemSpacing([ui.current_font_size() / 8.0, 0.0]));
+            //The texture image is 128x128 pixels, but each image is 48x48
             let n = 48.0 / 128.0;
+            let btn_sz = ui.current_font_size() * 3.0;
             let color_active = ui.style_color(imgui::StyleColor::ButtonActive);
             let color_white = [1.0, 1.0, 1.0, 1.0].into();
             let color_trans = [0.0, 0.0, 0.0, 0.0];
@@ -663,7 +670,7 @@ impl GlobalContext {
                 let _t1 = ui.push_id("Face");
                 imgui_sys::igImageButton(
                     self.icons_tex.id() as _,
-                    [48.0, 48.0].into(),
+                    [btn_sz, btn_sz].into(),
                     [0.0, 0.0].into(),
                     [n, n].into(),
                     0,
@@ -678,7 +685,7 @@ impl GlobalContext {
                 let _t1 = ui.push_id("Edge");
                 imgui_sys::igImageButton(
                     self.icons_tex.id() as _,
-                    [48.0, 48.0].into(),
+                    [btn_sz, btn_sz].into(),
                     [n, 0.0].into(),
                     [2.0*n, n].into(),
                     0,
@@ -693,7 +700,7 @@ impl GlobalContext {
                 let _t1 = ui.push_id("Tab");
                 imgui_sys::igImageButton(
                     self.icons_tex.id() as _,
-                    [48.0, 48.0].into(),
+                    [btn_sz, btn_sz].into(),
                     [0.0, n].into(),
                     [n, 2.0*n].into(),
                     0,
@@ -725,12 +732,14 @@ impl GlobalContext {
                 self.sz_full = sz_full;
             }
 
+            let scale = Vector2::from(ui.io().display_framebuffer_scale);
+
             self.build_scene(ui, self.splitter_pos);
-            let sz_scene = Vector2::from(ui.item_rect_size());
+            let sz_scene = scale_size(scale, Vector2::from(ui.item_rect_size()));
 
             ui.same_line();
 
-            ui.button_with_size("##vsplitter", [8.0, -1.0]);
+            ui.button_with_size("##vsplitter", [ui.current_font_size() / 2.0, -1.0]);
             if ui.is_item_active() {
                 self.splitter_pos += ui.io().mouse_delta[0];
             }
@@ -743,9 +752,9 @@ impl GlobalContext {
 
             self.build_paper(ui);
 
+            let sz_paper = scale_size(scale, Vector2::from(ui.item_rect_size()));
 
-            let sz_paper = Vector2::from(ui.item_rect_size());
-
+            // Resize FBOs
             if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
                 self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 self.sz_scene = sz_scene;
@@ -754,6 +763,7 @@ impl GlobalContext {
                 self.data.trans_scene.persp_inv = self.data.trans_scene.persp.invert().unwrap();
 
                 let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
+
                 unsafe {
                     let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
 
@@ -782,8 +792,8 @@ impl GlobalContext {
             if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 self.sz_paper = sz_paper;
-                let x = sz_paper.x as i32;
-                let y = sz_paper.y as i32;
+
+                let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
                 self.data.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
 
                 unsafe {
@@ -852,9 +862,9 @@ impl GlobalContext {
                 .begin()
             {
                 if ui.collapsing_header("Model", imgui::TreeNodeFlags::empty()) {
-                    ui.set_next_item_width(100.0);
+                    ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Scale", &mut options.scale).display_format("%g").build();
-                    ui.same_line_with_spacing(0.0, 50.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
                     ui.checkbox("Textured", &mut options.texture);
 
                     if let Some(_t) = ui.tree_node_config("Tabs")
@@ -876,16 +886,16 @@ impl GlobalContext {
                             }
                         }
                         let mut i_tab_style = TAB_STYLES.iter().position(|s| *s == options.tab_style).unwrap_or(0);
-                        ui.set_next_item_width(150.0);
+                        ui.set_next_item_width(ui.current_font_size() * 8.0);
                         if ui.combo("Style", &mut i_tab_style, TAB_STYLES, |s| fmt_tab_style(*s).into()) {
                             options.tab_style = TAB_STYLES[i_tab_style];
                         }
-                        ui.same_line_with_spacing(0.0, 25.0);
-                        ui.set_next_item_width(100.0);
+                        ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                        ui.set_next_item_width(ui.current_font_size() * 5.5);
                         ui.input_float("Width", &mut options.tab_width).display_format("%g").build();
 
-                        ui.same_line_with_spacing(0.0, 25.0);
-                        ui.set_next_item_width(100.0);
+                        ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                        ui.set_next_item_width(ui.current_font_size() * 5.5);
                         ui.input_float("Angle", &mut options.tab_angle).display_format("%g").build();
                     }
                     if let Some(_t) = ui.tree_node("Folds") {
@@ -908,15 +918,15 @@ impl GlobalContext {
                             }
                         }
                         let mut i_fold_style = FOLD_STYLES.iter().position(|s| *s == options.fold_style).unwrap_or(0);
-                        ui.set_next_item_width(150.0);
+                        ui.set_next_item_width(ui.current_font_size() * 8.0);
                         if ui.combo("Style", &mut i_fold_style, FOLD_STYLES, |s| fmt_fold_style(*s).into()) {
                             options.fold_style = FOLD_STYLES[i_fold_style];
                         }
-                        ui.same_line_with_spacing(0.0, 25.0);
-                        ui.set_next_item_width(100.0);
+                        ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                        ui.set_next_item_width(ui.current_font_size() * 5.5);
                         ui.input_float("Length", &mut options.fold_line_len).display_format("%g").build();
-                        ui.same_line_with_spacing(0.0, 25.0);
-                        ui.set_next_item_width(100.0);
+                        ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                        ui.set_next_item_width(ui.current_font_size() * 5.5);
                         ui.input_float("Line width", &mut options.fold_line_width).display_format("%g").build();
                     }
                     if let Some(_t) = ui.tree_node("Information") {
@@ -935,34 +945,34 @@ impl GlobalContext {
                     }
                 }
                 if ui.collapsing_header("Page layout", imgui::TreeNodeFlags::empty()) {
-                    ui.set_next_item_width(100.0);
+                    ui.set_next_item_width(ui.current_font_size() * 5.5);
 
                     let mut i = options.pages as _;
                     ui.input_int("Pages", &mut i).build();
                     options.pages = i.clamp(1, 1000) as _;
 
-                    ui.same_line_with_spacing(0.0, 25.0);
-                    ui.set_next_item_width(100.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 5.5);
 
                     let mut i = options.page_cols as _;
                     ui.input_int("Columns", &mut i).build();
                     options.page_cols = i.clamp(1, options.pages as _) as _;
 
-                    ui.set_next_item_width(200.0);
+                    ui.set_next_item_width(ui.current_font_size() * 11.0);
                     ui.checkbox("Print Papercraft signature", &mut options.show_self_promotion);
 
-                    ui.same_line_with_spacing(0.0, 50.0);
-                    ui.set_next_item_width(200.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
+                    ui.set_next_item_width(ui.current_font_size() * 11.0);
                     ui.checkbox("Print page number", &mut options.show_page_number);
                 }
                 if ui.collapsing_header("Paper size", imgui::TreeNodeFlags::empty()) {
-                    ui.set_next_item_width(100.0);
+                    ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Width", &mut options.page_size.0).display_format("%g").build();
-                    ui.same_line_with_spacing(0.0, 25.0);
-                    ui.set_next_item_width(100.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Height", &mut options.page_size.1).display_format("%g").build();
-                    ui.same_line_with_spacing(0.0, 25.0);
-                    ui.set_next_item_width(100.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 5.5);
                     let mut resolution = options.resolution as f32;
                     ui.input_float("DPI", &mut resolution).display_format("%g").build();
                     options.resolution = resolution as u32;
@@ -993,7 +1003,7 @@ impl GlobalContext {
 
                     let paper_size = Vector2::from(options.page_size);
                     let mut i_paper_size = PAPER_SIZES.iter().position(|s| s.size == paper_size || s.size == Vector2::new(paper_size.y, paper_size.x)).unwrap_or(usize::MAX);
-                    ui.set_next_item_width(150.0);
+                    ui.set_next_item_width(ui.current_font_size() * 8.0);
                     if ui.combo("##", &mut i_paper_size, PAPER_SIZES, |t| t.name.into()) {
                         let portrait = options.page_size.1 >= options.page_size.0;
                         options.page_size = PAPER_SIZES[i_paper_size].size.into();
@@ -1010,20 +1020,19 @@ impl GlobalContext {
                     }
                 }
                 if ui.collapsing_header("Margins", imgui::TreeNodeFlags::empty()) {
-                    ui.set_next_item_width(75.0);
+                    ui.set_next_item_width(ui.current_font_size() * 4.0);
                     ui.input_float("Top", &mut options.margin.0).display_format("%g").build();
-                    ui.same_line_with_spacing(0.0, 25.0);
-                    ui.set_next_item_width(75.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 4.0);
                     ui.input_float("Left", &mut options.margin.1).display_format("%g").build();
-                    ui.same_line_with_spacing(0.0, 25.0);
-                    ui.set_next_item_width(75.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 4.0);
                     ui.input_float("Right", &mut options.margin.2).display_format("%g").build();
-                    ui.same_line_with_spacing(0.0, 25.0);
-                    ui.set_next_item_width(75.0);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 4.0);
                     ui.input_float("Bottom", &mut options.margin.3).display_format("%g").build();
                 }
             }
-
 
             let mut apply_options = None;
             let pos1 = Vector2::from(ui.cursor_screen_pos());
@@ -1238,8 +1247,9 @@ impl GlobalContext {
             .border(true)
             .begin()
         {
-            let pos = Vector2::from(ui.cursor_screen_pos());
-            let dsp_size = Vector2::from(ui.io().display_size);
+            let scale = Vector2::from(ui.io().display_framebuffer_scale);
+            let pos = scale_size(scale, Vector2::from(ui.cursor_screen_pos()));
+            let dsp_size = scale_size(scale, Vector2::from(ui.io().display_size));
 
             canvas3d(ui, &mut self.scene_ui_status);
 
@@ -1262,10 +1272,10 @@ impl GlobalContext {
 
                         // blit the FBO to the real FB
                         let pos_y2 = dsp_size.y - pos.y - this.sz_scene.y;
-                        let x = pos.x as i32;
-                        let y = pos_y2 as i32;
-                        let width = this.sz_scene.x as i32;
-                        let height = this.sz_scene.y as i32;
+                        let x = (pos.x * 1.0) as i32;
+                        let y = (pos_y2 * 1.0) as i32;
+                        let width = (this.sz_scene.x * 1.0) as i32;
+                        let height = (this.sz_scene.y * 1.0) as i32;
 
                         let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
                         gl::BlitFramebuffer(
@@ -1290,8 +1300,9 @@ impl GlobalContext {
             .border(true)
             .begin()
         {
-            let pos = Vector2::from(ui.cursor_screen_pos());
-            let dsp_size = Vector2::from(ui.io().display_size);
+            let scale = Vector2::from(ui.io().display_framebuffer_scale);
+            let pos = scale_size(scale, Vector2::from(ui.cursor_screen_pos()));
+            let dsp_size = scale_size(scale, Vector2::from(ui.io().display_size));
 
             canvas3d(ui, &mut self.paper_ui_status);
 
@@ -2085,7 +2096,11 @@ impl GlobalContext {
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
                     read_fb_binder.rebind(&fbo);
                     draw_fb_binder.rebind(fbo_no_aa);
-                    gl::BlitFramebuffer(0, 0, page_size_pixels.x, page_size_pixels.y, 0, 0, page_size_pixels.x, page_size_pixels.y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+                    gl::BlitFramebuffer(
+                        0, 0, page_size_pixels.x, page_size_pixels.y,
+                        0, 0, page_size_pixels.x, page_size_pixels.y,
+                        gl::COLOR_BUFFER_BIT, gl::NEAREST
+                    );
                     read_fb_binder.rebind(fbo_no_aa);
                     draw_fb_binder.rebind(&fbo);
                 }
@@ -2194,7 +2209,8 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
     );
     let hovered = ui.is_item_hovered();
     let pos = Vector2::from(ui.item_rect_min());
-    let mouse_pos = Vector2::from(ui.io().mouse_pos) - pos;
+    let scale = Vector2::from(ui.io().display_framebuffer_scale);
+    let mouse_pos = scale_size(scale, Vector2::from(ui.io().mouse_pos) - pos);
 
     let action = match &st.action {
         Canvas3dAction::Dragging(bt) => {
@@ -2287,4 +2303,8 @@ fn load_texture_from_memory(data: &[u8], premultply: bool) -> Result<glow::Nativ
         gl::BindTexture(gl::TEXTURE_2D, 0);
         Ok(ntex)
     }
+}
+
+fn scale_size(s: Vector2, v: Vector2) -> Vector2 {
+    Vector2::new(s.x * v.x, s.y * v.y)
 }

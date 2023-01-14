@@ -47,6 +47,7 @@ pub enum MouseMode {
     Face,
     Edge,
     Tab,
+    ReadOnly,
 }
 
 
@@ -841,7 +842,14 @@ impl PapercraftContext {
             gl_objs.vertices_edge_cut.set(edges_cut);
         }
     }
-
+    pub fn color_edge(mode: MouseMode) -> Rgba {
+        match mode {
+            MouseMode::Edge => Rgba::new(0.5, 0.5, 1.0, 1.0),
+            MouseMode::Tab => Rgba::new(0.0, 0.5, 0.0, 1.0),
+            MouseMode::Face | // this should not happen, because in face mode there is no edge selection
+            MouseMode::ReadOnly => Rgba::new(0.0, 0.0, 0.0, 1.0),
+        }
+    }
     fn selection_rebuild(&mut self) {
         let gl_objs = match &mut self.gl_objs {
             Some(x) => x,
@@ -878,11 +886,11 @@ impl PapercraftContext {
                 for i in pos .. pos + 3 {
                     gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_HI.color };
                 }
-        }
+            }
         }
         if let Some(i_sel_edge) = self.selected_edge {
             let mut edges_sel = Vec::new();
-            let color = if self.mode == MouseMode::Edge { Rgba::new(0.5, 0.5, 1.0, 1.0) } else { Rgba::new(0.0, 0.5, 0.0, 1.0) };
+            let color = Self::color_edge(self.mode);
             let edge = &self.papercraft.model()[i_sel_edge];
             let p0 = self.papercraft.model()[edge.v0()].pos();
             let p1 = self.papercraft.model()[edge.v1()].pos();
@@ -1153,7 +1161,7 @@ impl PapercraftContext {
                     }
                     match mode {
                         MouseMode::Face => { }
-                        MouseMode::Edge | MouseMode::Tab => {
+                        MouseMode::Edge | MouseMode::Tab | MouseMode::ReadOnly => {
                             for i_edge in face.index_edges() {
                                 match (self.papercraft.edge_status(i_edge), mode) {
                                     (EdgeStatus::Hidden, _) => continue,

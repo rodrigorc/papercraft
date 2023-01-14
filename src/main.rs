@@ -11,6 +11,8 @@ use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
 use glutin_winit::DisplayBuilder;
 use image::DynamicImage;
+use imgui::ClipboardBackend;
+use clipboard::ClipboardProvider;
 use imgui_winit_support::WinitPlatform;
 use raw_window_handle::{HasRawWindowHandle};
 use winit::{event, event_loop::EventLoopBuilder, window::{WindowBuilder, Window}};
@@ -125,7 +127,8 @@ fn main() {
         &gl_window.window,
         imgui_winit_support::HiDpiMode::Default,
     );
-    //imgui_context.set_clipboard_backend(MyClip);
+
+    imgui_context.set_clipboard_backend(MyClipboard::new());
 
     let mut ttf = Vec::new();
     flate2::read::ZlibDecoder::new(KARLA_TTF_Z).read_to_end(&mut ttf).unwrap();
@@ -1541,9 +1544,13 @@ impl GlobalContext {
                         }
                     }
                     finish_file_dialog = true;
-                    ui.close_current_popup();
                 }
-                if !finish_file_dialog {
+                if ui.is_key_pressed(imgui::Key::Escape) {
+                    finish_file_dialog = true;
+                }
+                if finish_file_dialog {
+                    ui.close_current_popup();
+                } else {
                     self.file_dialog = Some((fd, title, action));
                 }
             }
@@ -2403,5 +2410,29 @@ fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     }
     if ui.is_item_hovered() {
         ui.set_mouse_cursor(Some(imgui::MouseCursor::Hand));
+    }
+}
+
+struct MyClipboard {
+    ctx: Option<clipboard::ClipboardContext>,
+}
+
+impl MyClipboard {
+    fn new() -> MyClipboard {
+        MyClipboard {
+            ctx: clipboard::ClipboardProvider::new().ok(),
+        }
+    }
+}
+
+impl ClipboardBackend for MyClipboard {
+    fn get(&mut self) -> Option<String> {
+        self.ctx.as_mut().and_then(|ctx| ctx.get_contents().ok())
+    }
+
+    fn set(&mut self, value: &str) {
+        if let Some(ctx) = self.ctx.as_mut() {
+            let _ = ctx.set_contents(value.to_owned());
+        }
     }
 }

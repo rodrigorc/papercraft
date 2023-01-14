@@ -39,6 +39,7 @@ glutin-winit = "*"
 raw-window-handle = "0.5"
 signal-hook = "*"
 opener = "*"
+clipboard = "*"
 
 [dependencies.imgui]
 version = "*"

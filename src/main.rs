@@ -662,7 +662,7 @@ impl GlobalContext {
             center_text(ui, "© Copyright 2022 - Rodrigo Rivas Costa", sz_full.x);
             center_text(ui, "This program comes with absolutely no warranty.", sz_full.x);
             center_url(
-                ui, 
+                ui,
                 "See the GNU General Public License, version 3 or later for details.", "gpl3",
                 Some("https://www.gnu.org/licenses/gpl-3.0.html"),
                 sz_full.x
@@ -2371,11 +2371,11 @@ fn scale_size(s: Vector2, v: Vector2) -> Vector2 {
     Vector2::new(s.x * v.x, s.y * v.y)
 }
 
-fn advance_cursor(ui: &imgui::Ui, x: f32, y: f32) { 
+fn advance_cursor(ui: &imgui::Ui, x: f32, y: f32) {
     let f = ui.current_font_size();
     advance_cursor_pixels(ui, f * x, f * y);
 }
-fn advance_cursor_pixels(ui: &imgui::Ui, x: f32, y: f32) { 
+fn advance_cursor_pixels(ui: &imgui::Ui, x: f32, y: f32) {
     let mut pos: [f32; 2] = ui.cursor_screen_pos();
     pos[0] += x;
     pos[1] += y;
@@ -2394,7 +2394,8 @@ fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     let pos0 = pos;
     pos[0] += (w - ss[0]) / 2.0;
     ui.set_cursor_screen_pos(pos);
-    let _s = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 1.0, 1.0]);
+    let color = ui.style_color(imgui::StyleColor::ButtonActive);
+    let _s = ui.push_style_color(imgui::StyleColor::Text, color);
     ui.text(s);
     ui.set_cursor_screen_pos(pos0);
     if ui.invisible_button(id, ss) {

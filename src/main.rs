@@ -29,9 +29,9 @@ mod ui;
 
 use ui::*;
 
-static LOGO_PNG: &'static [u8] = include_bytes!("papercraft.png");
-static KARLA_TTF_Z: &'static [u8] = include_bytes!("Karla-Regular.ttf.z");
-static ICONS_PNG: &'static [u8] = include_bytes!("icons.png");
+static LOGO_PNG: &[u8] = include_bytes!("papercraft.png");
+static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
+static ICONS_PNG: &[u8] = include_bytes!("icons.png");
 
 use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions};
 use glr::Rgba;
@@ -157,7 +157,7 @@ fn main() {
             },
             imgui::FontSource::DefaultFontData { config: None }, // For the © in the about window :/
         ]);
-    imgui_context.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
+    imgui_context.io_mut().font_global_scale = 1.0 / hidpi_factor;
     imgui_context.io_mut().font_allow_user_scaling = true;
 
     let style = imgui_context.style_mut();
@@ -523,6 +523,12 @@ impl FileAction {
     }
 }
 
+struct ConfirmableAction {
+    title: String,
+    message: String,
+    action: Box<dyn Fn(&mut MenuActions)>,
+}
+
 struct GlobalContext {
     this: Weak<RefCell<GlobalContext>>,
     gl_fixs: GLFixedObjects,
@@ -545,7 +551,7 @@ struct GlobalContext {
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
     error_message: Option<String>,
-    confirmable_action: Option<(String, String, Box<dyn Fn(&mut MenuActions)>)>,
+    confirmable_action: Option<ConfirmableAction>,
     popup_time_start: Instant,
     render_scene_pending: bool,
     render_paper_pending: bool,
@@ -581,7 +587,7 @@ impl GlobalContext {
             .opened(&mut true)
             .begin_popup()
         {
-            ui.text(&self.error_message.as_deref().unwrap_or_default());
+            ui.text(self.error_message.as_deref().unwrap_or_default());
 
             ui.separator();
 
@@ -599,14 +605,13 @@ impl GlobalContext {
     fn build_confirm_message(&mut self, ui: &imgui::Ui, menu_actions: &mut MenuActions) {
         let mut closed = None;
         if let Some(action) = self.confirmable_action.take() {
-            let (title, message, _) = &action;
-            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###Confirm"))
+            if let Some(_pop) = ui.modal_popup_config(&format!("{}###Confirm", action.title))
                 .resizable(false)
                 .always_auto_resize(true)
                 .opened(&mut true)
                 .begin_popup()
             {
-                ui.text(&message);
+                ui.text(&action.message);
 
                 ui.separator();
 
@@ -626,7 +631,7 @@ impl GlobalContext {
             }
             if let Some(cont) = closed {
                 if cont {
-                    (action.2)(menu_actions);
+                    (action.action)(menu_actions);
                 }
             } else {
                 self.confirmable_action = Some(action);
@@ -996,7 +1001,7 @@ impl GlobalContext {
                             );
                         let model_size = (bbox.1 - bbox.0) * options.scale;
                         let Vector3 { x, y, z } = model_size;
-                        ui.text(&format!("Number of pieces: {n_pieces}\nNumber of tabs: {n_tabs}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
+                        ui.text(format!("Number of pieces: {n_pieces}\nNumber of tabs: {n_tabs}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
                     }
                 }
                 if ui.collapsing_header("Page layout", imgui::TreeNodeFlags::empty()) {
@@ -1400,11 +1405,11 @@ impl GlobalContext {
     }
 
     fn open_confirmation_dialog(&mut self, ui: &imgui::Ui, title: &str, message: &str, f: impl Fn(&mut MenuActions) + 'static) {
-        self.confirmable_action = Some((
-            String::from(title),
-            String::from(message),
-            Box::new(f),
-        ));
+        self.confirmable_action = Some(ConfirmableAction {
+            title: title.to_owned(),
+            message: message.to_owned(),
+            action: Box::new(f),
+        });
         ui.open_popup("###Confirm");
     }
 
@@ -1730,13 +1735,13 @@ impl GlobalContext {
                 'scroll: {
                     if !ev_state.contains(ModifierType::SHIFT_MASK) && self.data.grabbed_island.is_some() {
                         let delta = if mouse_pos.x < 5.0 {
-                            Vector2::new((-mouse_pos.x).max(5.0).min(25.0), 0.0)
+                            Vector2::new((-mouse_pos.x).clamp(5.0, 25.0), 0.0)
                         } else if mouse_pos.x > self.sz_paper.x - 5.0 {
-                            Vector2::new(-(mouse_pos.x - self.sz_paper.x).max(5.0).min(25.0), 0.0)
+                            Vector2::new(-(mouse_pos.x - self.sz_paper.x).clamp(5.0, 25.0), 0.0)
                         } else if mouse_pos.y < 5.0 {
-                            Vector2::new(0.0, (-mouse_pos.y).max(5.0).min(25.0))
+                            Vector2::new(0.0, (-mouse_pos.y).clamp(5.0, 25.0))
                         } else if mouse_pos.y > self.sz_paper.y - 5.0 {
-                            Vector2::new(0.0, -(mouse_pos.y - self.sz_paper.y).max(5.0).min(25.0))
+                            Vector2::new(0.0, -(mouse_pos.y - self.sz_paper.y).clamp(5.0, 25.0))
                         } else {
                             break 'scroll;
                         };

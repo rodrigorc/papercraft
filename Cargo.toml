@@ -40,6 +40,8 @@ raw-window-handle = "0.5"
 signal-hook = "*"
 opener = "*"
 clipboard = "*"
+glow = "*"
+winit = "*"
 
 [dependencies.imgui]
 version = "*"
@@ -47,31 +49,27 @@ features = ["freetype"]
 
 [dependencies.imgui-sys]
 version = "*"
-#path = "thirdparty/imgui-rs/imgui-sys"
 
 [dependencies.imgui-winit-support]
 version = "*"
-#path = "thirdparty/imgui-rs/imgui-winit-support"
 
 [dependencies.imgui-glow-renderer]
-version = "*"
-#path = "thirdparty/imgui-rs/imgui-glow-renderer"
-
-[dependencies.winit]
-version = "*"
-
-[dependencies.glow]
 version = "*"
 
 [patch.crates-io.glow]
 # this will be the next version, some day
 git = "https://github.com/grovesNL/glow"
 rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"
+
 [patch.crates-io.imgui]
 git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui"
 [patch.crates-io.imgui-sys]
 git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui-sys"
 [patch.crates-io.imgui-winit-support]
 git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui-winit-support"
 [patch.crates-io.imgui-glow-renderer]
 git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui-glow-renderer"

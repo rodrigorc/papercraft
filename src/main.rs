@@ -199,6 +199,12 @@ fn main() {
         _ => { None }
     };
 
+    let last_path = if let Some((_, path)) = &cmd_file_action {
+        path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(String::new)
+    } else {
+        String::new()
+    };
+
     let (icons_tex, _) = load_texture_from_memory(ICONS_PNG, true).unwrap();
     let icons_tex = ig_renderer.texture_map_mut().register(icons_tex).unwrap();
 
@@ -224,6 +230,7 @@ fn main() {
             option_button_height: 0.0,
             file_dialog: None,
             file_action: None,
+            last_path,
             error_message: None,
             confirmable_action: None,
             popup_time_start: Instant::now(),
@@ -555,6 +562,7 @@ struct GlobalContext {
     about_visible: bool,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
+    last_path: String,
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
     popup_time_start: Instant,
@@ -1480,7 +1488,7 @@ impl GlobalContext {
             }
             BoolWithConfirm::Confirmed => {
                 let mut fd = imgui_filedialog::FileDialog::new();
-                fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
+                fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", &self.last_path, "", 1,
                     imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
                 self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
                 open_file_dialog = true;
@@ -1498,7 +1506,7 @@ impl GlobalContext {
         }
         if menu_actions.save_as || save_as {
             let mut fd = imgui_filedialog::FileDialog::new();
-            fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", "", "", 1,
+            fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", &self.last_path, "", 1,
                 imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
             self.file_dialog = Some((fd, "Save as...", FileAction::SaveAsCraft));
             open_file_dialog = true;
@@ -1513,7 +1521,7 @@ impl GlobalContext {
             }
             BoolWithConfirm::Confirmed => {
                 let mut fd = imgui_filedialog::FileDialog::new();
-                fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", &self.last_path, "", 1,
                     imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
                 self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportObj));
                 open_file_dialog = true;
@@ -1530,7 +1538,7 @@ impl GlobalContext {
             }
             BoolWithConfirm::Confirmed => {
                 let mut fd = imgui_filedialog::FileDialog::new();
-                fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+                fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", &self.last_path, "", 1,
                     imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
                 self.file_dialog = Some((fd, "Update with new OBJ...", FileAction::UpdateObj));
                 open_file_dialog = true;
@@ -1539,14 +1547,14 @@ impl GlobalContext {
         }
         if menu_actions.export_obj {
             let mut fd = imgui_filedialog::FileDialog::new();
-            fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", "", "", 1,
+            fd.open("fd", "", "Wavefront (*.obj) {.obj},All files {.*}", &self.last_path, "", 1,
                 imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
             self.file_dialog = Some((fd, "Export OBJ...", FileAction::ExportObj));
             open_file_dialog = true;
         }
         if menu_actions.generate_pdf {
             let mut fd = imgui_filedialog::FileDialog::new();
-            fd.open("fd", "", "PDF document (*.pdf) {.pdf},All files {.*}", "", "", 1,
+            fd.open("fd", "", "PDF document (*.pdf) {.pdf},All files {.*}", &self.last_path, "", 1,
                 imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG);
             self.file_dialog = Some((fd, "Generate PDF...", FileAction::GeneratePdf));
             open_file_dialog = true;
@@ -1580,6 +1588,9 @@ impl GlobalContext {
                         if let Some(file) = fd2.file_path_name() {
                             self.file_action = Some((action, file.into()));
                             open_wait = true;
+                            if let Some(path) = fd2.current_path() {
+                                self.last_path = path;
+                            }
                         }
                     }
                     finish_file_dialog = true;

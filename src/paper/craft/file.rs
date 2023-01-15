@@ -51,8 +51,13 @@ impl Papercraft {
         let f = std::fs::File::open(file_name)?;
         let f = std::io::BufReader::new(f);
         let (matlib, obj) = waveobj::Model::from_reader(f)?;
-        let matlib = waveobj::solve_find_matlib_file(matlib.as_ref(), file_name);
-
+        let matlib = match matlib {
+            Some(matlib) => {
+                Some(waveobj::solve_find_matlib_file(matlib.as_ref(), file_name)
+                    .ok_or_else(|| anyhow!("{} matlib not found", matlib))?)
+            }
+            None => None,
+        };
         let mut texture_map = HashMap::new();
 
         if let Some(matlib) = matlib {
@@ -74,10 +79,11 @@ impl Papercraft {
                             .with_context(err_map)?
                             .decode()
                             .with_context(err_map)?;
-
                         let map_name = map.file_name().and_then(|f| f.to_str())
                             .ok_or_else(|| anyhow!("Invalid texture name"))?;
                         texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
+                    } else {
+                        return Err(anyhow!("{} texture from {} matlib not found", map, matlib.display()));
                     }
                 }
             }

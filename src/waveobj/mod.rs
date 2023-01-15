@@ -25,10 +25,10 @@ pub struct Model {
 
 impl Model {
     //Returns (matlib, model)
-    pub fn from_reader<R: BufRead>(r: R) -> Result<(String, Model)> {
+    pub fn from_reader<R: BufRead>(r: R) -> Result<(Option<String>, Model)> {
         let syn_error = || anyhow!("invalid obj syntax");
 
-        let mut material_lib = String::new();
+        let mut material_lib = None;
         let mut current_material: usize = 0;
         let mut data = Model {
             materials: Vec::new(),
@@ -99,7 +99,7 @@ impl Model {
                 }
                 "mtllib" => {
                     let lib = words.next().ok_or_else(syn_error)?;
-                    material_lib = lib.to_owned();
+                    material_lib = Some(lib.to_owned());
                 }
                 "usemtl" => {
                     let mtl = words.next().ok_or_else(syn_error)?;
@@ -116,7 +116,6 @@ impl Model {
                 }
             }
         }
-
         Ok((material_lib, data))
     }
     pub fn materials(&self) -> impl Iterator<Item = &str> + '_ {

@@ -5,7 +5,7 @@ mkdir papercraft
 cd papercraft
 tar -xf ../source.tar
 source $HOME/.cargo/env
-cargo build --release
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/7/include cargo build --release
 cd ..
 
 export VERSION="$1"
@@ -17,12 +17,9 @@ cp papercraft/distro/papercraft.desktop AppDir/usr/share/applications/
 cp papercraft/distro/com.rodrigorc.papercraft.appdata.xml AppDir/usr/share/metainfo/
 cp papercraft/target/release/papercraft AppDir/usr/bin/
 cp papercraft/src/papercraft.png AppDir/usr/share/icons/hicolor/128x128/apps/
-mkdir -p AppDir/usr/lib/gdk-pixbuf/
-sed /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/*/loaders.cache -e 's/\/usr\/.*\/libpixbuf/libpixbuf/' > AppDir/usr/lib/gdk-pixbuf/loaders.cache
 ./linuxdeploy \
     --appdir=AppDir \
     --desktop-file=AppDir/usr/share/applications/papercraft.desktop \
     --output appimage \
     --exclude-library="libglib-2.0.*" \
-    --library=/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders/libpixbufloader-{png,jpeg,svg,bmp,tga,tiff}.so \
     --custom-apprun=apprun

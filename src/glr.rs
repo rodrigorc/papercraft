@@ -50,6 +50,11 @@ impl Texture {
     pub fn id(&self) -> u32 {
         self.id
     }
+    pub fn into_id(self) -> u32 {
+        let id = self.id;
+        std::mem::forget(self);
+        id
+    }
 }
 
 
@@ -215,7 +220,7 @@ impl Program {
             let _bufs = attribs.bind(self);
             gl::DrawArrays(primitive, 0, attribs.len() as i32);
             if let Err(e) = check_gl() {
-                eprintln!("Error {:?}", e);
+                eprintln!("Error {e:?}");
             }
         }
     }
@@ -443,12 +448,12 @@ macro_rules! attrib {
                     $fv $f: $ft ,
                 )*
             }
-            unsafe impl crate::glr::AttribProvider for $name {
-                fn apply(a: &crate::glr::Attribute) -> Option<(usize, gl::types::GLenum, usize)> {
+            unsafe impl $crate::glr::AttribProvider for $name {
+                fn apply(a: &$crate::glr::Attribute) -> Option<(usize, gl::types::GLenum, usize)> {
                     let name = a.name();
                     $(
                         if name == stringify!($f) {
-                            let (n, t) = <$ft as crate::glr::AttribField>::detail();
+                            let (n, t) = <$ft as $crate::glr::AttribField>::detail();
                             return Some((n, t, memoffset::offset_of!($name, $f)));
                         }
                     )*
@@ -539,12 +544,12 @@ macro_rules! uniform {
                     $fv $f: $ft ,
                 )*
             }
-            impl crate::glr::UniformProvider for $name {
-                fn apply(&self, u: &crate::glr::Uniform) {
+            impl $crate::glr::UniformProvider for $name {
+                fn apply(&self, u: &$crate::glr::Uniform) {
                     let name = u.name();
                     $(
-                        if name == crate::uniform!{ @NAME $f: $ft }  {
-                            <$ft as crate::glr::UniformField>::apply(&self.$f, 1, u.location());
+                        if name == $crate::uniform!{ @NAME $f: $ft }  {
+                            <$ft as $crate::glr::UniformField>::apply(&self.$f, 1, u.location());
                             return;
                         }
                     )*
@@ -848,15 +853,15 @@ impl<TGT: BinderFBOTarget> BinderFramebuffer<TGT> {
     pub fn target(&self) -> GLenum {
         TGT::TARGET
     }
-    pub fn bind(rb: &Framebuffer) -> Self {
+    pub fn bind(fb: &Framebuffer) -> Self {
         unsafe {
-            gl::BindFramebuffer(TGT::TARGET, rb.id);
+            gl::BindFramebuffer(TGT::TARGET, fb.id);
         }
         BinderFramebuffer(0, PhantomData)
     }
-    pub fn rebind(&self, rb: &Framebuffer) {
+    pub fn rebind(&self, fb: &Framebuffer) {
         unsafe {
-            gl::BindFramebuffer(TGT::TARGET, rb.id);
+            gl::BindFramebuffer(TGT::TARGET, fb.id);
         }
     }
 }

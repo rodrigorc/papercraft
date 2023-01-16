@@ -9,10 +9,14 @@ It is not a 3D modelling program. For that I recommend using [Blender][BLENDER].
 
 The interface looks like this:
 
-![image](https://user-images.githubusercontent.com/1128630/168819283-d1918ef0-6298-4230-b25c-64d02a021dce.png)
+![UI](https://user-images.githubusercontent.com/1128630/212488124-2ef11f71-7ab3-4e39-8114-bbd2e9aaa9d5.png)
+
+And the final model is:
+
+<img src="https://user-images.githubusercontent.com/1128630/212487900-c4670eb1-1eff-49a3-9843-5ca23b9d5fc7.jpg" width="300">
 
 Note: the model in the example is based on the [Low-Poly Pikachu][PIKACHU] by Agustin "Flowalistik" Arroyo, published under CC BY-NC-SA 4.0.
-You can get this Papercraft project from the examples directory, with the same license.
+You can get this Papercraft project from the [examples](./examples) directory, with the same license.
 
 ## License
 

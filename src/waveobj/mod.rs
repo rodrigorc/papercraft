@@ -25,10 +25,10 @@ pub struct Model {
 
 impl Model {
     //Returns (matlib, model)
-    pub fn from_reader<R: BufRead>(r: R) -> Result<(String, Model)> {
+    pub fn from_reader<R: BufRead>(r: R) -> Result<(Option<String>, Model)> {
         let syn_error = || anyhow!("invalid obj syntax");
 
-        let mut material_lib = String::new();
+        let mut material_lib = None;
         let mut current_material: usize = 0;
         let mut data = Model {
             materials: Vec::new(),
@@ -99,7 +99,7 @@ impl Model {
                 }
                 "mtllib" => {
                     let lib = words.next().ok_or_else(syn_error)?;
-                    material_lib = lib.to_owned();
+                    material_lib = Some(lib.to_owned());
                 }
                 "usemtl" => {
                     let mtl = words.next().ok_or_else(syn_error)?;
@@ -112,11 +112,10 @@ impl Model {
                 }
                 "s" => { /* smoothing is ignored */}
                 p => {
-                    println!("{}??", p);
+                    println!("{p}??");
                 }
             }
         }
-
         Ok((material_lib, data))
     }
     pub fn materials(&self) -> impl Iterator<Item = &str> + '_ {
@@ -170,7 +169,7 @@ pub fn solve_find_matlib_file(mtl: &Path, obj: &Path) -> Option<PathBuf> {
             return Some(dir);
         }
         // Then without the mtl path
-        dir = obj_dir.clone();
+        dir = obj_dir;
         dir.push(mtl.file_name()?);
         if dir.exists() {
             return Some(dir);
@@ -181,7 +180,7 @@ pub fn solve_find_matlib_file(mtl: &Path, obj: &Path) -> Option<PathBuf> {
             return Some(mtl.to_owned());
         }
         // Then try the same name in a local path
-        let mut dir = obj_dir.clone();
+        let mut dir = obj_dir;
         dir.push(mtl.file_name()?);
         if dir.exists() {
             return Some(dir);
@@ -246,7 +245,7 @@ impl Material {
                     data.map = Some(String::from(map));
                 }
                 p => {
-                    println!("{}??", p);
+                    println!("{p}??");
                 }
            }
         }

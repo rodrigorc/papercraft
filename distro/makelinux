@@ -11,11 +11,24 @@ rm linuxdeploy
 COMMIT="${1:-HEAD}"
 VERSION="$(git describe --tag "$COMMIT")"
 echo Building $COMMIT as $VERSION
+HASH="$(git rev-parse $COMMIT)"
 
 # Send a copy of HEAD to the Docker container
-(cd $(git rev-parse --show-toplevel); git archive --format=tar "$COMMIT") > source.tar
+# git-archive does not work with submodules
+#(cd $(git rev-parse --show-toplevel); git archive --format=tar "$COMMIT") > source.tar
+#git clone --recurse-submodules "$(git rev-parse --show-toplevel)" clone
+rm -rf clone
+rm -f ../source.tar
+git clone -n "$(git rev-parse --show-toplevel)" clone
+cd clone
+git checkout $HASH
+git submodule update --init
+rm -rf .git
+tar cf ../source.tar *
+cd ..
+rm -rf clone
 
-docker run -it -v $(realpath source.tar):/app/source.tar -v cargo:/root/.cargo --device /dev/fuse --cap-add SYS_ADMIN papercraft ./makeappimage "$VERSION"
+docker run -it -v $(realpath source.tar):/app/source.tar --device /dev/fuse --cap-add SYS_ADMIN papercraft ./makeappimage "$VERSION"
 
 CNT="$(docker ps -lq)"
 docker cp "$CNT:/app/Papercraft-$VERSION-x86_64.AppImage" ..

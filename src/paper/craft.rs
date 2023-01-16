@@ -116,7 +116,7 @@ impl PaperOptions {
     pub fn global_to_page(&self, pos: Vector2) -> PageOffset {
         let page_cols = self.page_cols;
         let page_size = Vector2::from(self.page_size);
-        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).min(page_cols as i32).max(0) as u32;
+        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).clamp(0, page_cols as i32) as u32;
         let row = ((pos.y / (page_size.y + PAGE_SEP)) as i32).max(0) as u32;
 
         let page = row * page_cols + col;

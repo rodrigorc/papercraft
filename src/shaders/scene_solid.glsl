@@ -61,5 +61,6 @@ void main(void) {
     {
         base = mix(vec4(0.8, 0.3, 0.3, 1.0), vec4(v_color.rgb, 1.0), v_color.a / 2.0);
     }
-    out_frag_color = vec4(v_light * base.rgb, base.a);
+    // do alpha blending with full-white and output a fully opaque fragment, simulating the texture over paper
+    out_frag_color = vec4(v_light * mix(vec3(1.0, 1.0, 1.0), base.rgb, base.a), 1.0);
 }

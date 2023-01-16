@@ -1,29 +1,75 @@
 [package]
 name = "papercraft"
-version = "1.1.0"
+version = "2.0.0"
+authors = ["Rodrigo Rivas Costa <rodrigorivascosta@gmail.com>"]
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/rodrigorc/papercraft"
+description = "Papercraft is a tool to unwrap 3D models"
 keywords = ["papercraft", "handcraft"]
 
 [profile.release]
 strip = "symbols"
 lto = true
 
+[build-dependencies]
+cc = "*"
+bindgen = "*"
+
 [dependencies]
-gtk = { version = "*", features = ["v3_22"] }
-glib = "*"
-gio = "*"
-cairo-rs = { version = "*", features = ["pdf", "v1_16"] }
+cairo-rs = { version = "0.15", features = ["pdf", "png", "v1_16"] }
 gl_loader = "*"
 cgmath = "*"
 anyhow = "*"
-gdk-pixbuf = "*"
 slotmap = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 gl ="*"
 smallvec = "*"
 zip = "*"
-memoffset = "*"
+memoffset = "0.6"
 bitflags = "*"
+mint = "*"
+image = { version = "*", default_features = false, features = ["png", "jpeg", "jpeg_rayon"] }
+clap = { version = "*", features = ["derive", "cargo"] }
+flate2 = "*"
+
+glutin = "*"
+glutin-winit = "*"
+raw-window-handle = "0.5"
+signal-hook = "*"
+opener = "*"
+clipboard = "*"
+glow = "*"
+winit = "*"
+
+[dependencies.imgui]
+version = "*"
+features = ["freetype"]
+
+[dependencies.imgui-sys]
+version = "*"
+
+[dependencies.imgui-winit-support]
+version = "*"
+
+[dependencies.imgui-glow-renderer]
+version = "*"
+
+[patch.crates-io.glow]
+# this will be the next version, some day
+git = "https://github.com/grovesNL/glow"
+rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"
+
+[patch.crates-io.imgui]
+git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui"
+[patch.crates-io.imgui-sys]
+git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui-sys"
+[patch.crates-io.imgui-winit-support]
+git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui-winit-support"
+[patch.crates-io.imgui-glow-renderer]
+git = "https://github.com/rodrigorc/imgui-rs"
+#path = "thirdparty/imgui-rs/imgui-glow-renderer"

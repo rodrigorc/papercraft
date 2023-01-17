@@ -11,7 +11,7 @@ use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
 use glutin_winit::DisplayBuilder;
 use image::DynamicImage;
-use imgui::ClipboardBackend;
+use imgui::{ClipboardBackend, MouseButton};
 use clipboard::ClipboardProvider;
 use imgui_winit_support::WinitPlatform;
 use raw_window_handle::{HasRawWindowHandle};
@@ -25,8 +25,8 @@ mod paper;
 mod glr;
 mod util_3d;
 mod util_gl;
-mod ui;
 
+mod ui;
 use ui::*;
 
 static LOGO_PNG: &[u8] = include_bytes!("papercraft.png");
@@ -1613,196 +1613,77 @@ impl GlobalContext {
     }
 
     fn run_mouse_actions(&mut self, ui: &imgui::Ui) {
-        let mut ev_state = ModifierType::empty();
-        if ui.io().key_shift {
-            ev_state.insert(ModifierType::SHIFT_MASK);
-        }
-        if ui.io().key_ctrl {
-            ev_state.insert(ModifierType::CONTROL_MASK);
-        }
+
+        let shift_pressed = ui.io().key_shift;
+        let control_pressed = ui.io().key_ctrl;
 
         let mouse_pos = self.scene_ui_status.mouse_pos;
-        match &self.scene_ui_status.action {
-            Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
-                let flags = self.data.scene_motion_notify_event(self.sz_scene, mouse_pos, ev_state);
-                self.add_rebuild(flags);
-                'zoom: {
-                    let dz = match ui.io().mouse_wheel {
-                        x if x < 0.0 => 1.0 / 1.1,
-                        x if x > 0.0 => 1.1,
-                        _ => break 'zoom,
-                    };
-                    self.data.trans_scene.scale *= dz;
-                    self.data.trans_scene.recompute_obj();
-                    self.add_rebuild(RebuildFlags::SCENE_REDRAW);
-                }
-            }
-            Canvas3dAction::DoubleClicked(imgui::MouseButton::Left) => {
-                let selection = self.data.scene_analyze_click(MouseMode::Face,self.sz_scene, mouse_pos);
-                if let ClickResult::Face(i_face) = selection {
-                    let gl_objs = self.data.gl_objs.as_ref().unwrap();
-                    // Compute the average of all the faces flat with the selected one, and move it to the center of the paper.
-                    // Some vertices are counted twice, but they tend to be in diagonally opposed so the compensate, and it is an approximation anyways.
-                    let mut center = Vector2::zero();
-                    let mut n = 0.0;
-                    for i_face in self.data.papercraft.get_flat_faces(i_face) {
-                        let idx = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
-                        for i in idx .. idx + 3 {
-                            center += gl_objs.paper_vertices[i].pos;
-                            n += 1.0;
-                        }
-                    }
-                    center /= n;
-                    self.data.trans_paper.mx[2][0] = -center.x * self.data.trans_paper.mx[0][0];
-                    self.data.trans_paper.mx[2][1] = -center.y * self.data.trans_paper.mx[1][1];
-                    self.add_rebuild(RebuildFlags::SCENE_REDRAW);
-                }
-            }
-            Canvas3dAction::Released(imgui::MouseButton::Left) => {
-                ev_state.insert(ModifierType::BUTTON1_MASK);
-                let selection = self.data.scene_analyze_click(self.data.mode, self.sz_scene, mouse_pos);
-                match (self.data.mode, selection) {
-                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                        let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
-                            self.data.try_join_strip(i_edge)
-                        } else {
-                            self.data.edge_toggle_cut(i_edge, i_face)
-                        };
-                        if let Some(undo) = undo {
-                            self.data.push_undo_action(undo);
-                        }
-                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                    }
-                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                        self.data.papercraft.edge_toggle_tab(i_edge);
-                        self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                    }
-                    (_, ClickResult::Face(f)) => {
-                        let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK));
-                        self.add_rebuild(flags);
-                    }
-                    (_, ClickResult::None) => {
-                        let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK));
-                        self.add_rebuild(flags);
-                    }
-                    _ => {}
+        if self.scene_ui_status.action != Canvas3dAction::None {
+            'zoom: {
+                let dz = match ui.io().mouse_wheel {
+                    x if x < 0.0 => 1.0 / 1.1,
+                    x if x > 0.0 => 1.1,
+                    _ => break 'zoom,
                 };
-            }
-            Canvas3dAction::Dragging(bt) => {
-                match bt {
-                    imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
-                    imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
-                    _ => ()
-                }
-                let flags = self.data.scene_motion_notify_event(self.sz_scene, mouse_pos, ev_state);
+                let flags = self.data.scene_zoom(self.sz_scene, mouse_pos, dz);
                 self.add_rebuild(flags);
             }
-            _ => {}
         }
+        let flags = match &self.scene_ui_status.action {
+            Canvas3dAction::Hovering => {
+                self.data.scene_hover_event(self.sz_scene, mouse_pos)
+            }
+            Canvas3dAction::Pressed(MouseButton::Left) |
+            Canvas3dAction::Dragging(MouseButton::Left) => {
+                self.data.scene_button1_click_event(self.sz_scene, mouse_pos)
+            }
+            Canvas3dAction::Pressed(MouseButton::Right) |
+            Canvas3dAction::Dragging(MouseButton::Right) => {
+                self.data.scene_button2_click_event(self.sz_scene, mouse_pos)
+            }
+            Canvas3dAction::DoubleClicked(MouseButton::Left) => {
+                self.data.scene_button1_dblclick_event(self.sz_scene, mouse_pos)
+            }
+            Canvas3dAction::Released(MouseButton::Left) => {
+                self.data.scene_button1_release_event(self.sz_scene, mouse_pos, shift_pressed, control_pressed)
+            }
+            _ => RebuildFlags::empty(),
+        };
+        self.add_rebuild(flags);
 
         let mouse_pos = self.paper_ui_status.mouse_pos;
-        match &self.paper_ui_status.action {
-            Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) => {
-                if self.paper_ui_status.action == Canvas3dAction::Hovering {
-                    self.data.rotation_center = None;
-                    self.data.grabbed_island = None;
-                }
-
-                let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
+        if self.paper_ui_status.action != Canvas3dAction::None {
+            'zoom: {
+                let dz = match ui.io().mouse_wheel {
+                    x if x < 0.0 => 1.0 / 1.1,
+                    x if x > 0.0 => 1.1,
+                    _ => break 'zoom,
+                };
+                let flags = self.data.paper_zoom(self.sz_paper, mouse_pos, dz);
                 self.add_rebuild(flags);
-
-                'zoom: {
-                    let dz = match ui.io().mouse_wheel {
-                        x if x < 0.0 => 1.0 / 1.1,
-                        x if x > 0.0 => 1.1,
-                        _ => break 'zoom,
-                    };
-                    let pos = mouse_pos - self.sz_paper / 2.0;
-                    self.data.trans_paper.mx = Matrix3::from_translation(pos) * Matrix3::from_scale(dz) * Matrix3::from_translation(-pos) * self.data.trans_paper.mx;
-                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
-                }
             }
-            Canvas3dAction::Clicked(imgui::MouseButton::Left) |
-            Canvas3dAction::DoubleClicked(imgui::MouseButton::Left) => {
-                ev_state.insert(ModifierType::BUTTON1_MASK);
-
-                let selection = self.data.paper_analyze_click(self.data.mode, self.sz_paper, mouse_pos);
-                match (self.data.mode, selection) {
-                    (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                        self.data.grabbed_island = None;
-
-                        let undo = if ev_state.contains(ModifierType::SHIFT_MASK) {
-                            self.data.try_join_strip(i_edge)
-                        } else {
-                            self.data.edge_toggle_cut(i_edge, i_face)
-                        };
-                        if let Some(undo) = undo {
-                            self.data.push_undo_action(undo);
-                        }
-                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                    }
-                    (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                        self.data.papercraft.edge_toggle_tab(i_edge);
-                        self.data.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION);
-                    }
-                    (_, ClickResult::Face(f)) => {
-                        let flags = self.data.set_selection(ClickResult::Face(f), true, ev_state.contains(ModifierType::CONTROL_MASK));
-                        self.add_rebuild(flags);
-                        if self.modifiable() {
-                            let undo_action: Vec<_> = self.data.selected_islands
-                                .iter()
-                                .map(|&i_island| {
-                                    let island = self.data.papercraft.island_by_key(i_island).unwrap();
-                                    UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
-                                })
-                                .collect();
-                            self.data.grabbed_island.get_or_insert_with(Vec::new).extend(undo_action);
-                        }
-                    }
-                    (_, ClickResult::None) => {
-                        let flags = self.data.set_selection(ClickResult::None, true, ev_state.contains(ModifierType::CONTROL_MASK));
-                        self.add_rebuild(flags);
-                        self.data.grabbed_island = None;
-                    }
-                    _ => {}
-                }
-            }
-            Canvas3dAction::Dragging(bt) => {
-                match bt {
-                    imgui::MouseButton::Left => ev_state.insert(ModifierType::BUTTON1_MASK),
-                    imgui::MouseButton::Right => ev_state.insert(ModifierType::BUTTON2_MASK),
-                    _ => ()
-                }
-                let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
-                self.add_rebuild(flags);
-
-                //Scroll timer, if rotating the piece do not do the scroll, it will not go well.
-                'scroll: {
-                    if !ev_state.contains(ModifierType::SHIFT_MASK) && self.data.grabbed_island.is_some() {
-                        let delta = if mouse_pos.x < 5.0 {
-                            Vector2::new((-mouse_pos.x).clamp(5.0, 25.0), 0.0)
-                        } else if mouse_pos.x > self.sz_paper.x - 5.0 {
-                            Vector2::new(-(mouse_pos.x - self.sz_paper.x).clamp(5.0, 25.0), 0.0)
-                        } else if mouse_pos.y < 5.0 {
-                            Vector2::new(0.0, (-mouse_pos.y).clamp(5.0, 25.0))
-                        } else if mouse_pos.y > self.sz_paper.y - 5.0 {
-                            Vector2::new(0.0, -(mouse_pos.y - self.sz_paper.y).clamp(5.0, 25.0))
-                        } else {
-                            break 'scroll;
-                        };
-                        let delta = delta / 2.0;
-                        self.data.last_cursor_pos += delta;
-                        self.data.trans_paper.mx = Matrix3::from_translation(delta) * self.data.trans_paper.mx;
-                        let flags = self.data.paper_motion_notify_event(self.sz_paper, mouse_pos, ev_state);
-                        self.add_rebuild(flags | RebuildFlags::PAPER_REDRAW);
-                    }
-                }
-            }
-            _ => {}
         }
-
+        let flags = match &self.paper_ui_status.action {
+            Canvas3dAction::Hovering => {
+                self.data.paper_hover_event(self.sz_paper, mouse_pos)
+            }
+            Canvas3dAction::Clicked(MouseButton::Left) |
+            Canvas3dAction::DoubleClicked(MouseButton::Left) => {
+                self.data.paper_button1_click_event(self.sz_paper, mouse_pos, shift_pressed, control_pressed, self.modifiable())
+            }
+            Canvas3dAction::Pressed(MouseButton::Right) |
+            Canvas3dAction::Dragging(MouseButton::Right) => {
+                self.data.paper_button2_event(self.sz_paper, mouse_pos)
+            }
+            Canvas3dAction::Pressed(MouseButton::Left) => {
+                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_pressed)
+            }
+            Canvas3dAction::Dragging(MouseButton::Left) => {
+                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_pressed)
+            }
+            _ => RebuildFlags::empty(),
+        };
+        self.add_rebuild(flags);
     }
 
     fn render_scene(&mut self) {
@@ -2311,11 +2192,11 @@ impl Default for Canvas3dStatus {
 enum Canvas3dAction {
     None,
     Hovering,
-    Clicked(imgui::MouseButton),
-    Pressed(imgui::MouseButton),
-    Released(imgui::MouseButton),
-    Dragging(imgui::MouseButton),
-    DoubleClicked(imgui::MouseButton),
+    Clicked(MouseButton),
+    Pressed(MouseButton),
+    Released(MouseButton),
+    Dragging(MouseButton),
+    DoubleClicked(MouseButton),
 }
 
 fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
@@ -2341,26 +2222,26 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
         Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) | Canvas3dAction::Clicked(_) | Canvas3dAction::DoubleClicked(_) => {
             if !hovered {
                 Canvas3dAction::None
-            } else if ui.is_mouse_dragging(imgui::MouseButton::Left) {
-                Canvas3dAction::Dragging(imgui::MouseButton::Left)
-            } else if ui.is_mouse_dragging(imgui::MouseButton::Right) {
-                Canvas3dAction::Dragging(imgui::MouseButton::Right)
-            } else if ui.is_mouse_double_clicked(imgui::MouseButton::Left) {
-                Canvas3dAction::DoubleClicked(imgui::MouseButton::Left)
-            } else if ui.is_mouse_double_clicked(imgui::MouseButton::Right) {
-                Canvas3dAction::DoubleClicked(imgui::MouseButton::Right)
-            } else if ui.is_mouse_clicked(imgui::MouseButton::Left) {
-                Canvas3dAction::Clicked(imgui::MouseButton::Left)
-            } else if ui.is_mouse_clicked(imgui::MouseButton::Right) {
-                Canvas3dAction::Clicked(imgui::MouseButton::Right)
-            } else if ui.is_mouse_released(imgui::MouseButton::Left) {
-                Canvas3dAction::Released(imgui::MouseButton::Left)
-            } else if ui.is_mouse_released(imgui::MouseButton::Right) {
-                Canvas3dAction::Released(imgui::MouseButton::Right)
-            } else if ui.is_mouse_down(imgui::MouseButton::Left) {
-                Canvas3dAction::Pressed(imgui::MouseButton::Left)
-            } else if ui.is_mouse_down(imgui::MouseButton::Right) {
-                Canvas3dAction::Pressed(imgui::MouseButton::Right)
+            } else if ui.is_mouse_dragging(MouseButton::Left) {
+                Canvas3dAction::Dragging(MouseButton::Left)
+            } else if ui.is_mouse_dragging(MouseButton::Right) {
+                Canvas3dAction::Dragging(MouseButton::Right)
+            } else if ui.is_mouse_double_clicked(MouseButton::Left) {
+                Canvas3dAction::DoubleClicked(MouseButton::Left)
+            } else if ui.is_mouse_double_clicked(MouseButton::Right) {
+                Canvas3dAction::DoubleClicked(MouseButton::Right)
+            } else if ui.is_mouse_clicked(MouseButton::Left) {
+                Canvas3dAction::Clicked(MouseButton::Left)
+            } else if ui.is_mouse_clicked(MouseButton::Right) {
+                Canvas3dAction::Clicked(MouseButton::Right)
+            } else if ui.is_mouse_released(MouseButton::Left) {
+                Canvas3dAction::Released(MouseButton::Left)
+            } else if ui.is_mouse_released(MouseButton::Right) {
+                Canvas3dAction::Released(MouseButton::Right)
+            } else if ui.is_mouse_down(MouseButton::Left) {
+                Canvas3dAction::Pressed(MouseButton::Left)
+            } else if ui.is_mouse_down(MouseButton::Right) {
+                Canvas3dAction::Pressed(MouseButton::Right)
             } else {
                 Canvas3dAction::Hovering
             }
@@ -2368,8 +2249,8 @@ fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
         Canvas3dAction::None | Canvas3dAction::Released(_) => {
             // If the mouse is entered while dragging, it does not count, as if captured by other
             if hovered &&
-                !ui.is_mouse_dragging(imgui::MouseButton::Left) &&
-                !ui.is_mouse_dragging(imgui::MouseButton::Right)
+                !ui.is_mouse_dragging(MouseButton::Left) &&
+                !ui.is_mouse_dragging(MouseButton::Right)
             {
                 Canvas3dAction::Hovering
             } else {

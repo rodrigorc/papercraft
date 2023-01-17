@@ -1,3 +1,4 @@
+/* Everything in this crate is public so that it can be freely used from main.rs */
 use std::{collections::HashMap, ops::ControlFlow, path::{Path, PathBuf}};
 use cgmath::{
     prelude::*,
@@ -59,15 +60,6 @@ pub enum UndoAction {
     EdgeCut { i_edge: EdgeIndex },
     EdgeJoin { join_result: JoinResult },
     DocConfig { options: PaperOptions, island_pos: HashMap<FaceIndex, (Rad<f32>, Vector2)> },
-}
-
-bitflags::bitflags! {
-    pub struct ModifierType: u32 {
-        const BUTTON1_MASK = 0x0001;
-        const BUTTON2_MASK = 0x0002;
-        const SHIFT_MASK = 0x0008;
-        const CONTROL_MASK = 0x0010;
-    }
 }
 
 bitflags::bitflags! {
@@ -1207,96 +1199,235 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    pub fn scene_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: ModifierType) -> RebuildFlags {
+    pub fn scene_zoom(&mut self, _size: Vector2, _pos: Vector2, zoom: f32) -> RebuildFlags {
+        self.trans_scene.scale *= zoom;
+        self.trans_scene.recompute_obj();
+        RebuildFlags::SCENE_REDRAW
+    }
+    #[must_use]
+    pub fn scene_hover_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
+        self.last_cursor_pos = pos;
+        let selection = self.scene_analyze_click(self.mode, size, pos);
+        self.set_selection(selection, false, false)
+    }
+    #[must_use]
+    pub fn scene_button1_click_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
-        if ev_state.contains(ModifierType::BUTTON1_MASK) {
-            // Rotate, half angles
-            let ang = delta / 200.0 / 2.0;
-            let cosy = ang.x.cos();
-            let siny = ang.x.sin();
-            let cosx = ang.y.cos();
-            let sinx = ang.y.sin();
-            let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
-            let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
+        // Rotate, half angles
+        let ang = delta / 200.0 / 2.0;
+        let cosy = ang.x.cos();
+        let siny = ang.x.sin();
+        let cosx = ang.y.cos();
+        let sinx = ang.y.sin();
+        let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
+        let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
 
-            self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
-            self.trans_scene.recompute_obj();
-            RebuildFlags::SCENE_REDRAW
-        } else if ev_state.contains(ModifierType::BUTTON2_MASK) {
-            // Translate
-            let delta = delta / 50.0;
-            self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
-            self.trans_scene.recompute_obj();
-            RebuildFlags::SCENE_REDRAW
-        } else {
-            let selection = self.scene_analyze_click(self.mode, size, pos);
-            self.set_selection(selection, false, false)
+        self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
+        self.trans_scene.recompute_obj();
+        RebuildFlags::SCENE_REDRAW
+    }
+    #[must_use]
+    pub fn scene_button2_click_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
+        let delta = pos - self.last_cursor_pos;
+        self.last_cursor_pos = pos;
+        // Translate
+        let delta = delta / 50.0;
+        self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
+        self.trans_scene.recompute_obj();
+        RebuildFlags::SCENE_REDRAW
+    }
+    #[must_use]
+    pub fn scene_button1_dblclick_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
+        let selection = self.scene_analyze_click(MouseMode::Face, size, pos);
+        let ClickResult::Face(i_face) = selection else {
+            return RebuildFlags::empty();
+        };
+        let gl_objs = self.gl_objs.as_ref().unwrap();
+        // Compute the average of all the faces flat with the selected one, and move it to the center of the paper.
+        // Some vertices are counted twice, but they tend to be in diagonally opposed so the compensate, and it is an approximation anyways.
+        let mut center = Vector2::zero();
+        let mut n = 0.0;
+        for i_face in self.papercraft.get_flat_faces(i_face) {
+            let idx = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+            for i in idx .. idx + 3 {
+                center += gl_objs.paper_vertices[i].pos;
+                n += 1.0;
+            }
+        }
+        center /= n;
+        self.trans_paper.mx[2][0] = -center.x * self.trans_paper.mx[0][0];
+        self.trans_paper.mx[2][1] = -center.y * self.trans_paper.mx[1][1];
+        RebuildFlags::SCENE_REDRAW
+    }
+    #[must_use]
+    pub fn scene_button1_release_event(&mut self, size: Vector2, pos: Vector2, join_strip: bool, add_to_sel: bool) -> RebuildFlags {
+        let selection = self.scene_analyze_click(self.mode, size, pos);
+        match (self.mode, selection) {
+            (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
+                let undo = if join_strip {
+                    self.try_join_strip(i_edge)
+                } else {
+                    self.edge_toggle_cut(i_edge, i_face)
+                };
+                if let Some(undo) = undo {
+                    self.push_undo_action(undo);
+                }
+                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+            }
+            (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                self.papercraft.edge_toggle_tab(i_edge);
+                self.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
+                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+            }
+            (_, ClickResult::Face(f)) => {
+                self.set_selection(ClickResult::Face(f), true, add_to_sel)
+            }
+            (_, ClickResult::None) => {
+                self.set_selection(ClickResult::None, true, add_to_sel)
+            }
+            _ => RebuildFlags::empty(),
         }
     }
-
     #[must_use]
-    pub fn paper_motion_notify_event(&mut self, size: Vector2, pos: Vector2, ev_state: ModifierType) -> RebuildFlags {
+    pub fn paper_button2_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
-        if ev_state.contains(ModifierType::BUTTON2_MASK) {
-            // Translate
-            self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
-            RebuildFlags::PAPER_REDRAW
-        } else if ev_state.contains(ModifierType::BUTTON1_MASK) && self.grabbed_island.is_some() {
-            // Move island
-            if !self.selected_islands.is_empty() {
-                // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
-                let undo = std::mem::take(self.grabbed_island.as_mut().unwrap());
-                self.push_undo_action(undo);
+        // Translate
+        self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
+        RebuildFlags::PAPER_REDRAW
+    }
+    #[must_use]
+    pub fn paper_button1_grab_event(&mut self, size: Vector2, pos: Vector2, rotating: bool) -> RebuildFlags {
+        let delta = pos - self.last_cursor_pos;
+        self.last_cursor_pos = pos;
 
-                let rotating = ev_state.contains(ModifierType::SHIFT_MASK);
-                if !rotating {
-                    if let Some(c) = &mut self.rotation_center {
-                        *c += delta;
+        // Check if any island is to be moved
+        if self.selected_islands.is_empty() {
+            return RebuildFlags::empty();
+        }
+
+        // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
+        if let Some(undo) = self.grabbed_island.as_mut() {
+            let undo = std::mem::take(undo);
+            self.push_undo_action(undo);
+        }
+
+        if rotating {
+            // Rotate island
+            let center = *self.rotation_center.get_or_insert(pos);
+            //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
+            if (pos - center).magnitude() > 10.0 {
+                let pcenter = self.trans_paper.paper_click(size, center);
+                let ppos_prev = self.trans_paper.paper_click(size, pos - delta);
+                let ppos = self.trans_paper.paper_click(size, pos);
+                let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
+                for &i_island in &self.selected_islands {
+                    if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
+                        island.rotate(angle, pcenter);
                     }
                 }
-
-                if rotating {
-                    // Rotate island
-                    let center = *self.rotation_center.get_or_insert(pos);
-                    //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
-                    if (pos - center).magnitude() > 10.0 {
-                        let pcenter = self.trans_paper.paper_click(size, center);
-                        let ppos_prev = self.trans_paper.paper_click(size, pos - delta);
-                        let ppos = self.trans_paper.paper_click(size, pos);
-                        let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
-                        for &i_island in &self.selected_islands {
-                            if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
-                                island.rotate(angle, pcenter);
-                            }
-                        }
-                    }
-                } else {
-                    // Move island
-                    let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
-                    for &i_island in &self.selected_islands {
-                        if let Some(island) = self.papercraft.island_by_key(i_island) {
-                            if !self.papercraft.options().is_inside_canvas(island.location() + delta_scaled) {
-                                self.last_cursor_pos -= delta;
-                                return RebuildFlags::empty();
-                            }
-                        }
-                    }
-                    for &i_island in &self.selected_islands {
-                        if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
-                            island.translate(delta_scaled);
-                        }
-                    }
-                }
-                RebuildFlags::PAPER
-            } else {
-                RebuildFlags::empty()
             }
         } else {
-            let selection = self.paper_analyze_click(self.mode, size, pos);
-            self.set_selection(selection, false, false)
+            // Move island
+            let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
+            for &i_island in &self.selected_islands {
+                if let Some(island) = self.papercraft.island_by_key(i_island) {
+                    if !self.papercraft.options().is_inside_canvas(island.location() + delta_scaled) {
+                        self.last_cursor_pos -= delta;
+                        return RebuildFlags::empty();
+                    }
+                }
+            }
+            for &i_island in &self.selected_islands {
+                if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
+                    island.translate(delta_scaled);
+                }
+            }
+            // When moving an island the center of rotation is preserved as the original clicked point
+            if let Some(c) = &mut self.rotation_center {
+                *c += delta;
+            }
+            'scroll: {
+                //If the mouse is outside of the canvas, do as if it were inside, so it can be scrolled in the next tick
+                let delta = if pos.x < 5.0 {
+                    Vector2::new((-pos.x).clamp(5.0, 25.0), 0.0)
+                } else if pos.x > size.x - 5.0 {
+                    Vector2::new(-(pos.x - size.x).clamp(5.0, 25.0), 0.0)
+                } else if pos.y < 5.0 {
+                    Vector2::new(0.0, (-pos.y).clamp(5.0, 25.0))
+                } else if pos.y > size.y - 5.0 {
+                    Vector2::new(0.0, -(pos.y - size.y).clamp(5.0, 25.0))
+                } else {
+                    break 'scroll;
+                };
+                let delta = delta / 2.0;
+                self.last_cursor_pos += delta;
+                self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
+            }
         }
+        RebuildFlags::PAPER
+    }
+    pub fn paper_button1_click_event(&mut self, size: Vector2, pos: Vector2, join_strip: bool, add_to_sel: bool, modifiable: bool) -> RebuildFlags {
+        let selection = self.paper_analyze_click(self.mode, size, pos);
+        match (self.mode, selection) {
+            (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
+                self.grabbed_island = None;
+
+                let undo = if join_strip {
+                    self.try_join_strip(i_edge)
+                } else {
+                    self.edge_toggle_cut(i_edge, i_face)
+                };
+                if let Some(undo) = undo {
+                    self.push_undo_action(undo);
+                }
+                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+            }
+            (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
+                self.papercraft.edge_toggle_tab(i_edge);
+                self.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
+                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+            }
+            (_, ClickResult::Face(f)) => {
+                let flags = self.set_selection(ClickResult::Face(f), true, add_to_sel);
+                if modifiable {
+                    let undo_action: Vec<_> = self.selected_islands
+                        .iter()
+                        .map(|&i_island| {
+                            let island = self.papercraft.island_by_key(i_island).unwrap();
+                            UndoAction::IslandMove { i_root: island.root_face(), prev_rot: island.rotation(), prev_loc: island.location() }
+                        })
+                        .collect();
+                        self.grabbed_island.get_or_insert_with(Vec::new).extend(undo_action);
+                }
+                flags
+            }
+            (_, ClickResult::None) => {
+                self.grabbed_island = None;
+                self.set_selection(ClickResult::None, true, add_to_sel)
+            }
+            _ => RebuildFlags::empty()
+        }
+    }
+    #[must_use]
+    pub fn paper_zoom(&mut self, size: Vector2, pos: Vector2, zoom: f32) -> RebuildFlags {
+        let pos = pos - size / 2.0;
+        let tr = Matrix3::from_translation(pos) * Matrix3::from_scale(zoom) * Matrix3::from_translation(-pos);
+        self.trans_paper.mx = tr * self.trans_paper.mx;
+        // If there is a rotation center keep it at the same relative point
+        if let Some(c) = &mut self.rotation_center {
+            *c = pos + zoom * (*c - pos);
+        }
+        RebuildFlags::PAPER_REDRAW
+}
+    #[must_use]
+    pub fn paper_hover_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
+        self.last_cursor_pos = pos;
+        let selection = self.paper_analyze_click(self.mode, size, pos);
+        self.rotation_center = None;
+        self.grabbed_island = None;
+        self.set_selection(selection, false, false)
     }
 
     #[must_use]

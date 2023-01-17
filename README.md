@@ -9,7 +9,7 @@ It is not a 3D modelling program. For that I recommend using [Blender][BLENDER].
 
 The interface looks like this:
 
-![UI](https://user-images.githubusercontent.com/1128630/212488124-2ef11f71-7ab3-4e39-8114-bbd2e9aaa9d5.png)
+![UI](https://user-images.githubusercontent.com/1128630/212970567-75e869b7-7024-4d0c-95f7-58fd447fb67b.png)
 
 And the final model is:
 
@@ -73,7 +73,7 @@ You can also move the pieces in any other mode, but this one disables clicking o
 
 In the menu Edit / Document properties you can edit many options related to the document as a whole:
 
-![image](https://user-images.githubusercontent.com/1128630/170358231-37c8d240-bc70-4d68-af88-53dfba44f361.png)
+![Document properties](https://user-images.githubusercontent.com/1128630/212969449-167b321a-3683-40db-b7ac-312ee38c8ea0.png)
 
 * Model scale: the units in the original OBJ model are assumed to be millimeters. This value scales up or down that measure to make the final model bigger or smaller.
   You can check the final size of the model in the information box below.

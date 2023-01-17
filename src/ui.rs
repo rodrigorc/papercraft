@@ -1303,14 +1303,15 @@ impl PapercraftContext {
         self.last_cursor_pos = pos;
 
         // Check if any island is to be moved
-        if self.selected_islands.is_empty() {
-            return RebuildFlags::empty();
-        }
-
-        // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
-        if let Some(undo) = self.grabbed_island.as_mut() {
-            let undo = std::mem::take(undo);
-            self.push_undo_action(undo);
+        match (self.selected_islands.is_empty(), self.grabbed_island.as_mut()) {
+            (false, Some(undo)) => {
+                // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
+                let undo = std::mem::take(undo);
+                self.push_undo_action(undo);
+            }
+            _ => {
+                return RebuildFlags::empty();
+            }
         }
 
         if rotating {

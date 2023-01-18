@@ -89,6 +89,11 @@ fn build_imgui_filedialog() -> Result<()> {
         .file(Path::new(igfd_path).join("ImGuiFileDialog.cpp"))
         .compile("libimguifd.a");
 
+    println!("cargo:rerun-if-changed=ImGuiFileDialogWrapper.h");
+    for entry in std::fs::read_dir(igfd_path)? {
+        let entry = entry?;
+        println!("cargo:rerun-if-changed={}", entry.path().display());
+    }
     Ok(())
 }
 

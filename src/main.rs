@@ -190,8 +190,11 @@ fn main() {
         data.mode = MouseMode::ReadOnly;
     }
     let mut cmd_file_action = match cli {
-        Cli { name: Some(name), .. }  => {
+        Cli { name: Some(name), read_only: false, .. }  => {
             Some((FileAction::OpenCraft, name))
+        }
+        Cli { name: Some(name), read_only: true, .. }  => {
+            Some((FileAction::OpenCraftReadOnly, name))
         }
         Cli { import: Some(import), .. }  => {
             Some((FileAction::ImportObj, import))
@@ -515,6 +518,7 @@ struct GLFixedObjects {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum FileAction {
     OpenCraft,
+    OpenCraftReadOnly,
     SaveAsCraft,
     ImportObj,
     UpdateObj,
@@ -525,7 +529,8 @@ enum FileAction {
 impl FileAction {
     fn title(&self) -> &'static str {
         match self {
-            FileAction::OpenCraft => "Opening...",
+            FileAction::OpenCraft |
+            FileAction::OpenCraftReadOnly => "Opening...",
             FileAction::SaveAsCraft => "Saving...",
             FileAction::ImportObj => "Importing...",
             FileAction::UpdateObj => "Updating...",
@@ -1489,7 +1494,7 @@ impl GlobalContext {
             BoolWithConfirm::Confirmed => {
                 let mut fd = imgui_filedialog::FileDialog::new();
                 fd.open("fd", "", "Papercraft (*.craft) {.craft},All files {.*}", &self.last_path, "", 1,
-                    imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG);
+                    imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::SHOW_READ_ONLY_CHECK | imgui_filedialog::Flags::NO_DIALOG);
                 self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
                 open_file_dialog = true;
             }
@@ -1586,6 +1591,11 @@ impl GlobalContext {
                 if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
                     if fd2.ok() {
                         if let Some(file) = fd2.file_path_name() {
+                            let action = if action == FileAction::OpenCraft && fd2.readonly() {
+                                FileAction::OpenCraftReadOnly
+                            } else {
+                                action
+                            };
                             self.file_action = Some((action, file.into()));
                             open_wait = true;
                             if let Some(path) = fd2.current_path() {
@@ -1880,7 +1890,13 @@ impl GlobalContext {
     }
     fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
         match action {
-            FileAction::OpenCraft => self.open_craft(file_name)?,
+            FileAction::OpenCraft => {
+                self.open_craft(file_name)?;
+            }
+            FileAction::OpenCraftReadOnly => {
+                self.open_craft(file_name)?;
+                self.data.mode = MouseMode::ReadOnly;
+            }
             FileAction::SaveAsCraft => {
                 self.save_as_craft(&file_name)?;
                 self.data.modified = false;
@@ -1900,16 +1916,12 @@ impl GlobalContext {
         Ok(())
     }
     fn open_craft(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
-        let read_only = !self.modifiable();
         let fs = std::fs::File::open(&file_name)
             .with_context(|| format!("Error opening file {}", file_name.as_ref().display()))?;
         let fs = std::io::BufReader::new(fs);
         let papercraft = Papercraft::load(fs)
             .with_context(|| format!("Error loading file {}", file_name.as_ref().display()))?;
         self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), self.sz_scene, self.sz_paper);
-        if read_only {
-            self.data.mode = MouseMode::ReadOnly;
-        }
         Ok(())
     }
     fn save_as_craft(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {

@@ -39,6 +39,7 @@ bitflags! {
         const READ_ONLY_FILE_NAME_FIELD = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_ReadOnlyFileNameField;
         const CASE_INSENSITIVE_EXTENSION = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_CaseInsensitiveExtention;
         const MODAL = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_Modal;
+        const SHOW_READ_ONLY_CHECK = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_ShowReadOnlyCheck;
         const DEFAULT = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_Default;
     }
 }
@@ -130,6 +131,11 @@ impl DisplayToken<'_> {
     pub fn ok(&self) -> bool {
         unsafe {
             fd::IGFD_IsOk(self.fd.ptr)
+        }
+    }
+    pub fn readonly(&self) -> bool {
+        unsafe {
+            fd::IGFD_IsReadonly(self.fd.ptr)
         }
     }
     pub fn file_path_name(&self) -> Option<String> {

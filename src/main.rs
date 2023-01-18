@@ -178,22 +178,14 @@ fn main() {
         .expect("failed to create renderer");
 
     // Initialize papercraft status
-    let sz_dummy = Vector2::new(1.0, 1.0);
-    let papercraft = Papercraft::empty();
-    let mut data = PapercraftContext::from_papercraft(
-        papercraft,
-        None,
-        sz_dummy,
-        sz_dummy
-    );
-    if cli.read_only {
-        data.mode = MouseMode::ReadOnly;
-    }
+    let mut data = PapercraftContext::from_papercraft(Papercraft::empty());
     let mut cmd_file_action = match cli {
         Cli { name: Some(name), read_only: false, .. }  => {
             Some((FileAction::OpenCraft, name))
         }
         Cli { name: Some(name), read_only: true, .. }  => {
+            // This will be rewritten when/if the file is loaded, but setting it here avoids a UI flicker
+            data.ui.mode = MouseMode::ReadOnly;
             Some((FileAction::OpenCraftReadOnly, name))
         }
         Cli { import: Some(import), .. }  => {
@@ -222,6 +214,7 @@ fn main() {
             _font_default, font_big, font_small,
             icons_tex, logo_tex, logo_size,
             data,
+            file_name: None,
             rebuild: RebuildFlags::all(),
             splitter_pos: 1.0,
             sz_full: Vector2::new(2.0, 1.0),
@@ -242,20 +235,7 @@ fn main() {
     });
     imgui_context.io_mut().config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
 
-    //In Linux convert fatal signals to panics to save the crash backup
-    #[cfg(target_os="linux")]
-    {
-        use signal_hook::consts::signal::*;
-        use signal_hook::iterator::SignalsInfo;
-        let event_loop = event_loop.create_proxy();
-        std::thread::spawn(move || {
-            let sigs = vec![SIGHUP, SIGINT, SIGTERM];
-            let mut signals: SignalsInfo = SignalsInfo::new(&sigs).unwrap();
-            for _ in &mut signals {
-                let _ = event_loop.send_event(());
-            }
-        });
-    }
+    install_crash_backup(event_loop.create_proxy(), ctx.as_ptr());
 
     // Main loop, if it panics or somewhat crashes, try to save a backup
     let ctx0 = Rc::clone(&ctx);
@@ -382,7 +362,6 @@ fn main() {
                         .expect("error rendering imgui");
                     gl_window.surface.swap_buffers(&gl_context).unwrap();
                 }
-                event::Event::UserEvent(()) | //Signal
                 event::Event::WindowEvent {
                     event: event::WindowEvent::CloseRequested,
                     ..
@@ -390,6 +369,11 @@ fn main() {
                     last_input_time = Instant::now();
                     last_input_frame = 0;
                     quit_requested = ctx.borrow().check_modified();
+                }
+                event::Event::UserEvent(()) => {
+                    //Fatal signal: it is about to be aborted, just stop whatever it is doing and
+                    //let the crash handler do its job.
+                    loop { std::thread::park(); }
                 }
                 event::Event::DeviceEvent { .. } => {
                     // Ignore deviceevents, they are not used and they wake up the loop needlessly
@@ -403,15 +387,7 @@ fn main() {
         });
     }));
     if let Err(e) = maybe_fatal {
-        let ctx = ctx0.borrow();
-        if ctx.data.modified {
-            let mut dir = std::env::temp_dir();
-            dir.push(format!("crashed-{}.craft", std::process::id()));
-            eprintln!("Papercraft panicked! Saving backup at \"{}\"", dir.display());
-            if let Err(e) = ctx.save_as_craft(dir) {
-                eprintln!("backup failed with {e:?}");
-            }
-        }
+        ctx0.borrow().save_backup_on_panic();
         std::panic::resume_unwind(e);
     }
 }
@@ -559,6 +535,7 @@ struct GlobalContext {
     logo_tex: imgui::TextureId,
     logo_size: Vector2,
     data: PapercraftContext,
+    file_name: Option<PathBuf>,
     rebuild: RebuildFlags,
     splitter_pos: f32,
     sz_full: Vector2,
@@ -601,7 +578,7 @@ struct MenuActions {
 
 impl GlobalContext {
     fn modifiable(&self) -> bool {
-        self.data.mode != MouseMode::ReadOnly
+        self.data.ui.mode != MouseMode::ReadOnly
     }
     fn build_modal_error_message(&mut self, ui: &imgui::Ui) {
         if let Some(_pop) = ui.modal_popup_config("Error")
@@ -771,7 +748,7 @@ impl GlobalContext {
                 if ui.image_button_config("Face", self.icons_tex, [btn_sz, btn_sz])
                     .uv0([0.0, 0.0])
                     .uv1([n, n])
-                    .background_col(if self.data.mode == MouseMode::Face { color_active } else { color_trans })
+                    .background_col(if self.data.ui.mode == MouseMode::Face { color_active } else { color_trans })
                     .build()
                 {
                     self.set_mouse_mode(MouseMode::Face);
@@ -780,7 +757,7 @@ impl GlobalContext {
                 if ui.image_button_config("Edge", self.icons_tex, [btn_sz, btn_sz])
                     .uv0([n, 0.0])
                     .uv1([2.0*n, n])
-                    .background_col(if self.data.mode == MouseMode::Edge { color_active } else { color_trans })
+                    .background_col(if self.data.ui.mode == MouseMode::Edge { color_active } else { color_trans })
                     .build()
                 {
                     self.set_mouse_mode(MouseMode::Edge);
@@ -789,7 +766,7 @@ impl GlobalContext {
                 if ui.image_button_config("Tab", self.icons_tex, [btn_sz, btn_sz])
                     .uv0([0.0, n])
                     .uv1([n, 2.0*n])
-                    .background_col(if self.data.mode == MouseMode::Tab { color_active } else { color_trans })
+                    .background_col(if self.data.ui.mode == MouseMode::Tab { color_active } else { color_trans })
                     .build()
                 {
                     self.set_mouse_mode(MouseMode::Tab);
@@ -843,8 +820,8 @@ impl GlobalContext {
                 self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 self.sz_scene = sz_scene;
 
-                self.data.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
-                self.data.trans_scene.persp_inv = self.data.trans_scene.persp.invert().unwrap();
+                self.data.ui.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
+                self.data.ui.trans_scene.persp_inv = self.data.ui.trans_scene.persp.invert().unwrap();
 
                 let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
 
@@ -878,7 +855,7 @@ impl GlobalContext {
                 self.sz_paper = sz_paper;
 
                 let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
-                self.data.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
+                self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
 
                 unsafe {
                     let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
@@ -910,7 +887,7 @@ impl GlobalContext {
 
         advance_cursor(ui, 0.25, 0.0);
 
-        let status_text = match self.data.mode {
+        let status_text = match self.data.ui.mode {
             MouseMode::Face => "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it.",
             MouseMode::Edge => "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads.",
             MouseMode::Tab => "Tab mode. Click on an edge to swap the side of a tab.",
@@ -947,12 +924,7 @@ impl GlobalContext {
                 let (keep_opened, apply) = self.build_full_options_inner_dialog(ui, options);
                 self.options_opened = keep_opened;
                 if let Some(apply_options) = apply {
-                    let island_pos = self.data.papercraft.islands()
-                        .map(|(_, island)| (island.root_face(), (island.rotation(), island.location())))
-                        .collect();
-                    self.data.show_textures = apply_options.texture;
-                    let old_options = self.data.papercraft.set_options(apply_options);
-                    self.data.push_undo_action(vec![UndoAction::DocConfig { options: old_options, island_pos }]);
+                    self.data.set_papercraft_options(apply_options);
                     self.add_rebuild(RebuildFlags::all());
                 }
             } else {
@@ -960,19 +932,19 @@ impl GlobalContext {
                 self.options_opened = Some(options);
             }
         }
-        // If the windows was closed with the X
+        // If the window was closed with the X
         if !options_opened {
             self.options_opened = None;
         }
     }
 
     fn build_read_only_options_inner_dialog(&self, ui: &imgui::Ui, options: &PaperOptions) {
-        let n_pieces = self.data.papercraft.num_islands();
-        let n_tabs = self.data.papercraft.model().edges()
-            .filter(|(e, _)| matches!(self.data.papercraft.edge_status(*e), paper::EdgeStatus::Cut(_)))
+        let n_pieces = self.data.papercraft().num_islands();
+        let n_tabs = self.data.papercraft().model().edges()
+            .filter(|(e, _)| matches!(self.data.papercraft().edge_status(*e), paper::EdgeStatus::Cut(_)))
             .count();
         let bbox = util_3d::bounding_box_3d(
-            self.data.papercraft.model()
+            self.data.papercraft().model()
             .vertices()
             .map(|(_, v)| v.pos())
             );
@@ -1240,7 +1212,7 @@ impl GlobalContext {
                 {
                     self.options_opened = match self.options_opened {
                         Some(_) => None,
-                        None => Some(self.data.papercraft.options().clone()),
+                        None => Some(self.data.papercraft().options().clone()),
                     }
                 }
 
@@ -1249,19 +1221,19 @@ impl GlobalContext {
 
                     if ui.menu_item_config("Face/Island")
                         .shortcut("F5")
-                        .build_with_ref(&mut (self.data.mode == MouseMode::Face))
+                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Face))
                     {
                         self.set_mouse_mode(MouseMode::Face);
                     }
                     if ui.menu_item_config("Split/Join edge")
                         .shortcut("F6")
-                        .build_with_ref(&mut (self.data.mode == MouseMode::Edge))
+                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Edge))
                     {
                         self.set_mouse_mode(MouseMode::Edge);
                     }
                     if ui.menu_item_config("Tabs")
                         .shortcut("F7")
-                        .build_with_ref(&mut (self.data.mode == MouseMode::Tab))
+                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Tab))
                     {
                         self.set_mouse_mode(MouseMode::Tab);
                     }
@@ -1283,28 +1255,33 @@ impl GlobalContext {
             });
             ui.menu("View", || {
                 if ui.menu_item_config("Textures")
-                    .enabled(self.data.papercraft.options().texture)
-                    .build_with_ref(&mut self.data.show_textures)
+                    .enabled(self.data.papercraft().options().texture)
+                    .shortcut("T")
+                    .build_with_ref(&mut self.data.ui.show_textures)
                 {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
                 if ui.menu_item_config("3D lines")
-                    .build_with_ref(&mut self.data.show_3d_lines)
+                    .shortcut("D")
+                    .build_with_ref(&mut self.data.ui.show_3d_lines)
                 {
                     self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 }
                 if ui.menu_item_config("Tabs")
-                    .build_with_ref(&mut self.data.show_tabs)
+                    .shortcut("B")
+                    .build_with_ref(&mut self.data.ui.show_tabs)
                 {
                     self.add_rebuild(RebuildFlags::PAPER);
                 }
                 if ui.menu_item_config("X-ray selection")
-                    .build_with_ref(&mut self.data.xray_selection)
+                    .shortcut("X")
+                    .build_with_ref(&mut self.data.ui.xray_selection)
                 {
                     self.add_rebuild(RebuildFlags::SELECTION);
                 }
                 if ui.menu_item_config("Highlight overlaps")
-                    .build_with_ref(&mut self.data.highlight_overlaps)
+                    .shortcut("H")
+                    .build_with_ref(&mut self.data.ui.highlight_overlaps)
                 {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 }
@@ -1341,6 +1318,26 @@ impl GlobalContext {
             }
             if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::S) {
                 menu_actions.save = true;
+            }
+            if ui.is_key_pressed(imgui::Key::X) {
+                self.data.ui.xray_selection = !self.data.ui.xray_selection;
+                self.add_rebuild(RebuildFlags::SELECTION);
+            }
+            if ui.is_key_pressed(imgui::Key::H) {
+                self.data.ui.highlight_overlaps = !self.data.ui.highlight_overlaps;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+            }
+            if ui.is_key_pressed(imgui::Key::T) && self.data.papercraft().options().texture {
+                self.data.ui.show_textures = !self.data.ui.show_textures;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
+            }
+            if ui.is_key_pressed(imgui::Key::D) {
+                self.data.ui.show_3d_lines = !self.data.ui.show_3d_lines;
+                self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+            }
+            if ui.is_key_pressed(imgui::Key::B) {
+                self.data.ui.show_tabs = !self.data.ui.show_tabs;
+                self.add_rebuild(RebuildFlags::PAPER);
             }
         }
 
@@ -1459,7 +1456,7 @@ impl GlobalContext {
                 }
                 UndoResult::ModelAndOptions => {
                     if let Some(o) = self.options_opened.as_mut() {
-                        *o = self.data.papercraft.options().clone();
+                        *o = self.data.papercraft().options().clone();
                     }
                     self.add_rebuild(RebuildFlags::all());
                 }
@@ -1489,7 +1486,7 @@ impl GlobalContext {
             BoolWithConfirm::None => {}
         }
         if menu_actions.save {
-            match &self.data.file_name {
+            match &self.file_name {
                 Some(f) => {
                     self.file_action = Some((FileAction::SaveAsCraft, f.clone()));
                     open_wait = true;
@@ -1691,8 +1688,8 @@ impl GlobalContext {
         let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
         let mut u = Uniforms3D {
-            m: self.data.trans_scene.persp * self.data.trans_scene.view,
-            mnormal: self.data.trans_scene.mnormal, // should be transpose of inverse
+            m: self.data.ui.trans_scene.persp * self.data.ui.trans_scene.view,
+            mnormal: self.data.ui.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
             tex: 0,
             line_top: 0,
@@ -1707,7 +1704,7 @@ impl GlobalContext {
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             gl::BindVertexArray(gl_fixs.vao.id());
-            if let (Some(tex), true) = (&self.data.gl_objs.textures, self.data.show_textures) {
+            if let (Some(tex), true) = (&self.data.gl_objs().textures, self.data.ui.show_textures) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 u.texturize = 1;
@@ -1716,28 +1713,28 @@ impl GlobalContext {
             gl::PolygonOffset(1.0, 1.0);
             gl::Enable(gl::POLYGON_OFFSET_FILL);
 
-            gl_fixs.prg_scene_solid.draw(&u, (&self.data.gl_objs.vertices, &self.data.gl_objs.vertices_sel), gl::TRIANGLES);
+            gl_fixs.prg_scene_solid.draw(&u, (&self.data.gl_objs().vertices, &self.data.gl_objs().vertices_sel), gl::TRIANGLES);
 
-            if self.data.show_3d_lines {
+            if self.data.ui.show_3d_lines {
                 //Joined edges
                 gl::LineWidth(1.0);
                 gl::Disable(gl::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs.vertices_edge_joint, gl::LINES);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_joint, gl::LINES);
 
                 //Cut edges
                 gl::LineWidth(3.0);
                 gl::Enable(gl::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs.vertices_edge_cut, gl::LINES);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_cut, gl::LINES);
             }
 
             //Selected edge
-            if self.data.selected_edge.is_some() {
+            if self.data.has_selected_edge() {
                 gl::LineWidth(5.0);
                 gl::Enable(gl::LINE_SMOOTH);
-                if self.data.xray_selection {
+                if self.data.ui.xray_selection {
                     u.line_top = 1;
                 }
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs.vertices_edge_sel, gl::LINES);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_sel, gl::LINES);
             }
         }
     }
@@ -1745,7 +1742,7 @@ impl GlobalContext {
         let gl_fixs = &self.gl_fixs;
 
         let mut u = Uniforms2D {
-            m: self.data.trans_paper.ortho * self.data.trans_paper.mx,
+            m: self.data.ui.trans_paper.ortho * self.data.ui.trans_paper.mx,
             tex: 0,
             frac_dash: 0.5,
             line_color: Rgba::new(0.0, 0.0, 0.0, 0.0),
@@ -1766,7 +1763,7 @@ impl GlobalContext {
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             gl::BindVertexArray(gl_fixs.vao.id());
-            if let (Some(tex), true) = (&self.data.gl_objs.textures, self.data.show_textures) {
+            if let (Some(tex), true) = (&self.data.gl_objs().textures, self.data.ui.show_textures) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 u.texturize = 1;
@@ -1776,19 +1773,19 @@ impl GlobalContext {
             gl::Enable(gl::STENCIL_TEST);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::ZERO);
 
-            gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices_page, gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_page, gl::TRIANGLES);
 
             gl::Disable(gl::STENCIL_TEST);
 
             u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
 
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_margin, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_margin, gl::LINES);
 
             u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
 
             // Line Tabs
-            if self.data.show_tabs {
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_tab_edge, gl::LINES);
+            if self.data.ui.show_tabs {
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_tab_edge, gl::LINES);
             }
 
             gl::Enable(gl::STENCIL_TEST);
@@ -1796,35 +1793,35 @@ impl GlobalContext {
 
 
             // Solid Tabs
-            if self.data.show_tabs {
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices_tab, gl::TRIANGLES);
+            if self.data.ui.show_tabs {
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_tab, gl::TRIANGLES);
             }
             gl::Disable(gl::STENCIL_TEST);
 
             // Borders
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_border, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_border, gl::LINES);
 
             gl::Enable(gl::STENCIL_TEST);
 
             // Textured faces
-            gl_fixs.prg_paper_solid.draw(&u, (&self.data.gl_objs.paper_vertices, &self.data.gl_objs.paper_vertices_sel) , gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, (&self.data.gl_objs().paper_vertices, &self.data.gl_objs().paper_vertices_sel) , gl::TRIANGLES);
 
             gl::Disable(gl::STENCIL_TEST);
 
             // Creases
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_crease, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, gl::LINES);
 
             // Selected edge
-            if self.data.selected_edge.is_some() {
-                u.line_color = PapercraftContext::color_edge(self.data.mode);
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_sel, gl::LINES);
+            if self.data.has_selected_edge() {
+                u.line_color = color_edge(self.data.ui.mode);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_sel, gl::LINES);
             }
 
             // Draw the highlight overlap if "1 < STENCIL"
             gl::Enable(gl::STENCIL_TEST);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::KEEP);
 
-            if self.data.highlight_overlaps {
+            if self.data.ui.highlight_overlaps {
                 // Draw the overlapped highlight if "1 < STENCIL"
                 let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.9) };
                 gl::StencilFunc(gl::LESS, 1, 0xff);
@@ -1848,14 +1845,14 @@ impl GlobalContext {
         self.rebuild.insert(flags);
     }
     fn set_mouse_mode(&mut self, mode: MouseMode) {
-        self.data.mode = mode;
+        self.data.ui.mode = mode;
         self.add_rebuild(RebuildFlags::SELECTION | RebuildFlags::SCENE_REDRAW | RebuildFlags::PAPER_REDRAW);
     }
 
     fn title(&self, with_unsaved_check: bool) -> String {
         let unsaved = if with_unsaved_check && self.data.modified { "*" } else { "" };
         let app_name = "Papercraft";
-        match &self.data.file_name {
+        match &self.file_name {
             Some(f) => {
                 let name = if let Some(name) = f.file_name() {
                     name.to_string_lossy()
@@ -1874,22 +1871,26 @@ impl GlobalContext {
         }
     }
     fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+        let file_name = file_name.as_ref();
         match action {
             FileAction::OpenCraft => {
                 self.open_craft(file_name)?;
+                self.file_name = Some(file_name.to_owned());
             }
             FileAction::OpenCraftReadOnly => {
                 self.open_craft(file_name)?;
-                self.data.mode = MouseMode::ReadOnly;
+                self.data.ui.mode = MouseMode::ReadOnly;
+                self.file_name = Some(file_name.to_owned());
             }
             FileAction::SaveAsCraft => {
-                self.save_as_craft(&file_name)?;
+                self.save_as_craft(file_name)?;
                 self.data.modified = false;
-                self.data.file_name = Some(file_name.as_ref().to_owned());
+                self.file_name = Some(file_name.to_owned());
             }
             FileAction::ImportObj => {
                 self.import_obj(file_name)?;
                 self.data.modified = true;
+                self.file_name = None;
             }
             FileAction::UpdateObj => {
                 self.update_obj(file_name)?;
@@ -1900,61 +1901,61 @@ impl GlobalContext {
         }
         Ok(())
     }
-    fn open_craft(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
-        let fs = std::fs::File::open(&file_name)
-            .with_context(|| format!("Error opening file {}", file_name.as_ref().display()))?;
+    fn open_craft(&mut self, file_name: &Path) -> anyhow::Result<()> {
+        let fs = std::fs::File::open(file_name)
+            .with_context(|| format!("Error opening file {}", file_name.display()))?;
         let fs = std::io::BufReader::new(fs);
         let papercraft = Papercraft::load(fs)
-            .with_context(|| format!("Error loading file {}", file_name.as_ref().display()))?;
-        self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), self.sz_scene, self.sz_paper);
+            .with_context(|| format!("Error loading file {}", file_name.display()))?;
+        self.data = PapercraftContext::from_papercraft(papercraft);
+        self.data.reset_views(self.sz_scene, self.sz_paper);
         self.rebuild = RebuildFlags::all();
         Ok(())
     }
-    fn save_as_craft(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
-        let f = std::fs::File::create(&file_name)
-            .with_context(|| format!("Error creating file {}", file_name.as_ref().display()))?;
+    fn save_as_craft(&self, file_name: &Path) -> anyhow::Result<()> {
+        let f = std::fs::File::create(file_name)
+            .with_context(|| format!("Error creating file {}", file_name.display()))?;
         let f = std::io::BufWriter::new(f);
-        self.data.papercraft.save(f)
-            .with_context(|| format!("Error saving file {}", file_name.as_ref().display()))?;
+        self.data.papercraft().save(f)
+            .with_context(|| format!("Error saving file {}", file_name.display()))?;
         Ok(())
     }
-    fn import_obj(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
-        let papercraft = Papercraft::import_waveobj(file_name.as_ref())
-            .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
-        self.data = PapercraftContext::from_papercraft(papercraft, None, self.sz_scene, self.sz_paper);
+    fn import_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
+        let papercraft = Papercraft::import_waveobj(file_name)
+            .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?;
+        self.data = PapercraftContext::from_papercraft(papercraft);
+        self.data.reset_views(self.sz_scene, self.sz_paper);
         self.rebuild = RebuildFlags::all();
         Ok(())
     }
-    fn update_obj(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
-        let prev_mode = self.data.mode;
-        let mut new_papercraft = Papercraft::import_waveobj(file_name.as_ref())
-            .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
-        new_papercraft.update_from_obj(&self.data.papercraft);
-        let tp = self.data.trans_paper.clone();
-        let ts = self.data.trans_scene.clone();
-        let original_file_name = self.data.file_name.clone();
-        self.data = PapercraftContext::from_papercraft(new_papercraft, original_file_name.as_deref(), self.sz_scene, self.sz_paper);
+    fn update_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
+        let mut new_papercraft = Papercraft::import_waveobj(file_name)
+            .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?;
+        new_papercraft.update_from_obj(self.data.papercraft());
+
+        // Preserve the main user visible settings
+        let prev_ui = self.data.ui.clone();
+        self.data = PapercraftContext::from_papercraft(new_papercraft);
         self.rebuild = RebuildFlags::all();
-        self.data.mode = prev_mode;
-        self.data.trans_paper = tp;
-        self.data.trans_scene = ts;
+        self.data.ui = prev_ui;
+        self.data.modified = true;
         Ok(())
     }
-    fn export_obj(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
-        self.data.papercraft.export_waveobj(file_name.as_ref())
-            .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
+    fn export_obj(&self, file_name: &Path) -> anyhow::Result<()> {
+        self.data.papercraft().export_waveobj(file_name.as_ref())
+            .with_context(|| format!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
-    fn generate_pdf(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
         unsafe { gl::Disable(gl::SCISSOR_TEST); }
         let _backup = BackupGlConfig::backup();
         self.generate_pdf_impl(file_name.as_ref())
-            .with_context(|| format!("Error exporting to {}", file_name.as_ref().display()))?;
+            .with_context(|| format!("Error exporting to {}", file_name.display()))?;
         unsafe { gl::Enable(gl::SCISSOR_TEST); }
         Ok(())
     }
     fn generate_pdf_impl(&self, file_name: &Path) -> anyhow::Result<()> {
-        let options = self.data.papercraft.options();
+        let options = self.data.papercraft().options();
         let resolution = options.resolution as f32;
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
         let page_size_mm = Vector2::from(options.page_size);
@@ -2024,7 +2025,7 @@ impl GlobalContext {
             let mut texturize = 0;
 
             gl::BindVertexArray(gl_fixs.vao.id());
-            if let (Some(tex), true) = (&self.data.gl_objs.textures, options.texture) {
+            if let (Some(tex), true) = (&self.data.gl_objs().textures, options.texture) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 texturize = 1;
@@ -2070,23 +2071,23 @@ impl GlobalContext {
                 };
                 // Line Tabs
                 if tab_style != TabStyle::None {
-                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_tab_edge, gl::LINES);
+                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_tab_edge, gl::LINES);
                 }
 
                 // Solid Tabs
                 if tab_style != TabStyle::None && tab_style != TabStyle::White {
-                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices_tab, gl::TRIANGLES);
+                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_tab, gl::TRIANGLES);
                 }
 
                 // Borders
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_border, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_border, gl::LINES);
 
                 // Textured faces
                 gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices, gl::TRIANGLES);
 
                 // Creases
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_crease, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, gl::LINES);
                 // End render
 
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
@@ -2124,6 +2125,17 @@ impl GlobalContext {
             drop(pdf);
         }
         Ok(())
+    }
+    fn save_backup_on_panic(&self) {
+        if !self.data.modified {
+            return;
+        }
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("crashed-{}.craft", std::process::id()));
+        eprintln!("Papercraft panicked! Saving backup at \"{}\"", dir.display());
+        if let Err(e) = self.save_as_craft(&dir) {
+            eprintln!("backup failed with {e:?}");
+        }
     }
 }
 
@@ -2374,3 +2386,34 @@ impl ClipboardBackend for MyClipboard {
         }
     }
 }
+
+
+#[cfg(target_os="linux")]
+#[inline(never)]
+fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>, ptr: *mut GlobalContext) {
+    // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
+    // the user's data, what's the worst that could happen?
+    struct PtrWrapper(*mut GlobalContext);
+    unsafe impl Send for PtrWrapper {}
+    let ctx = PtrWrapper(ptr);
+    use signal_hook::consts::signal::*;
+    use signal_hook::iterator::Signals;
+    std::thread::spawn(move || {
+        let sigs = vec![SIGHUP, SIGINT, SIGTERM];
+        let mut signals = Signals::new(sigs).unwrap();
+        let _ = signals.into_iter().next();
+        let _ = event_loop.send_event(());
+        let _ = std::thread::Builder::new().spawn(move || {
+            let _ = signals.into_iter().next();
+            eprintln!("Double signal, aborting!");
+            std::process::abort();
+        });
+        let ctx = ctx;
+        let ctx = unsafe { &*ctx.0 };
+        ctx.save_backup_on_panic();
+        std::process::abort();
+    });
+}
+
+#[cfg(not(target_os="linux"))]
+fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<()>, _ptr: *mut GlobalContext) { }

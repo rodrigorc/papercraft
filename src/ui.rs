@@ -1,5 +1,5 @@
 /* Everything in this crate is public so that it can be freely used from main.rs */
-use std::{collections::HashMap, ops::ControlFlow, path::{Path, PathBuf}};
+use std::{collections::HashMap, ops::ControlFlow};
 use cgmath::{
     prelude::*,
     Deg, Rad,
@@ -51,6 +51,14 @@ pub enum MouseMode {
     ReadOnly,
 }
 
+pub fn color_edge(mode: MouseMode) -> Rgba {
+    match mode {
+        MouseMode::Edge => Rgba::new(0.5, 0.5, 1.0, 1.0),
+        MouseMode::Tab => Rgba::new(0.0, 0.5, 0.0, 1.0),
+        MouseMode::Face | // this should not happen, because in face mode there is no edge selection
+        MouseMode::ReadOnly => Rgba::new(0.0, 0.0, 0.0, 1.0),
+    }
+}
 
 //UndoItem cannot store IslandKey, because they are dynamic, use the root of the island instead
 #[derive(Debug)]
@@ -60,6 +68,7 @@ pub enum UndoAction {
     EdgeCut { i_edge: EdgeIndex },
     EdgeJoin { join_result: JoinResult },
     DocConfig { options: PaperOptions, island_pos: HashMap<FaceIndex, (Rad<f32>, Vector2)> },
+    Modified,
 }
 
 bitflags::bitflags! {
@@ -79,31 +88,36 @@ bitflags::bitflags! {
 //Objects that are recreated when a new model is loaded
 pub struct PapercraftContext {
     // The model
-    pub file_name: Option<PathBuf>,
-    pub papercraft: Papercraft,
-    pub undo_stack: Vec<Vec<UndoAction>>,
+    papercraft: Papercraft,
+    gl_objs: GLObjects,
+
+    undo_stack: Vec<Vec<UndoAction>>,
     pub modified: bool,
 
-    pub gl_objs: GLObjects,
-
     // State
-    pub selected_face: Option<FaceIndex>,
-    pub selected_edge: Option<EdgeIndex>,
-    pub selected_islands: Vec<IslandKey>,
+    selected_face: Option<FaceIndex>,
+    selected_edge: Option<EdgeIndex>,
+    selected_islands: Vec<IslandKey>,
     // Contains the UndoActions if these islands are to be moved, the actual grabbed islands are selected_islands
-    pub grabbed_island: Option<Vec<UndoAction>>,
+    grabbed_island: Option<Vec<UndoAction>>,
+    last_cursor_pos: Vector2,
+    rotation_center: Option<Vector2>,
 
-    pub last_cursor_pos: Vector2,
-    pub rotation_center: Option<Vector2>,
+    pub ui: UiSettings,
+}
 
+#[derive(Clone)]
+pub struct UiSettings {
     pub mode: MouseMode,
+    pub trans_scene: Transformation3D,
+    pub trans_paper: TransformationPaper,
+
+    // These shouldn't really be here but in main.rs
     pub show_textures: bool,
     pub show_tabs: bool,
     pub show_3d_lines: bool,
     pub xray_selection: bool,
     pub highlight_overlaps: bool,
-    pub trans_scene: Transformation3D,
-    pub trans_paper: TransformationPaper,
 }
 
 #[derive(Clone)]
@@ -171,6 +185,31 @@ impl TransformationPaper {
     }
 }
 
+fn default_transformations(obj: Matrix4, sz_scene: Vector2, sz_paper: Vector2, ops: &PaperOptions) -> (Transformation3D, TransformationPaper) {
+    let page = Vector2::from(ops.page_size);
+    let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
+    let mut trans_scene = Transformation3D::new(
+        obj,
+        Vector3::new(0.0, 0.0, -30.0),
+        Quaternion::one(),
+        20.0,
+        persp
+    );
+    let ratio = sz_scene.x / sz_scene.y;
+    trans_scene.set_ratio(ratio);
+
+    let trans_paper = {
+        let mt = Matrix3::from_translation(Vector2::new(-page.x / 2.0, -page.y / 2.0));
+        let ms = Matrix3::from_scale(1.0);
+        let ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
+        TransformationPaper {
+            ortho,
+            mx: ms * mt,
+        }
+    };
+    (trans_scene, trans_paper)
+}
+
 #[derive(Debug)]
 pub enum ClickResult {
     None,
@@ -208,32 +247,21 @@ pub enum UndoResult {
 }
 
 impl PapercraftContext {
-    fn default_transformations(obj: Matrix4, sz_scene: Vector2, sz_paper: Vector2, ops: &PaperOptions) -> (Transformation3D, TransformationPaper) {
-        let page = Vector2::from(ops.page_size);
-        let persp = cgmath::perspective(Deg(60.0), 1.0, 1.0, 100.0);
-        let mut trans_scene = Transformation3D::new(
-            obj,
-            Vector3::new(0.0, 0.0, -30.0),
-            Quaternion::one(),
-            20.0,
-            persp
-        );
-        let ratio = sz_scene.x / sz_scene.y;
-        trans_scene.set_ratio(ratio);
-
-        let trans_paper = {
-            let mt = Matrix3::from_translation(Vector2::new(-page.x / 2.0, -page.y / 2.0));
-            let ms = Matrix3::from_scale(1.0);
-            let ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
-            TransformationPaper {
-                ortho,
-                mx: ms * mt,
-            }
-        };
-        (trans_scene, trans_paper)
+    pub fn papercraft(&self) -> &Papercraft {
+        &self.papercraft
     }
-
-    pub fn from_papercraft(papercraft: Papercraft, file_name: Option<&Path>, sz_scene: Vector2, sz_paper: Vector2) -> PapercraftContext {
+    pub fn gl_objs(&self) -> &GLObjects {
+        &self.gl_objs
+    }
+    pub fn set_papercraft_options(&mut self, options: PaperOptions) {
+        let island_pos = self.papercraft().islands()
+            .map(|(_, island)| (island.root_face(), (island.rotation(), island.location())))
+            .collect();
+        self.ui.show_textures = options.texture;
+        let old_options = self.papercraft.set_options(options);
+        self.push_undo_action(vec![UndoAction::DocConfig { options: old_options, island_pos }]);
+    }
+    pub fn from_papercraft(papercraft: Papercraft) -> PapercraftContext {
         // Compute the bounding box, then move to the center and scale to a standard size
         let (v_min, v_max) = util_3d::bounding_box_3d(
             papercraft.model()
@@ -246,12 +274,12 @@ impl PapercraftContext {
         let mcenter = Matrix4::from_translation(-center);
         let obj = mscale * mcenter;
 
-        let (trans_scene, trans_paper) = Self::default_transformations(obj, sz_scene, sz_paper, papercraft.options());
+        let sz_dummy = Vector2::new(1.0, 1.0);
+        let (trans_scene, trans_paper) = default_transformations(obj, sz_dummy, sz_dummy, papercraft.options());
         let show_textures = papercraft.options().texture;
-        let gl_objs = Self::build_gl_objs(papercraft.model());
+        let gl_objs = GLObjects::new(papercraft.model());
 
         PapercraftContext {
-            file_name: file_name.map(|f| f.to_owned()),
             papercraft,
             undo_stack: Vec::new(),
             modified: false,
@@ -262,146 +290,16 @@ impl PapercraftContext {
             grabbed_island: None,
             last_cursor_pos: Vector2::zero(),
             rotation_center: None,
-            mode: MouseMode::Face,
-            show_textures,
-            show_tabs: true,
-            show_3d_lines: true,
-            xray_selection: true,
-            highlight_overlaps: false,
-            trans_scene,
-            trans_paper,
-        }
-    }
-
-    fn build_gl_objs(model: &Model) -> GLObjects {
-        let images = model
-            .textures()
-            .map(|tex| tex.pixbuf())
-            .collect::<Vec<_>>();
-
-        let sizes = images
-            .iter()
-            .filter_map(|i| i.as_ref())
-            .map(|i| {
-                (i.width(), i.height())
-            });
-        let max_width = sizes.clone().map(|(w, _)| w).max();
-        let max_height = sizes.map(|(_, h)| h).max();
-
-        let textures = match max_width.zip(max_height) {
-            None => None,
-            Some((width, height)) => {
-                let mut blank = None;
-                unsafe {
-                    let textures = glr::Texture::generate();
-                    gl::BindTexture(gl::TEXTURE_2D_ARRAY, textures.id());
-                    gl::TexImage3D(gl::TEXTURE_2D_ARRAY, 0, gl::RGBA8 as i32,
-                                   width as i32, height as i32, images.len() as i32, 0,
-                                   gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
-                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
-                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-
-                    for (layer, image) in images.iter().enumerate() {
-                        if let Some(image) = image {
-                            let scaled_image;
-                            let image = if width == image.width() && height == image.height() {
-                                image
-                            } else {
-                                let scaled = image::imageops::resize(*image, width, height, image::imageops::FilterType::Triangle);
-                                scaled_image = DynamicImage::ImageRgba8(scaled);
-                                &scaled_image
-                            };
-                            let bytes = image.as_bytes();
-                            let (format, type_) = match image {
-                                DynamicImage::ImageLuma8(_) => (gl::RED, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageLumaA8(_) => (gl::RG, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageRgb8(_) => (gl::RGB, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageRgba8(_) => (gl::RGBA, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageLuma16(_) => (gl::RED, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageLumaA16(_) => (gl::RG, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageRgb16(_) => (gl::RGB, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageRgba16(_) => (gl::RGBA, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageRgb32F(_) => (gl::RGB, gl::FLOAT),
-                                DynamicImage::ImageRgba32F(_) => (gl::RGBA, gl::FLOAT),
-                                _ => (gl::RED, gl::UNSIGNED_BYTE), //probably wrong but will not read out of bounds
-                            };
-                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, format, type_, bytes.as_ptr() as *const _);
-                        } else {
-                            let blank = blank.get_or_insert_with(|| {
-                                let c = (0x80u8, 0x80u8, 0x80u8);
-                                vec![c; width as usize * height as usize]
-                            });
-                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, gl::RGB, gl::UNSIGNED_BYTE, blank.as_ptr() as *const _);
-                        }
-                    }
-                    gl::GenerateMipmap(gl::TEXTURE_2D_ARRAY);
-                    Some(textures)
-                }
+            ui: UiSettings {
+                mode: MouseMode::Face,
+                trans_scene,
+                trans_paper,
+                show_textures,
+                show_tabs: true,
+                show_3d_lines: true,
+                xray_selection: true,
+                highlight_overlaps: false,
             }
-        };
-        let mut vertices = Vec::new();
-        let mut face_map = vec![Vec::new(); model.num_textures()];
-        for (i_face, face) in model.faces() {
-            for i_v in face.index_vertices() {
-                let v = &model[i_v];
-                vertices.push(MVertex3D {
-                    pos: v.pos(),
-                    normal: v.normal(),
-                    uv: v.uv(),
-                    mat: face.material(),
-                });
-            }
-            face_map[usize::from(face.material())].push(i_face);
-        }
-
-        let mut face_index = vec![0; model.num_faces()];
-        let mut f_idx = 0;
-        for fm in face_map {
-            for f in fm {
-                face_index[usize::from(f)] = f_idx;
-                f_idx += 1;
-            }
-        }
-
-        let vertices = glr::DynamicVertexArray::from(vertices);
-        let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * model.num_faces()]);
-        let vertices_edge_joint = glr::DynamicVertexArray::new();
-        let vertices_edge_cut = glr::DynamicVertexArray::new();
-        let vertices_edge_sel = glr::DynamicVertexArray::new();
-
-        let paper_vertices = glr::DynamicVertexArray::new();
-        let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * model.num_faces()]);
-        let paper_vertices_edge_border = glr::DynamicVertexArray::new();
-        let paper_vertices_edge_crease = glr::DynamicVertexArray::new();
-        let paper_vertices_tab = glr::DynamicVertexArray::new();
-        let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
-        let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-
-        let paper_vertices_page = glr::DynamicVertexArray::new();
-        let paper_vertices_margin = glr::DynamicVertexArray::new();
-
-        GLObjects {
-            textures,
-            vertices,
-            vertices_sel,
-            vertices_edge_joint,
-            vertices_edge_cut,
-            vertices_edge_sel,
-
-            paper_vertices,
-            paper_vertices_sel,
-            paper_vertices_edge_border,
-            paper_vertices_edge_crease,
-            paper_vertices_tab,
-            paper_vertices_tab_edge,
-            paper_vertices_edge_sel,
-
-            paper_face_index: Vec::new(),
-
-            paper_vertices_page,
-            paper_vertices_margin,
         }
     }
 
@@ -421,7 +319,7 @@ impl PapercraftContext {
     }
 
     pub fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
-        (self.trans_scene, self.trans_paper) = Self::default_transformations(self.trans_scene.obj, sz_scene, sz_paper, self.papercraft.options());
+        (self.ui.trans_scene, self.ui.trans_paper) = default_transformations(self.ui.trans_scene.obj, sz_scene, sz_paper, self.papercraft.options());
     }
 
     fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
@@ -465,7 +363,6 @@ impl PapercraftContext {
             };
 
             let plane = self.papercraft.face_plane(face);
-            //let selected_edge = self.selected_edge == Some(i_edge);
             let v0 = &self.papercraft.model()[i_v0];
             let p0 = plane.project(&v0.pos());
             let pos0 = m.transform_point(Point2::from_vec(p0)).to_vec();
@@ -815,21 +712,13 @@ impl PapercraftContext {
         self.gl_objs.vertices_edge_joint.set(edges_joint);
         self.gl_objs.vertices_edge_cut.set(edges_cut);
     }
-    pub fn color_edge(mode: MouseMode) -> Rgba {
-        match mode {
-            MouseMode::Edge => Rgba::new(0.5, 0.5, 1.0, 1.0),
-            MouseMode::Tab => Rgba::new(0.0, 0.5, 0.0, 1.0),
-            MouseMode::Face | // this should not happen, because in face mode there is no edge selection
-            MouseMode::ReadOnly => Rgba::new(0.0, 0.0, 0.0, 1.0),
-        }
-    }
     fn selection_rebuild(&mut self) {
         let n = self.gl_objs.vertices_sel.len();
         for i in 0..n {
             self.gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
             self.gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_UNSEL.color };
         }
-        let top = self.xray_selection as u8;
+        let top = self.ui.xray_selection as u8;
         for &sel_island in &self.selected_islands {
             if let Some(island) = self.papercraft.island_by_key(sel_island) {
                 self.papercraft.traverse_faces_no_matrix(island, |i_face| {
@@ -859,7 +748,7 @@ impl PapercraftContext {
         }
         if let Some(i_sel_edge) = self.selected_edge {
             let mut edges_sel = Vec::new();
-            let color = Self::color_edge(self.mode);
+            let color = color_edge(self.ui.mode);
             let edge = &self.papercraft.model()[i_sel_edge];
             let p0 = self.papercraft.model()[edge.v0()].pos();
             let p1 = self.papercraft.model()[edge.v1()].pos();
@@ -880,7 +769,7 @@ impl PapercraftContext {
             };
 
             let mut edge_sel = Vec::with_capacity(6);
-            let line_width = LINE_SEL_WIDTH / 2.0 / self.trans_paper.mx[0][0];
+            let line_width = LINE_SEL_WIDTH / 2.0 / self.ui.trans_paper.mx[0][0];
 
             let (v0, v1) = get_vx(i_face_a);
             edge_sel.extend_from_slice(&[
@@ -1031,11 +920,11 @@ impl PapercraftContext {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
-        let height = size.y * self.trans_scene.obj[1][1];
+        let height = size.y * self.ui.trans_scene.obj[1][1];
 
-        let click_camera = self.trans_scene.persp_inv.transform_point(click);
-        let click_obj = self.trans_scene.view_inv.transform_point(click_camera);
-        let camera_obj = self.trans_scene.view_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
+        let click_camera = self.ui.trans_scene.persp_inv.transform_point(click);
+        let click_obj = self.ui.trans_scene.view_inv.transform_point(click_camera);
+        let camera_obj = self.ui.trans_scene.view_inv.transform_point(Point3::new(0.0, 0.0, 0.0));
 
         let ray = (camera_obj.to_vec(), click_obj.to_vec());
 
@@ -1108,8 +997,8 @@ impl PapercraftContext {
     }
 
     pub fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
-        let click = self.trans_paper.paper_click(size, pos);
-        let mx = self.trans_paper.ortho * self.trans_paper.mx;
+        let click = self.ui.trans_paper.paper_click(size, pos);
+        let mx = self.ui.trans_paper.ortho * self.ui.trans_paper.mx;
 
         let mut hit_edge = None;
         let mut hit_face = None;
@@ -1177,14 +1066,14 @@ impl PapercraftContext {
 
     #[must_use]
     pub fn scene_zoom(&mut self, _size: Vector2, _pos: Vector2, zoom: f32) -> RebuildFlags {
-        self.trans_scene.scale *= zoom;
-        self.trans_scene.recompute_obj();
+        self.ui.trans_scene.scale *= zoom;
+        self.ui.trans_scene.recompute_obj();
         RebuildFlags::SCENE_REDRAW
     }
     #[must_use]
     pub fn scene_hover_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
         self.last_cursor_pos = pos;
-        let selection = self.scene_analyze_click(self.mode, size, pos);
+        let selection = self.scene_analyze_click(self.ui.mode, size, pos);
         self.set_selection(selection, false, false)
     }
     #[must_use]
@@ -1200,8 +1089,8 @@ impl PapercraftContext {
         let roty = Quaternion::new(cosy, 0.0, siny, 0.0);
         let rotx = Quaternion::new(cosx, sinx, 0.0, 0.0);
 
-        self.trans_scene.rotation = (roty * rotx * self.trans_scene.rotation).normalize();
-        self.trans_scene.recompute_obj();
+        self.ui.trans_scene.rotation = (roty * rotx * self.ui.trans_scene.rotation).normalize();
+        self.ui.trans_scene.recompute_obj();
         RebuildFlags::SCENE_REDRAW
     }
     #[must_use]
@@ -1210,8 +1099,8 @@ impl PapercraftContext {
         self.last_cursor_pos = pos;
         // Translate
         let delta = delta / 50.0;
-        self.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
-        self.trans_scene.recompute_obj();
+        self.ui.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
+        self.ui.trans_scene.recompute_obj();
         RebuildFlags::SCENE_REDRAW
     }
     #[must_use]
@@ -1232,14 +1121,14 @@ impl PapercraftContext {
             }
         }
         center /= n;
-        self.trans_paper.mx[2][0] = -center.x * self.trans_paper.mx[0][0];
-        self.trans_paper.mx[2][1] = -center.y * self.trans_paper.mx[1][1];
+        self.ui.trans_paper.mx[2][0] = -center.x * self.ui.trans_paper.mx[0][0];
+        self.ui.trans_paper.mx[2][1] = -center.y * self.ui.trans_paper.mx[1][1];
         RebuildFlags::SCENE_REDRAW
     }
     #[must_use]
     pub fn scene_button1_release_event(&mut self, size: Vector2, pos: Vector2, join_strip: bool, add_to_sel: bool) -> RebuildFlags {
-        let selection = self.scene_analyze_click(self.mode, size, pos);
-        match (self.mode, selection) {
+        let selection = self.scene_analyze_click(self.ui.mode, size, pos);
+        match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 let undo = if join_strip {
                     self.try_join_strip(i_edge)
@@ -1270,7 +1159,7 @@ impl PapercraftContext {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
         // Translate
-        self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
+        self.ui.trans_paper.mx = Matrix3::from_translation(delta) * self.ui.trans_paper.mx;
         RebuildFlags::PAPER_REDRAW
     }
     #[must_use]
@@ -1295,9 +1184,9 @@ impl PapercraftContext {
             let center = *self.rotation_center.get_or_insert(pos);
             //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
             if (pos - center).magnitude() > 10.0 {
-                let pcenter = self.trans_paper.paper_click(size, center);
-                let ppos_prev = self.trans_paper.paper_click(size, pos - delta);
-                let ppos = self.trans_paper.paper_click(size, pos);
+                let pcenter = self.ui.trans_paper.paper_click(size, center);
+                let ppos_prev = self.ui.trans_paper.paper_click(size, pos - delta);
+                let ppos = self.ui.trans_paper.paper_click(size, pos);
                 let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
                 for &i_island in &self.selected_islands {
                     if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
@@ -1307,7 +1196,7 @@ impl PapercraftContext {
             }
         } else {
             // Move island
-            let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.trans_paper.mx, delta).unwrap();
+            let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(&self.ui.trans_paper.mx, delta).unwrap();
             for &i_island in &self.selected_islands {
                 if let Some(island) = self.papercraft.island_by_key(i_island) {
                     if !self.papercraft.options().is_inside_canvas(island.location() + delta_scaled) {
@@ -1340,14 +1229,14 @@ impl PapercraftContext {
                 };
                 let delta = delta / 2.0;
                 self.last_cursor_pos += delta;
-                self.trans_paper.mx = Matrix3::from_translation(delta) * self.trans_paper.mx;
+                self.ui.trans_paper.mx = Matrix3::from_translation(delta) * self.ui.trans_paper.mx;
             }
         }
         RebuildFlags::PAPER
     }
     pub fn paper_button1_click_event(&mut self, size: Vector2, pos: Vector2, join_strip: bool, add_to_sel: bool, modifiable: bool) -> RebuildFlags {
-        let selection = self.paper_analyze_click(self.mode, size, pos);
-        match (self.mode, selection) {
+        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
+        match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 self.grabbed_island = None;
 
@@ -1391,7 +1280,7 @@ impl PapercraftContext {
     pub fn paper_zoom(&mut self, size: Vector2, pos: Vector2, zoom: f32) -> RebuildFlags {
         let pos = pos - size / 2.0;
         let tr = Matrix3::from_translation(pos) * Matrix3::from_scale(zoom) * Matrix3::from_translation(-pos);
-        self.trans_paper.mx = tr * self.trans_paper.mx;
+        self.ui.trans_paper.mx = tr * self.ui.trans_paper.mx;
         // If there is a rotation center keep it at the same relative point
         if let Some(c) = &mut self.rotation_center {
             *c = pos + zoom * (*c - pos);
@@ -1401,7 +1290,7 @@ impl PapercraftContext {
     #[must_use]
     pub fn paper_hover_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
         self.last_cursor_pos = pos;
-        let selection = self.paper_analyze_click(self.mode, size, pos);
+        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         self.rotation_center = None;
         self.grabbed_island = None;
         self.set_selection(selection, false, false)
@@ -1464,16 +1353,159 @@ impl PapercraftContext {
                     }
                     res = UndoResult::ModelAndOptions;
                 }
+                UndoAction::Modified => {
+                    self.modified = false;
+                }
             }
         }
         res
     }
-    pub fn push_undo_action(&mut self, action: Vec<UndoAction>) {
+    pub fn push_undo_action(&mut self, mut action: Vec<UndoAction>) {
         if action.is_empty() {
             return;
         }
+        if !self.modified {
+            action.push(UndoAction::Modified);
+            self.modified = true;
+        }
         self.undo_stack.push(action);
-        self.modified = true;
+    }
+    pub fn has_selected_edge(&self) -> bool {
+        self.selected_edge.is_some()
+    }
+}
+
+impl GLObjects {
+    fn new(model: &Model) -> GLObjects {
+        let images = model
+            .textures()
+            .map(|tex| tex.pixbuf())
+            .collect::<Vec<_>>();
+
+        let sizes = images
+            .iter()
+            .filter_map(|i| i.as_ref())
+            .map(|i| {
+                (i.width(), i.height())
+            });
+        let max_width = sizes.clone().map(|(w, _)| w).max();
+        let max_height = sizes.map(|(_, h)| h).max();
+
+        let textures = match max_width.zip(max_height) {
+            None => None,
+            Some((width, height)) => {
+                let mut blank = None;
+                unsafe {
+                    let textures = glr::Texture::generate();
+                    gl::BindTexture(gl::TEXTURE_2D_ARRAY, textures.id());
+                    gl::TexImage3D(gl::TEXTURE_2D_ARRAY, 0, gl::RGBA8 as i32,
+                                   width as i32, height as i32, images.len() as i32, 0,
+                                   gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+
+                    for (layer, image) in images.iter().enumerate() {
+                        if let Some(image) = image {
+                            let scaled_image;
+                            let image = if width == image.width() && height == image.height() {
+                                image
+                            } else {
+                                let scaled = image::imageops::resize(*image, width, height, image::imageops::FilterType::Triangle);
+                                scaled_image = DynamicImage::ImageRgba8(scaled);
+                                &scaled_image
+                            };
+                            let bytes = image.as_bytes();
+                            let (format, type_) = match image {
+                                DynamicImage::ImageLuma8(_) => (gl::RED, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageLumaA8(_) => (gl::RG, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageRgb8(_) => (gl::RGB, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageRgba8(_) => (gl::RGBA, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageLuma16(_) => (gl::RED, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageLumaA16(_) => (gl::RG, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgb16(_) => (gl::RGB, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgba16(_) => (gl::RGBA, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgb32F(_) => (gl::RGB, gl::FLOAT),
+                                DynamicImage::ImageRgba32F(_) => (gl::RGBA, gl::FLOAT),
+                                _ => (gl::RED, gl::UNSIGNED_BYTE), //probably wrong but will not read out of bounds
+                            };
+                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, format, type_, bytes.as_ptr() as *const _);
+                        } else {
+                            let blank = blank.get_or_insert_with(|| {
+                                let c = (0x80u8, 0x80u8, 0x80u8);
+                                vec![c; width as usize * height as usize]
+                            });
+                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, gl::RGB, gl::UNSIGNED_BYTE, blank.as_ptr() as *const _);
+                        }
+                    }
+                    gl::GenerateMipmap(gl::TEXTURE_2D_ARRAY);
+                    Some(textures)
+                }
+            }
+        };
+        let mut vertices = Vec::new();
+        let mut face_map = vec![Vec::new(); model.num_textures()];
+        for (i_face, face) in model.faces() {
+            for i_v in face.index_vertices() {
+                let v = &model[i_v];
+                vertices.push(MVertex3D {
+                    pos: v.pos(),
+                    normal: v.normal(),
+                    uv: v.uv(),
+                    mat: face.material(),
+                });
+            }
+            face_map[usize::from(face.material())].push(i_face);
+        }
+
+        let mut face_index = vec![0; model.num_faces()];
+        let mut f_idx = 0;
+        for fm in face_map {
+            for f in fm {
+                face_index[usize::from(f)] = f_idx;
+                f_idx += 1;
+            }
+        }
+
+        let vertices = glr::DynamicVertexArray::from(vertices);
+        let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * model.num_faces()]);
+        let vertices_edge_joint = glr::DynamicVertexArray::new();
+        let vertices_edge_cut = glr::DynamicVertexArray::new();
+        let vertices_edge_sel = glr::DynamicVertexArray::new();
+
+        let paper_vertices = glr::DynamicVertexArray::new();
+        let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * model.num_faces()]);
+        let paper_vertices_edge_border = glr::DynamicVertexArray::new();
+        let paper_vertices_edge_crease = glr::DynamicVertexArray::new();
+        let paper_vertices_tab = glr::DynamicVertexArray::new();
+        let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
+        let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
+
+        let paper_vertices_page = glr::DynamicVertexArray::new();
+        let paper_vertices_margin = glr::DynamicVertexArray::new();
+
+        GLObjects {
+            textures,
+            vertices,
+            vertices_sel,
+            vertices_edge_joint,
+            vertices_edge_cut,
+            vertices_edge_sel,
+
+            paper_vertices,
+            paper_vertices_sel,
+            paper_vertices_edge_border,
+            paper_vertices_edge_crease,
+            paper_vertices_tab,
+            paper_vertices_tab_edge,
+            paper_vertices_edge_sel,
+
+            paper_face_index: Vec::new(),
+
+            paper_vertices_page,
+            paper_vertices_margin,
+        }
     }
 }
 

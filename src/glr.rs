@@ -80,15 +80,25 @@ impl Drop for EnablerVertexAttribArray {
 pub struct PushViewport([i32; 4]);
 
 impl PushViewport {
-    pub fn push(x: i32, y: i32, width: i32, height: i32) -> PushViewport {
+    pub fn new() -> PushViewport {
         unsafe {
             let mut prev = [0; 4];
             gl::GetIntegerv(gl::VIEWPORT, prev.as_mut_ptr());
-            gl::Viewport(x, y, width, height);
             PushViewport(prev)
         }
     }
+    pub fn push(x: i32, y: i32, width: i32, height: i32) -> PushViewport {
+        let pv = Self::new();
+        pv.viewport(x, y, width, height);
+        pv
+    }
+    pub fn viewport(&self, x: i32, y: i32, width: i32, height: i32) {
+        unsafe {
+            gl::Viewport(x, y, width, height);
+        }
+    }
 }
+
 impl Drop for PushViewport {
     fn drop(&mut self) {
         unsafe {

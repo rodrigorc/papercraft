@@ -222,6 +222,7 @@ fn main() {
             _font_default, font_big, font_small,
             icons_tex, logo_tex, logo_size,
             data,
+            rebuild: RebuildFlags::all(),
             splitter_pos: 1.0,
             sz_full: Vector2::new(2.0, 1.0),
             sz_scene: Vector2::new(1.0, 1.0),
@@ -237,8 +238,6 @@ fn main() {
             error_message: None,
             confirmable_action: None,
             popup_time_start: Instant::now(),
-            render_scene_pending: true,
-            render_paper_pending: true,
         })
     });
     imgui_context.io_mut().config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
@@ -324,7 +323,7 @@ fn main() {
                             .begin();
 
                         drop((_s2, _s1));
-                        let mut ctx = ctx.borrow_mut();
+                        let ctx = &mut *ctx.borrow_mut();
 
                         if let Some(cmd_file_action) = cmd_file_action.take() {
                             ctx.popup_time_start = Instant::now();
@@ -336,13 +335,22 @@ fn main() {
                         ctx.run_menu_actions(ui, &menu_actions);
                         ctx.run_mouse_actions(ui);
 
-                        if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
-                            ctx.render_scene_pending = true;
+                        if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER) {
+                            ctx.data.pre_render(ctx.rebuild);
+                            let _backup = BackupGlConfig::backup();
+                            let vp = glr::PushViewport::new();
+                            if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
+                                let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_scene);
+                                vp.viewport(0, 0, ctx.sz_scene.x as i32, ctx.sz_scene.y as i32);
+                                ctx.render_scene();
+                            }
+                            if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
+                                let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_paper);
+                                vp.viewport(0, 0, ctx.sz_paper.x as i32, ctx.sz_paper.y as i32);
+                                ctx.render_paper();
+                            }
+                            ctx.rebuild = RebuildFlags::empty();
                         }
-                        if ctx.data.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
-                            ctx.render_paper_pending = true;
-                        }
-                        ctx.data.pre_render();
                         let new_title = ctx.title(true);
                         if new_title != old_title {
                             gl_window.window.set_title(&new_title);
@@ -373,11 +381,6 @@ fn main() {
                         .render(draw_data)
                         .expect("error rendering imgui");
                     gl_window.surface.swap_buffers(&gl_context).unwrap();
-                    {
-                        let mut ctx = ctx.borrow_mut();
-                        ctx.render_scene_pending = false;
-                        ctx.render_paper_pending = false;
-                    }
                 }
                 event::Event::UserEvent(()) | //Signal
                 event::Event::WindowEvent {
@@ -556,6 +559,7 @@ struct GlobalContext {
     logo_tex: imgui::TextureId,
     logo_size: Vector2,
     data: PapercraftContext,
+    rebuild: RebuildFlags,
     splitter_pos: f32,
     sz_full: Vector2,
     sz_scene: Vector2,
@@ -571,8 +575,6 @@ struct GlobalContext {
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
     popup_time_start: Instant,
-    render_scene_pending: bool,
-    render_paper_pending: bool,
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -951,7 +953,7 @@ impl GlobalContext {
                     self.data.show_textures = apply_options.texture;
                     let old_options = self.data.papercraft.set_options(apply_options);
                     self.data.push_undo_action(vec![UndoAction::DocConfig { options: old_options, island_pos }]);
-                    self.add_rebuild(RebuildFlags::ALL);
+                    self.add_rebuild(RebuildFlags::all());
                 }
             } else {
                 self.build_read_only_options_inner_dialog(ui, &options);
@@ -1364,17 +1366,10 @@ impl GlobalContext {
                 let this = self.this.clone();
                 move || {
                     let this = this.upgrade().unwrap();
-                    let mut this = this.borrow_mut();
+                    let this = this.borrow();
 
                     unsafe {
                         gl::Disable(gl::SCISSOR_TEST);
-
-                        if this.render_scene_pending {
-                            let _backup = BackupGlConfig::backup();
-                            let _draw_fb_binder = BinderDrawFramebuffer::bind(&this.gl_fixs.fbo_scene);
-                            let _vp = glr::PushViewport::push(0, 0, this.sz_scene.x as i32, this.sz_scene.y as i32);
-                            this.render_scene();
-                        }
 
                         // blit the FBO to the real FB
                         let pos_y2 = dsp_size.y - pos.y - this.sz_scene.y;
@@ -1417,17 +1412,10 @@ impl GlobalContext {
                 let this = self.this.clone();
                 move || {
                     let this = this.upgrade().unwrap();
-                    let mut this = this.borrow_mut();
+                    let this = this.borrow();
 
                     unsafe {
                         gl::Disable(gl::SCISSOR_TEST);
-
-                        if this.render_paper_pending {
-                            let _backup = BackupGlConfig::backup();
-                            let _draw_fb_binder = BinderDrawFramebuffer::bind(&this.gl_fixs.fbo_paper);
-                            let _vp = glr::PushViewport::push(0, 0, this.sz_paper.x as i32, this.sz_paper.y as i32);
-                            this.render_paper();
-                        }
 
                         // blit the FBO to the real FB
                         let pos_y2 = dsp_size.y - pos.y - this.sz_paper.y;
@@ -1467,13 +1455,13 @@ impl GlobalContext {
         if menu_actions.undo {
             match self.data.undo_action() {
                 UndoResult::Model => {
-                    self.add_rebuild(RebuildFlags::ALL);
+                    self.add_rebuild(RebuildFlags::all());
                 }
                 UndoResult::ModelAndOptions => {
                     if let Some(o) = self.options_opened.as_mut() {
                         *o = self.data.papercraft.options().clone();
                     }
-                    self.add_rebuild(RebuildFlags::ALL);
+                    self.add_rebuild(RebuildFlags::all());
                 }
                 UndoResult::False => {},
             }
@@ -1856,9 +1844,8 @@ impl GlobalContext {
             gl::Disable(gl::STENCIL_TEST);
         }
     }
-
     fn add_rebuild(&mut self, flags: RebuildFlags) {
-        self.data.rebuild.insert(flags);
+        self.rebuild.insert(flags);
     }
     fn set_mouse_mode(&mut self, mode: MouseMode) {
         self.data.mode = mode;
@@ -1920,6 +1907,7 @@ impl GlobalContext {
         let papercraft = Papercraft::load(fs)
             .with_context(|| format!("Error loading file {}", file_name.as_ref().display()))?;
         self.data = PapercraftContext::from_papercraft(papercraft, Some(file_name.as_ref()), self.sz_scene, self.sz_paper);
+        self.rebuild = RebuildFlags::all();
         Ok(())
     }
     fn save_as_craft(&self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
@@ -1934,6 +1922,7 @@ impl GlobalContext {
         let papercraft = Papercraft::import_waveobj(file_name.as_ref())
             .with_context(|| format!("Error reading Wavefront file {}", file_name.as_ref().display()))?;
         self.data = PapercraftContext::from_papercraft(papercraft, None, self.sz_scene, self.sz_paper);
+        self.rebuild = RebuildFlags::all();
         Ok(())
     }
     fn update_obj(&mut self, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
@@ -1945,6 +1934,7 @@ impl GlobalContext {
         let ts = self.data.trans_scene.clone();
         let original_file_name = self.data.file_name.clone();
         self.data = PapercraftContext::from_papercraft(new_papercraft, original_file_name.as_deref(), self.sz_scene, self.sz_paper);
+        self.rebuild = RebuildFlags::all();
         self.data.mode = prev_mode;
         self.data.trans_paper = tp;
         self.data.trans_scene = ts;

@@ -71,8 +71,6 @@ bitflags::bitflags! {
         const PAPER_REDRAW = 0x0010;
         const SCENE_REDRAW = 0x0020;
 
-        const ALL = Self::PAGES.bits | Self::PAPER.bits | Self::SCENE_EDGE.bits | Self::SELECTION.bits;
-
         const ANY_REDRAW_PAPER = Self::PAGES.bits | Self::PAPER.bits | Self::SELECTION.bits | Self::PAPER_REDRAW.bits;
         const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits | Self::SELECTION.bits | Self::SCENE_REDRAW.bits;
     }
@@ -86,7 +84,6 @@ pub struct PapercraftContext {
     pub undo_stack: Vec<Vec<UndoAction>>,
     pub modified: bool,
 
-    pub rebuild: RebuildFlags,
     pub gl_objs: GLObjects,
 
     // State
@@ -258,7 +255,6 @@ impl PapercraftContext {
             papercraft,
             undo_stack: Vec::new(),
             modified: false,
-            rebuild: RebuildFlags::ALL,
             gl_objs,
             selected_face: None,
             selected_edge: None,
@@ -409,20 +405,19 @@ impl PapercraftContext {
         }
     }
 
-    pub fn pre_render(&mut self) {
-        if self.rebuild.contains(RebuildFlags::PAGES) {
+    pub fn pre_render(&mut self, rebuild: RebuildFlags) {
+        if rebuild.contains(RebuildFlags::PAGES) {
             self.pages_rebuild();
         }
-        if self.rebuild.contains(RebuildFlags::PAPER) {
+        if rebuild.contains(RebuildFlags::PAPER) {
             self.paper_rebuild();
         }
-        if self.rebuild.contains(RebuildFlags::SCENE_EDGE) {
+        if rebuild.contains(RebuildFlags::SCENE_EDGE) {
             self.scene_edge_rebuild();
         }
-        if self.rebuild.contains(RebuildFlags::SELECTION) {
+        if rebuild.contains(RebuildFlags::SELECTION) {
             self.selection_rebuild();
         }
-        self.rebuild = RebuildFlags::empty();
     }
 
     pub fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {

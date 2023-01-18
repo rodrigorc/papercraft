@@ -1697,7 +1697,6 @@ impl GlobalContext {
     }
 
     fn render_scene(&mut self) {
-        let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = &self.gl_fixs;
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
@@ -1720,7 +1719,7 @@ impl GlobalContext {
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             gl::BindVertexArray(gl_fixs.vao.id());
-            if let (Some(tex), true) = (&gl_objs.textures, self.data.show_textures) {
+            if let (Some(tex), true) = (&self.data.gl_objs.textures, self.data.show_textures) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 u.texturize = 1;
@@ -1729,18 +1728,18 @@ impl GlobalContext {
             gl::PolygonOffset(1.0, 1.0);
             gl::Enable(gl::POLYGON_OFFSET_FILL);
 
-            gl_fixs.prg_scene_solid.draw(&u, (&gl_objs.vertices, &gl_objs.vertices_sel), gl::TRIANGLES);
+            gl_fixs.prg_scene_solid.draw(&u, (&self.data.gl_objs.vertices, &self.data.gl_objs.vertices_sel), gl::TRIANGLES);
 
             if self.data.show_3d_lines {
                 //Joined edges
                 gl::LineWidth(1.0);
                 gl::Disable(gl::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_joint, gl::LINES);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs.vertices_edge_joint, gl::LINES);
 
                 //Cut edges
                 gl::LineWidth(3.0);
                 gl::Enable(gl::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_cut, gl::LINES);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs.vertices_edge_cut, gl::LINES);
             }
 
             //Selected edge
@@ -1750,12 +1749,11 @@ impl GlobalContext {
                 if self.data.xray_selection {
                     u.line_top = 1;
                 }
-                gl_fixs.prg_scene_line.draw(&u, &gl_objs.vertices_edge_sel, gl::LINES);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs.vertices_edge_sel, gl::LINES);
             }
         }
     }
     fn render_paper(&mut self) {
-        let gl_objs = self.data.gl_objs.as_ref().unwrap();
         let gl_fixs = &self.gl_fixs;
 
         let mut u = Uniforms2D {
@@ -1780,7 +1778,7 @@ impl GlobalContext {
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             gl::BindVertexArray(gl_fixs.vao.id());
-            if let (Some(tex), true) = (&gl_objs.textures, self.data.show_textures) {
+            if let (Some(tex), true) = (&self.data.gl_objs.textures, self.data.show_textures) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 u.texturize = 1;
@@ -1790,19 +1788,19 @@ impl GlobalContext {
             gl::Enable(gl::STENCIL_TEST);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::ZERO);
 
-            gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_page, gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices_page, gl::TRIANGLES);
 
             gl::Disable(gl::STENCIL_TEST);
 
             u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
 
-            gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_margin, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_margin, gl::LINES);
 
             u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
 
             // Line Tabs
             if self.data.show_tabs {
-                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_tab_edge, gl::LINES);
             }
 
             gl::Enable(gl::STENCIL_TEST);
@@ -1811,27 +1809,27 @@ impl GlobalContext {
 
             // Solid Tabs
             if self.data.show_tabs {
-                gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices_tab, gl::TRIANGLES);
             }
             gl::Disable(gl::STENCIL_TEST);
 
             // Borders
-            gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_border, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_border, gl::LINES);
 
             gl::Enable(gl::STENCIL_TEST);
 
             // Textured faces
-            gl_fixs.prg_paper_solid.draw(&u, (&gl_objs.paper_vertices, &gl_objs.paper_vertices_sel) , gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, (&self.data.gl_objs.paper_vertices, &self.data.gl_objs.paper_vertices_sel) , gl::TRIANGLES);
 
             gl::Disable(gl::STENCIL_TEST);
 
             // Creases
-            gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_crease, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_crease, gl::LINES);
 
             // Selected edge
             if self.data.selected_edge.is_some() {
                 u.line_color = PapercraftContext::color_edge(self.data.mode);
-                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_sel, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_sel, gl::LINES);
             }
 
             // Draw the highlight overlap if "1 < STENCIL"
@@ -2031,13 +2029,12 @@ impl GlobalContext {
             gl::Enable(gl::BLEND);
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
-            let gl_objs = self.data.gl_objs.as_ref().unwrap();
             let gl_fixs = &self.gl_fixs;
 
             let mut texturize = 0;
 
             gl::BindVertexArray(gl_fixs.vao.id());
-            if let (Some(tex), true) = (&gl_objs.textures, options.texture) {
+            if let (Some(tex), true) = (&self.data.gl_objs.textures, options.texture) {
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
                 texturize = 1;
@@ -2083,23 +2080,23 @@ impl GlobalContext {
                 };
                 // Line Tabs
                 if tab_style != TabStyle::None {
-                    gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_tab_edge, gl::LINES);
+                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_tab_edge, gl::LINES);
                 }
 
                 // Solid Tabs
                 if tab_style != TabStyle::None && tab_style != TabStyle::White {
-                    gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices_tab, gl::TRIANGLES);
+                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices_tab, gl::TRIANGLES);
                 }
 
                 // Borders
-                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_border, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_border, gl::LINES);
 
                 // Textured faces
                 gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &gl_objs.paper_vertices, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs.paper_vertices, gl::TRIANGLES);
 
                 // Creases
-                gl_fixs.prg_paper_line.draw(&u, &gl_objs.paper_vertices_edge_crease, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs.paper_vertices_edge_crease, gl::LINES);
                 // End render
 
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {

@@ -87,7 +87,7 @@ pub struct PapercraftContext {
     pub modified: bool,
 
     pub rebuild: RebuildFlags,
-    pub gl_objs: Option<GLObjects>,
+    pub gl_objs: GLObjects,
 
     // State
     pub selected_face: Option<FaceIndex>,
@@ -251,6 +251,7 @@ impl PapercraftContext {
 
         let (trans_scene, trans_paper) = Self::default_transformations(obj, sz_scene, sz_paper, papercraft.options());
         let show_textures = papercraft.options().texture;
+        let gl_objs = Self::build_gl_objs(papercraft.model());
 
         PapercraftContext {
             file_name: file_name.map(|f| f.to_owned()),
@@ -258,7 +259,7 @@ impl PapercraftContext {
             undo_stack: Vec::new(),
             modified: false,
             rebuild: RebuildFlags::ALL,
-            gl_objs: None,
+            gl_objs,
             selected_face: None,
             selected_edge: None,
             selected_islands: Vec::new(),
@@ -276,147 +277,139 @@ impl PapercraftContext {
         }
     }
 
-    fn build_gl_objs(&mut self) {
-        if self.gl_objs.is_none() {
-            let images = self.papercraft.model()
-                .textures()
-                .map(|tex| tex.pixbuf())
-                .collect::<Vec<_>>();
+    fn build_gl_objs(model: &Model) -> GLObjects {
+        let images = model
+            .textures()
+            .map(|tex| tex.pixbuf())
+            .collect::<Vec<_>>();
 
-            let sizes = images
-                .iter()
-                .filter_map(|i| i.as_ref())
-                .map(|i| {
-                    (i.width(), i.height())
-                });
-            let max_width = sizes.clone().map(|(w, _)| w).max();
-            let max_height = sizes.map(|(_, h)| h).max();
-
-            let textures = match max_width.zip(max_height) {
-                None => None,
-                Some((width, height)) => {
-                    let mut blank = None;
-                    unsafe {
-                        let textures = glr::Texture::generate();
-                        gl::BindTexture(gl::TEXTURE_2D_ARRAY, textures.id());
-                        gl::TexImage3D(gl::TEXTURE_2D_ARRAY, 0, gl::RGBA8 as i32,
-                            width as i32, height as i32, images.len() as i32, 0,
-                            gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
-                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
-                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-
-                        for (layer, image) in images.iter().enumerate() {
-                            if let Some(image) = image {
-                                let scaled_image;
-                                let image = if width == image.width() && height == image.height() {
-                                    image
-                                } else {
-                                    let scaled = image::imageops::resize(*image, width, height, image::imageops::FilterType::Triangle);
-                                    scaled_image = DynamicImage::ImageRgba8(scaled);
-                                    &scaled_image
-                                };
-                                let bytes = image.as_bytes();
-                                let (format, type_) = match image {
-                                    DynamicImage::ImageLuma8(_) => (gl::RED, gl::UNSIGNED_BYTE),
-                                    DynamicImage::ImageLumaA8(_) => (gl::RG, gl::UNSIGNED_BYTE),
-                                    DynamicImage::ImageRgb8(_) => (gl::RGB, gl::UNSIGNED_BYTE),
-                                    DynamicImage::ImageRgba8(_) => (gl::RGBA, gl::UNSIGNED_BYTE),
-                                    DynamicImage::ImageLuma16(_) => (gl::RED, gl::UNSIGNED_SHORT),
-                                    DynamicImage::ImageLumaA16(_) => (gl::RG, gl::UNSIGNED_SHORT),
-                                    DynamicImage::ImageRgb16(_) => (gl::RGB, gl::UNSIGNED_SHORT),
-                                    DynamicImage::ImageRgba16(_) => (gl::RGBA, gl::UNSIGNED_SHORT),
-                                    DynamicImage::ImageRgb32F(_) => (gl::RGB, gl::FLOAT),
-                                    DynamicImage::ImageRgba32F(_) => (gl::RGBA, gl::FLOAT),
-                                    _ => (gl::RED, gl::UNSIGNED_BYTE), //probably wrong but will not read out of bounds
-                                };
-                                gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, format, type_, bytes.as_ptr() as *const _);
-                            } else {
-                                let blank = blank.get_or_insert_with(|| {
-                                    let c = (0x80u8, 0x80u8, 0x80u8);
-                                    vec![c; width as usize * height as usize]
-                                });
-                                gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, gl::RGB, gl::UNSIGNED_BYTE, blank.as_ptr() as *const _);
-                            }
-                        }
-                        gl::GenerateMipmap(gl::TEXTURE_2D_ARRAY);
-                        Some(textures)
-                    }
-                }
-            };
-            let mut vertices = Vec::new();
-            let mut face_map = vec![Vec::new(); self.papercraft.model().num_textures()];
-            for (i_face, face) in self.papercraft.model().faces() {
-                for i_v in face.index_vertices() {
-                    let v = &self.papercraft.model()[i_v];
-                    vertices.push(MVertex3D {
-                        pos: v.pos(),
-                        normal: v.normal(),
-                        uv: v.uv(),
-                        mat: face.material(),
-                    });
-                }
-                face_map[usize::from(face.material())].push(i_face);
-            }
-
-            let mut face_index = vec![0; self.papercraft.model().num_faces()];
-            let mut f_idx = 0;
-            for fm in face_map {
-                for f in fm {
-                    face_index[usize::from(f)] = f_idx;
-                    f_idx += 1;
-                }
-            }
-
-            let vertices = glr::DynamicVertexArray::from(vertices);
-            let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * self.papercraft.model().num_faces()]);
-            let vertices_edge_joint = glr::DynamicVertexArray::new();
-            let vertices_edge_cut = glr::DynamicVertexArray::new();
-            let vertices_edge_sel = glr::DynamicVertexArray::new();
-
-            let paper_vertices = glr::DynamicVertexArray::new();
-            let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * self.papercraft.model().num_faces()]);
-            let paper_vertices_edge_border = glr::DynamicVertexArray::new();
-            let paper_vertices_edge_crease = glr::DynamicVertexArray::new();
-            let paper_vertices_tab = glr::DynamicVertexArray::new();
-            let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
-            let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-
-            let paper_vertices_page = glr::DynamicVertexArray::new();
-            let paper_vertices_margin = glr::DynamicVertexArray::new();
-
-            self.gl_objs = Some(GLObjects {
-                textures,
-                vertices,
-                vertices_sel,
-                vertices_edge_joint,
-                vertices_edge_cut,
-                vertices_edge_sel,
-
-                paper_vertices,
-                paper_vertices_sel,
-                paper_vertices_edge_border,
-                paper_vertices_edge_crease,
-                paper_vertices_tab,
-                paper_vertices_tab_edge,
-                paper_vertices_edge_sel,
-
-                paper_face_index: Vec::new(),
-
-                paper_vertices_page,
-                paper_vertices_margin,
+        let sizes = images
+            .iter()
+            .filter_map(|i| i.as_ref())
+            .map(|i| {
+                (i.width(), i.height())
             });
+        let max_width = sizes.clone().map(|(w, _)| w).max();
+        let max_height = sizes.map(|(_, h)| h).max();
+
+        let textures = match max_width.zip(max_height) {
+            None => None,
+            Some((width, height)) => {
+                let mut blank = None;
+                unsafe {
+                    let textures = glr::Texture::generate();
+                    gl::BindTexture(gl::TEXTURE_2D_ARRAY, textures.id());
+                    gl::TexImage3D(gl::TEXTURE_2D_ARRAY, 0, gl::RGBA8 as i32,
+                                   width as i32, height as i32, images.len() as i32, 0,
+                                   gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+
+                    for (layer, image) in images.iter().enumerate() {
+                        if let Some(image) = image {
+                            let scaled_image;
+                            let image = if width == image.width() && height == image.height() {
+                                image
+                            } else {
+                                let scaled = image::imageops::resize(*image, width, height, image::imageops::FilterType::Triangle);
+                                scaled_image = DynamicImage::ImageRgba8(scaled);
+                                &scaled_image
+                            };
+                            let bytes = image.as_bytes();
+                            let (format, type_) = match image {
+                                DynamicImage::ImageLuma8(_) => (gl::RED, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageLumaA8(_) => (gl::RG, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageRgb8(_) => (gl::RGB, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageRgba8(_) => (gl::RGBA, gl::UNSIGNED_BYTE),
+                                DynamicImage::ImageLuma16(_) => (gl::RED, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageLumaA16(_) => (gl::RG, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgb16(_) => (gl::RGB, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgba16(_) => (gl::RGBA, gl::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgb32F(_) => (gl::RGB, gl::FLOAT),
+                                DynamicImage::ImageRgba32F(_) => (gl::RGBA, gl::FLOAT),
+                                _ => (gl::RED, gl::UNSIGNED_BYTE), //probably wrong but will not read out of bounds
+                            };
+                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, format, type_, bytes.as_ptr() as *const _);
+                        } else {
+                            let blank = blank.get_or_insert_with(|| {
+                                let c = (0x80u8, 0x80u8, 0x80u8);
+                                vec![c; width as usize * height as usize]
+                            });
+                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, gl::RGB, gl::UNSIGNED_BYTE, blank.as_ptr() as *const _);
+                        }
+                    }
+                    gl::GenerateMipmap(gl::TEXTURE_2D_ARRAY);
+                    Some(textures)
+                }
+            }
+        };
+        let mut vertices = Vec::new();
+        let mut face_map = vec![Vec::new(); model.num_textures()];
+        for (i_face, face) in model.faces() {
+            for i_v in face.index_vertices() {
+                let v = &model[i_v];
+                vertices.push(MVertex3D {
+                    pos: v.pos(),
+                    normal: v.normal(),
+                    uv: v.uv(),
+                    mat: face.material(),
+                });
+            }
+            face_map[usize::from(face.material())].push(i_face);
         }
-        self.rebuild_pending();
+
+        let mut face_index = vec![0; model.num_faces()];
+        let mut f_idx = 0;
+        for fm in face_map {
+            for f in fm {
+                face_index[usize::from(f)] = f_idx;
+                f_idx += 1;
+            }
+        }
+
+        let vertices = glr::DynamicVertexArray::from(vertices);
+        let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * model.num_faces()]);
+        let vertices_edge_joint = glr::DynamicVertexArray::new();
+        let vertices_edge_cut = glr::DynamicVertexArray::new();
+        let vertices_edge_sel = glr::DynamicVertexArray::new();
+
+        let paper_vertices = glr::DynamicVertexArray::new();
+        let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * model.num_faces()]);
+        let paper_vertices_edge_border = glr::DynamicVertexArray::new();
+        let paper_vertices_edge_crease = glr::DynamicVertexArray::new();
+        let paper_vertices_tab = glr::DynamicVertexArray::new();
+        let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
+        let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
+
+        let paper_vertices_page = glr::DynamicVertexArray::new();
+        let paper_vertices_margin = glr::DynamicVertexArray::new();
+
+        GLObjects {
+            textures,
+            vertices,
+            vertices_sel,
+            vertices_edge_joint,
+            vertices_edge_cut,
+            vertices_edge_sel,
+
+            paper_vertices,
+            paper_vertices_sel,
+            paper_vertices_edge_border,
+            paper_vertices_edge_crease,
+            paper_vertices_tab,
+            paper_vertices_tab_edge,
+            paper_vertices_edge_sel,
+
+            paper_face_index: Vec::new(),
+
+            paper_vertices_page,
+            paper_vertices_margin,
+        }
     }
 
     pub fn pre_render(&mut self) {
-        self.build_gl_objs();
-        self.rebuild_pending();
-    }
-
-    fn rebuild_pending(&mut self) {
         if self.rebuild.contains(RebuildFlags::PAGES) {
             self.pages_rebuild();
         }
@@ -715,124 +708,117 @@ impl PapercraftContext {
             );
         }
 
-        if let Some(gl_objs) = &mut self.gl_objs {
-            gl_objs.paper_vertices.set(args.vertices);
-            gl_objs.paper_vertices_edge_border.set(args.vertices_edge_border);
-            gl_objs.paper_vertices_edge_crease.set(args.vertices_edge_crease);
-            gl_objs.paper_vertices_tab.set(args.vertices_tab);
-            gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge);
-
-            gl_objs.paper_face_index = args.face_index;
-        }
+        self.gl_objs.paper_vertices.set(args.vertices);
+        self.gl_objs.paper_vertices_edge_border.set(args.vertices_edge_border);
+        self.gl_objs.paper_vertices_edge_crease.set(args.vertices_edge_crease);
+        self.gl_objs.paper_vertices_tab.set(args.vertices_tab);
+        self.gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge);
+        self.gl_objs.paper_face_index = args.face_index;
     }
 
     fn pages_rebuild(&mut self) {
-        if let Some(gl_objs) = &mut self.gl_objs {
-            let color = Rgba::new(1.0, 1.0, 1.0, 1.0);
-            let mat = MaterialIndex::from(0);
-            let mut page_vertices = Vec::new();
-            let mut margin_vertices = Vec::new();
-            let margin_line_width = 0.5;
+        let color = Rgba::new(1.0, 1.0, 1.0, 1.0);
+        let mat = MaterialIndex::from(0);
+        let mut page_vertices = Vec::new();
+        let mut margin_vertices = Vec::new();
+        let margin_line_width = 0.5;
 
-            let page_size = Vector2::from(self.papercraft.options().page_size);
-            let margin = self.papercraft.options().margin;
-            let page_count = self.papercraft.options().pages;
+        let page_size = Vector2::from(self.papercraft.options().page_size);
+        let margin = self.papercraft.options().margin;
+        let page_count = self.papercraft.options().pages;
 
-            for page in 0 .. page_count {
-                let page_pos = self.papercraft.options().page_position(page);
+        for page in 0 .. page_count {
+            let page_pos = self.papercraft.options().page_position(page);
 
-                let page_0 = MVertex2DColor {
-                    pos: page_pos,
-                    uv: Vector2::zero(),
-                    mat,
-                    color,
-                };
-                let page_2 = MVertex2DColor {
-                    pos: page_pos + page_size,
-                    uv: Vector2::zero(),
-                    mat,
-                    color,
-                };
-                let page_1 = MVertex2DColor {
-                    pos: Vector2::new(page_2.pos.x, page_0.pos.y),
-                    uv: Vector2::zero(),
-                    mat,
-                    color,
-                };
-                let page_3 = MVertex2DColor {
-                    pos: Vector2::new(page_0.pos.x, page_2.pos.y),
-                    uv: Vector2::zero(),
-                    mat,
-                    color,
-                };
-                page_vertices.extend_from_slice(&[page_0, page_2, page_1, page_0, page_3, page_2]);
+            let page_0 = MVertex2DColor {
+                pos: page_pos,
+                uv: Vector2::zero(),
+                mat,
+                color,
+            };
+            let page_2 = MVertex2DColor {
+                pos: page_pos + page_size,
+                uv: Vector2::zero(),
+                mat,
+                color,
+            };
+            let page_1 = MVertex2DColor {
+                pos: Vector2::new(page_2.pos.x, page_0.pos.y),
+                uv: Vector2::zero(),
+                mat,
+                color,
+            };
+            let page_3 = MVertex2DColor {
+                pos: Vector2::new(page_0.pos.x, page_2.pos.y),
+                uv: Vector2::zero(),
+                mat,
+                color,
+            };
+            page_vertices.extend_from_slice(&[page_0, page_2, page_1, page_0, page_3, page_2]);
 
-                let mut margin_0 = MVertex2DLine {
-                    pos: page_0.pos + Vector2::new(margin.1, margin.0),
-                    line_dash: 0.0,
-                    width_left: margin_line_width,
-                    width_right: 0.0,
-                };
-                let mut margin_1 = MVertex2DLine {
-                    pos: page_3.pos + Vector2::new(margin.1, -margin.3),
-                    line_dash: 0.0,
-                    width_left: margin_line_width,
-                    width_right: 0.0,
-                };
-                let mut margin_2 = MVertex2DLine {
-                    pos: page_2.pos + Vector2::new(-margin.2, -margin.3),
-                    line_dash: 0.0,
-                    width_left: margin_line_width,
-                    width_right: 0.0,
-                };
-                let mut margin_3 = MVertex2DLine {
-                    pos: page_1.pos + Vector2::new(-margin.2, margin.0),
-                    line_dash: 0.0,
-                    width_left: margin_line_width,
-                    width_right: 0.0,
-                };
-                margin_0.line_dash = 0.0;
-                margin_1.line_dash = page_size.y / 10.0;
-                margin_vertices.extend_from_slice(&[margin_0, margin_1]);
-                margin_1.line_dash = 0.0;
-                margin_2.line_dash = page_size.x / 10.0;
-                margin_vertices.extend_from_slice(&[margin_1, margin_2]);
-                margin_2.line_dash = 0.0;
-                margin_3.line_dash = page_size.y / 10.0;
-                margin_vertices.extend_from_slice(&[margin_2, margin_3]);
-                margin_3.line_dash = 0.0;
-                margin_0.line_dash = page_size.x / 10.0;
-                margin_vertices.extend_from_slice(&[margin_3, margin_0]);
-            }
-            gl_objs.paper_vertices_page.set(page_vertices);
-            gl_objs.paper_vertices_margin.set(margin_vertices);
+            let mut margin_0 = MVertex2DLine {
+                pos: page_0.pos + Vector2::new(margin.1, margin.0),
+                line_dash: 0.0,
+                width_left: margin_line_width,
+                width_right: 0.0,
+            };
+            let mut margin_1 = MVertex2DLine {
+                pos: page_3.pos + Vector2::new(margin.1, -margin.3),
+                line_dash: 0.0,
+                width_left: margin_line_width,
+                width_right: 0.0,
+            };
+            let mut margin_2 = MVertex2DLine {
+                pos: page_2.pos + Vector2::new(-margin.2, -margin.3),
+                line_dash: 0.0,
+                width_left: margin_line_width,
+                width_right: 0.0,
+            };
+            let mut margin_3 = MVertex2DLine {
+                pos: page_1.pos + Vector2::new(-margin.2, margin.0),
+                line_dash: 0.0,
+                width_left: margin_line_width,
+                width_right: 0.0,
+            };
+            margin_0.line_dash = 0.0;
+            margin_1.line_dash = page_size.y / 10.0;
+            margin_vertices.extend_from_slice(&[margin_0, margin_1]);
+            margin_1.line_dash = 0.0;
+            margin_2.line_dash = page_size.x / 10.0;
+            margin_vertices.extend_from_slice(&[margin_1, margin_2]);
+            margin_2.line_dash = 0.0;
+            margin_3.line_dash = page_size.y / 10.0;
+            margin_vertices.extend_from_slice(&[margin_2, margin_3]);
+            margin_3.line_dash = 0.0;
+            margin_0.line_dash = page_size.x / 10.0;
+            margin_vertices.extend_from_slice(&[margin_3, margin_0]);
         }
+        self.gl_objs.paper_vertices_page.set(page_vertices);
+        self.gl_objs.paper_vertices_margin.set(margin_vertices);
     }
 
     fn scene_edge_rebuild(&mut self) {
-        if let Some(gl_objs) = &mut self.gl_objs {
-            let mut edges_joint = Vec::new();
-            let mut edges_cut = Vec::new();
-            for (i_edge, edge) in self.papercraft.model().edges() {
-                let status = self.papercraft.edge_status(i_edge);
-                if status == EdgeStatus::Hidden {
-                    continue;
-                }
-                let cut = matches!(self.papercraft.edge_status(i_edge), EdgeStatus::Cut(_));
-                let p0 = self.papercraft.model()[edge.v0()].pos();
-                let p1 = self.papercraft.model()[edge.v1()].pos();
-
-                let (edges, color) = if cut {
-                    (&mut edges_cut, Rgba::new(1.0, 1.0, 1.0, 1.0))
-                } else {
-                    (&mut edges_joint, Rgba::new(0.0, 0.0, 0.0, 1.0))
-                };
-                edges.push(MVertex3DLine { pos: p0, color });
-                edges.push(MVertex3DLine { pos: p1, color });
+        let mut edges_joint = Vec::new();
+        let mut edges_cut = Vec::new();
+        for (i_edge, edge) in self.papercraft.model().edges() {
+            let status = self.papercraft.edge_status(i_edge);
+            if status == EdgeStatus::Hidden {
+                continue;
             }
-            gl_objs.vertices_edge_joint.set(edges_joint);
-            gl_objs.vertices_edge_cut.set(edges_cut);
+            let cut = matches!(self.papercraft.edge_status(i_edge), EdgeStatus::Cut(_));
+            let p0 = self.papercraft.model()[edge.v0()].pos();
+            let p1 = self.papercraft.model()[edge.v1()].pos();
+
+            let (edges, color) = if cut {
+                (&mut edges_cut, Rgba::new(1.0, 1.0, 1.0, 1.0))
+            } else {
+                (&mut edges_joint, Rgba::new(0.0, 0.0, 0.0, 1.0))
+            };
+            edges.push(MVertex3DLine { pos: p0, color });
+            edges.push(MVertex3DLine { pos: p1, color });
         }
+        self.gl_objs.vertices_edge_joint.set(edges_joint);
+        self.gl_objs.vertices_edge_cut.set(edges_cut);
     }
     pub fn color_edge(mode: MouseMode) -> Rgba {
         match mode {
@@ -843,14 +829,10 @@ impl PapercraftContext {
         }
     }
     fn selection_rebuild(&mut self) {
-        let gl_objs = match &mut self.gl_objs {
-            Some(x) => x,
-            None => return,
-        };
-        let n = gl_objs.vertices_sel.len();
+        let n = self.gl_objs.vertices_sel.len();
         for i in 0..n {
-            gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
-            gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_UNSEL.color };
+            self.gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
+            self.gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_UNSEL.color };
         }
         let top = self.xray_selection as u8;
         for &sel_island in &self.selected_islands {
@@ -858,11 +840,11 @@ impl PapercraftContext {
                 self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                     let pos = 3 * usize::from(i_face);
                     for i in pos .. pos + 3 {
-                        gl_objs.vertices_sel[i] = MStatus3D { color: MSTATUS_SEL.color, top };
+                        self.gl_objs.vertices_sel[i] = MStatus3D { color: MSTATUS_SEL.color, top };
                     }
-                    let pos = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                    let pos = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
                     for i in pos .. pos + 3 {
-                        gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_SEL.color };
+                        self.gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_SEL.color };
                     }
                     ControlFlow::Continue(())
                 });
@@ -872,11 +854,11 @@ impl PapercraftContext {
             for i_face in self.papercraft.get_flat_faces(i_sel_face) {
                 let pos = 3 * usize::from(i_face);
                 for i in pos .. pos + 3 {
-                    gl_objs.vertices_sel[i] = MStatus3D { color: MSTATUS_HI.color, top };
+                    self.gl_objs.vertices_sel[i] = MStatus3D { color: MSTATUS_HI.color, top };
                 }
-                let pos = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                let pos = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
                 for i in pos .. pos + 3 {
-                    gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_HI.color };
+                    self.gl_objs.paper_vertices_sel[i] = MStatus2D { color: MSTATUS_HI.color };
                 }
             }
         }
@@ -888,17 +870,17 @@ impl PapercraftContext {
             let p1 = self.papercraft.model()[edge.v1()].pos();
             edges_sel.push(MVertex3DLine { pos: p0, color });
             edges_sel.push(MVertex3DLine { pos: p1, color });
-            gl_objs.vertices_edge_sel.set(edges_sel);
+            self.gl_objs.vertices_edge_sel.set(edges_sel);
 
             let (i_face_a, i_face_b) = edge.faces();
 
             // Returns the 2D vertices of i_sel_edge that belong to face i_face
             let get_vx = |i_face: FaceIndex| {
                 let face_a = &self.papercraft.model()[i_face];
-                let idx_face = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                let idx_face = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
                 let idx_edge = face_a.index_edges().iter().position(|&e| e == i_sel_edge).unwrap();
-                let v0 = &gl_objs.paper_vertices[idx_face + idx_edge];
-                let v1 = &gl_objs.paper_vertices[idx_face + (idx_edge + 1) % 3];
+                let v0 = &self.gl_objs.paper_vertices[idx_face + idx_edge];
+                let v1 = &self.gl_objs.paper_vertices[idx_face + (idx_edge + 1) % 3];
                 (v0, v1)
             };
 
@@ -953,7 +935,7 @@ impl PapercraftContext {
                 link_line[1].line_dash = (link_line[1].pos - link_line[0].pos).magnitude();
                 edge_sel.extend_from_slice(&link_line);
             }
-            gl_objs.paper_vertices_edge_sel.set(edge_sel);
+            self.gl_objs.paper_vertices_edge_sel.set(edge_sel);
         }
     }
 
@@ -1243,15 +1225,14 @@ impl PapercraftContext {
         let ClickResult::Face(i_face) = selection else {
             return RebuildFlags::empty();
         };
-        let gl_objs = self.gl_objs.as_ref().unwrap();
         // Compute the average of all the faces flat with the selected one, and move it to the center of the paper.
         // Some vertices are counted twice, but they tend to be in diagonally opposed so the compensate, and it is an approximation anyways.
         let mut center = Vector2::zero();
         let mut n = 0.0;
         for i_face in self.papercraft.get_flat_faces(i_face) {
-            let idx = 3 * gl_objs.paper_face_index[usize::from(i_face)] as usize;
+            let idx = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
             for i in idx .. idx + 3 {
-                center += gl_objs.paper_vertices[i].pos;
+                center += self.gl_objs.paper_vertices[i].pos;
                 n += 1.0;
             }
         }

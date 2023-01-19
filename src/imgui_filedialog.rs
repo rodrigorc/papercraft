@@ -44,39 +44,73 @@ bitflags! {
     }
 }
 
-impl FileDialog {
-    pub fn new() -> FileDialog {
-        let ptr = unsafe {
-            fd::IGFD_Create()
-        };
-        FileDialog {
-            ptr,
+pub struct Builder<'a> {
+    key: &'a str,
+    title: &'a str,
+    filter: &'a str,
+    path: &'a str,
+    file: &'a str,
+    count_selection_max: i32,
+    flags: Flags
+}
+impl<'a> Builder<'a> {
+    #[must_use]
+    pub fn new(key: &'a str) -> Builder<'a> {
+        Builder {
+            key,
+            title: "",
+            filter: "",
+            path: "",
+            file: "",
+            count_selection_max: 1,
+            flags: Flags::DEFAULT,
         }
     }
-    pub fn is_opened(&self) -> bool {
-        unsafe {
-            fd::IGFD_IsOpened(self.ptr)
-        }
+    pub fn title(mut self, title: &'a str) -> Self {
+        self.title = title;
+        self
     }
-    pub fn open(&mut self, key: &str, title: &str, filter: &str, path: &str, file: &str,
-            count_selection_max: i32, flags: Flags) {
-        let key = CString::new(key).unwrap();
-        let title = CString::new(title).unwrap();
-        let filter = CString::new(filter).unwrap();
-        let path = CString::new(path).unwrap();
-        let file = CString::new(file).unwrap();
+    pub fn filter(mut self, filter: &'a str) -> Self {
+        self.filter = filter;
+        self
+    }
+    pub fn path(mut self, path: &'a str) -> Self {
+        self.path = path;
+        self
+    }
+    pub fn flags(mut self, flags: Flags) -> Self {
+        self.flags = flags;
+        self
+    }
+    pub fn open(self) -> FileDialog {
+        let key = CString::new(self.key).unwrap();
+        let title = CString::new(self.title).unwrap();
+        let filter = CString::new(self.filter).unwrap();
+        let path = CString::new(self.path).unwrap();
+        let file = CString::new(self.file).unwrap();
+        let ptr;
         unsafe {
+            ptr = fd::IGFD_Create();
             fd::IGFD_OpenDialog(
-                self.ptr,
+                ptr,
                 key.as_ptr(),
                 title.as_ptr(),
                 filter.as_ptr(),
                 path.as_ptr(),
                 file.as_ptr(),
-                count_selection_max,
+                self.count_selection_max,
                 std::ptr::null_mut(),
-                flags.bits() as _
-            )
+                self.flags.bits() as _
+            );
+        };
+        FileDialog { ptr }
+    }
+}
+
+impl FileDialog {
+    pub fn is_opened(&self) -> bool {
+        unsafe {
+            fd::IGFD_IsOpened(self.ptr)
         }
     }
     pub fn display<'a>(&'a mut self, key: &str, flags: imgui::WindowFlags, min_size: impl Into<Vector2>, max_size: impl Into<Vector2>) -> Option<DisplayToken<'a>> {

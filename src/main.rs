@@ -317,7 +317,6 @@ fn main() {
 
                         if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER) {
                             ctx.data.pre_render(ctx.rebuild);
-                            let _backup = BackupGlConfig::backup();
                             let vp = glr::PushViewport::new();
                             if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
                                 let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_scene);
@@ -1366,8 +1365,6 @@ impl GlobalContext {
                     let this = this.borrow();
 
                     unsafe {
-                        gl::Disable(gl::SCISSOR_TEST);
-
                         // blit the FBO to the real FB
                         let pos_y2 = dsp_size.y - pos.y - this.sz_scene.y;
                         let x = (pos.x * 1.0) as i32;
@@ -1381,7 +1378,6 @@ impl GlobalContext {
                             x, y, x + width, y + height,
                             gl::COLOR_BUFFER_BIT, gl::NEAREST
                         );
-                        gl::Enable(gl::SCISSOR_TEST);
                     }
                 }
             }).build();
@@ -1412,8 +1408,6 @@ impl GlobalContext {
                     let this = this.borrow();
 
                     unsafe {
-                        gl::Disable(gl::SCISSOR_TEST);
-
                         // blit the FBO to the real FB
                         let pos_y2 = dsp_size.y - pos.y - this.sz_paper.y;
                         let x = pos.x as i32;
@@ -1427,7 +1421,6 @@ impl GlobalContext {
                             x, y, x + width, y + height,
                             gl::COLOR_BUFFER_BIT, gl::NEAREST
                         );
-                        gl::Enable(gl::SCISSOR_TEST);
                     }
                 }
             }).build();
@@ -1959,11 +1952,8 @@ impl GlobalContext {
         Ok(())
     }
     fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
-        unsafe { gl::Disable(gl::SCISSOR_TEST); }
-        let _backup = BackupGlConfig::backup();
         self.generate_pdf_impl(file_name.as_ref())
             .with_context(|| format!("Error exporting to {}", file_name.display()))?;
-        unsafe { gl::Enable(gl::SCISSOR_TEST); }
         Ok(())
     }
     fn generate_pdf_impl(&self, file_name: &Path) -> anyhow::Result<()> {
@@ -2130,7 +2120,7 @@ impl GlobalContext {
 
                 let _ = cr.paint();
                 let _ = cr.show_page();
-                let _ = pixbuf.write_to_png(&mut std::fs::File::create("test.png").unwrap());
+                //let _ = pixbuf.write_to_png(&mut std::fs::File::create("test.png").unwrap());
             }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
             drop(cr);
@@ -2147,51 +2137,6 @@ impl GlobalContext {
         eprintln!("Papercraft panicked! Saving backup at \"{}\"", dir.display());
         if let Err(e) = self.save_as_craft(&dir) {
             eprintln!("backup failed with {e:?}");
-        }
-    }
-}
-
-struct BackupGlConfig {
-    p_vao: i32,
-    p_prg: i32,
-    p_buf: i32,
-    p_atex: i32,
-    p_tex: i32,
-}
-
-impl BackupGlConfig {
-    fn backup() -> BackupGlConfig {
-        unsafe {
-            let mut p_vao = 0;
-            gl::GetIntegerv(gl::VERTEX_ARRAY_BINDING, &mut p_vao);
-            let mut p_prg = 0;
-            gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut p_prg);
-            let mut p_buf = 0;
-            gl::GetIntegerv(gl::ARRAY_BUFFER_BINDING, &mut p_buf);
-            let mut p_atex = 0;
-            gl::GetIntegerv(gl::ACTIVE_TEXTURE, &mut p_atex);
-            let mut p_tex = 0;
-            gl::GetIntegerv(gl::TEXTURE_BINDING_2D, &mut p_tex);
-            BackupGlConfig {
-                p_vao, p_prg, p_buf,
-                p_atex, p_tex,
-            }
-        }
-    }
-}
-
-impl Drop for BackupGlConfig {
-    fn drop(&mut self) {
-        unsafe {
-            gl::BindVertexArray(self.p_vao as _);
-            gl::UseProgram(self.p_prg as _);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.p_buf as _);
-            gl::ActiveTexture(self.p_atex as _);
-            gl::BindTexture(gl::TEXTURE_2D, self.p_tex as _);
-
-            gl::Disable(gl::DEPTH_TEST);
-            gl::Disable(gl::STENCIL_TEST);
-            gl::Disable(gl::POLYGON_OFFSET_FILL);
         }
     }
 }

@@ -1240,10 +1240,6 @@ impl GlobalContext {
 
                 ui.separator();
 
-                if ui.menu_item("Reset views") {
-                    menu_actions.reset_views = true;
-                    self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
-                }
                 if self.modifiable() {
                     if ui.menu_item("Repack pieces") {
                         let undo = self.data.pack_islands();
@@ -1283,6 +1279,10 @@ impl GlobalContext {
                     .build_with_ref(&mut self.data.ui.highlight_overlaps)
                 {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                }
+                if ui.menu_item("Reset views") {
+                    menu_actions.reset_views = true;
+                    self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
             });
             ui.menu("Help", || {
@@ -2118,7 +2118,7 @@ impl GlobalContext {
 
                 let _ = cr.paint();
                 let _ = cr.show_page();
-                //let _ = pixbuf.write_to_png(&mut std::fs::File::create("test.png").unwrap());
+                //let _ = pixbuf.write_to_png(&mut std::fs::File::create(&format!("test_{}.png", page)).unwrap());
             }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
             drop(cr);

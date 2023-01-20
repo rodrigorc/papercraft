@@ -117,8 +117,8 @@ These options do the expected thing:
 * Edit/Undo: undoes the last action.
 * Edit/Document properties: opens the "Document properties" dialog.
 * Edit/Face,Edge,Tabs: switches to the given mode.
-* Edit/Reset views: If you move the 2D or 3D view too much and you lose yourself, this option will get you back to the initial view.
 * Edit/Repack pieces: If you have all the pieces overlapping each other, this option will tidy them up a bit.
+* View/Reset views: If you move the 2D or 3D view too much and you lose yourself, this option will get you back to the initial view.
 
 More interesting are the following:
 

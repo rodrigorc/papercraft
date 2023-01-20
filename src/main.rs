@@ -1366,16 +1366,15 @@ impl GlobalContext {
 
                     unsafe {
                         // blit the FBO to the real FB
-                        let pos_y2 = dsp_size.y - pos.y - this.sz_scene.y;
-                        let x = (pos.x * 1.0) as i32;
-                        let y = (pos_y2 * 1.0) as i32;
-                        let width = (this.sz_scene.x * 1.0) as i32;
-                        let height = (this.sz_scene.y * 1.0) as i32;
+                        let x = pos.x as i32;
+                        let y = (dsp_size.y - pos.y) as i32;
+                        let width = this.sz_scene.x as i32;
+                        let height = this.sz_scene.y as i32;
 
                         let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
                         gl::BlitFramebuffer(
                             0, 0, width, height,
-                            x, y, x + width, y + height,
+                            x, y - height, x + width, y,
                             gl::COLOR_BUFFER_BIT, gl::NEAREST
                         );
                     }
@@ -1409,16 +1408,15 @@ impl GlobalContext {
 
                     unsafe {
                         // blit the FBO to the real FB
-                        let pos_y2 = dsp_size.y - pos.y - this.sz_paper.y;
                         let x = pos.x as i32;
-                        let y = pos_y2 as i32;
+                        let y = (dsp_size.y - pos.y) as i32;
                         let width = this.sz_paper.x as i32;
                         let height = this.sz_paper.y as i32;
 
                         let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
                         gl::BlitFramebuffer(
                             0, 0, width, height,
-                            x, y, x + width, y + height,
+                            x, y - height, x + width, y,
                             gl::COLOR_BUFFER_BIT, gl::NEAREST
                         );
                     }

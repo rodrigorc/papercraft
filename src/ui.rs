@@ -1285,7 +1285,7 @@ impl PapercraftContext {
         if let Some(c) = &mut self.rotation_center {
             *c = pos + zoom * (*c - pos);
         }
-        RebuildFlags::PAPER_REDRAW
+        RebuildFlags::PAPER_REDRAW | RebuildFlags::SELECTION
 }
     #[must_use]
     pub fn paper_hover_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {

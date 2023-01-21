@@ -1,4 +1,5 @@
 #version 150
+precision highp float;
 
 in vec2 pos;
 in float line_dash;
@@ -22,6 +23,7 @@ void main(void) {
 ###
 
 #version 150
+precision highp float;
 
 uniform vec4 line_color;
 uniform float frac_dash;
@@ -37,6 +39,7 @@ void main(void) {
 ###
 
 #version 150
+precision highp float;
 
 layout(lines) in;
 layout(triangle_strip, max_vertices = 4) out;

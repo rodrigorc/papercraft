@@ -283,14 +283,14 @@ fn main() {
                         gl.clear(glow::COLOR_BUFFER_BIT);
                     };
 
-                    let ui = imgui_context.frame();
-                    //ui.show_demo_window(&mut true);
-
                     {
+                        let ui = imgui_context.frame();
+                        //ui.show_demo_window(&mut true);
+
                         let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
                         let _s2 = ui.push_style_var(imgui::StyleVar::WindowRounding(0.0));
 
-                        let _w = ui.window("Papercraft")
+                        if let Some(_w) = ui.window("Papercraft")
                             .position([0.0, 0.0], imgui::Condition::Always)
                             .size(ui.io().display_size, imgui::Condition::Always)
                             .flags(
@@ -300,59 +300,62 @@ fn main() {
                                 imgui::WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS |
                                 imgui::WindowFlags::NO_NAV
                                 )
-                            .begin();
+                            .begin()
+                        {
+                            drop((_s2, _s1));
+                            let ctx = &mut *ctx.borrow_mut();
 
-                        drop((_s2, _s1));
-                        let ctx = &mut *ctx.borrow_mut();
+                            if let Some(cmd_file_action) = cmd_file_action.take() {
+                                ctx.popup_time_start = Instant::now();
+                                ctx.file_action = Some(cmd_file_action);
+                                ui.open_popup("###Wait");
+                            }
 
-                        if let Some(cmd_file_action) = cmd_file_action.take() {
-                            ctx.popup_time_start = Instant::now();
-                            ctx.file_action = Some(cmd_file_action);
-                            ui.open_popup("###Wait");
+                            let menu_actions = ctx.build_ui(ui);
+                            ctx.run_menu_actions(ui, &menu_actions);
+                            ctx.run_mouse_actions(ui);
+
+                            if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER) {
+                                ctx.data.pre_render(ctx.rebuild);
+                                let vp = glr::PushViewport::new();
+                                if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
+                                    let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_scene);
+                                    vp.viewport(0, 0, ctx.sz_scene.x as i32, ctx.sz_scene.y as i32);
+                                    ctx.render_scene();
+                                }
+                                if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
+                                    let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_paper);
+                                    vp.viewport(0, 0, ctx.sz_paper.x as i32, ctx.sz_paper.y as i32);
+                                    ctx.render_paper();
+                                }
+                                ctx.rebuild = RebuildFlags::empty();
+                            }
+                            let new_title = ctx.title(true);
+                            if new_title != old_title {
+                                gl_window.window.set_title(&new_title);
+                                old_title = new_title;
+                            }
+
+                            match (quit_requested, menu_actions.quit) {
+                                (_, BoolWithConfirm::Confirmed) | (BoolWithConfirm::Confirmed, _) => {
+                                    *control_flow = winit::event_loop::ControlFlow::Exit;
+                                }
+                                (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested) => {
+                                    quit_requested = BoolWithConfirm::None;
+                                    ctx.open_confirmation_dialog(ui,
+                                        "Quit?",
+                                        "The model has not been save, continue anyway?",
+                                        |a| a.quit = BoolWithConfirm::Confirmed
+                                    );
+                                }
+                                (BoolWithConfirm::None, BoolWithConfirm::None) => {}
+                            }
+
                         }
 
-                        let menu_actions = ctx.build_ui(ui);
-                        ctx.run_menu_actions(ui, &menu_actions);
-                        ctx.run_mouse_actions(ui);
-
-                        if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER) {
-                            ctx.data.pre_render(ctx.rebuild);
-                            let vp = glr::PushViewport::new();
-                            if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
-                                let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_scene);
-                                vp.viewport(0, 0, ctx.sz_scene.x as i32, ctx.sz_scene.y as i32);
-                                ctx.render_scene();
-                            }
-                            if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
-                                let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_paper);
-                                vp.viewport(0, 0, ctx.sz_paper.x as i32, ctx.sz_paper.y as i32);
-                                ctx.render_paper();
-                            }
-                            ctx.rebuild = RebuildFlags::empty();
-                        }
-                        let new_title = ctx.title(true);
-                        if new_title != old_title {
-                            gl_window.window.set_title(&new_title);
-                            old_title = new_title;
-                        }
-
-                        match (quit_requested, menu_actions.quit) {
-                            (_, BoolWithConfirm::Confirmed) | (BoolWithConfirm::Confirmed, _) => {
-                                *control_flow = winit::event_loop::ControlFlow::Exit;
-                            }
-                            (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested) => {
-                                quit_requested = BoolWithConfirm::None;
-                                ctx.open_confirmation_dialog(ui,
-                                    "Quit?",
-                                    "The model has not been save, continue anyway?",
-                                    |a| a.quit = BoolWithConfirm::Confirmed
-                                );
-                            }
-                            (BoolWithConfirm::None, BoolWithConfirm::None) => {}
-                        }
+                        winit_platform.prepare_render(ui, &gl_window.window);
                     }
 
-                    winit_platform.prepare_render(ui, &gl_window.window);
                     let draw_data = imgui_context.render();
 
                     // This is the only extra render step to add
@@ -782,7 +785,8 @@ impl GlobalContext {
 
         if let Some(_main_area) = ui.child_window("main_area")
             .size([0.0, -ui.frame_height()])
-            .begin() {
+            .begin()
+        {
             let sz_full = Vector2::from(ui.content_region_avail());
 
             if self.sz_full != sz_full {
@@ -1345,8 +1349,6 @@ impl GlobalContext {
 
     fn build_scene(&mut self, ui: &imgui::Ui, width: f32) {
         if let Some(_scene) = ui.child_window("scene")
-            //.size([300.0, 300.0], imgui::Condition::Once)
-            //.movable(true)
             .size([width, 0.0])
             .border(true)
             .begin()
@@ -1387,8 +1389,6 @@ impl GlobalContext {
 
     fn build_paper(&mut self, ui: &imgui::Ui) {
         if let Some(_paper) = ui.child_window("paper")
-            //.size([300.0, 300.0], imgui::Condition::Once)
-            //.movable(true)
             .size([-1.0, -1.0])
             .border(true)
             .begin()

@@ -1,4 +1,5 @@
-#version 140
+#version 150
+precision highp float;
 
 uniform mat3 m;
 
@@ -18,7 +19,8 @@ void main(void) {
 
 ###
 
-#version 140
+#version 150
+precision highp float;
 
 uniform bool texturize;
 uniform vec4 notex_color;

@@ -1,7 +1,7 @@
 use super::*;
 
-fn compute_edge_map(new: &Papercraft, old: &Papercraft) -> HashMap<EdgeIndex, (EdgeIndex, bool)> {
-    let mut map = HashMap::new();
+fn compute_edge_map(new: &Papercraft, old: &Papercraft) -> FxHashMap<EdgeIndex, (EdgeIndex, bool)> {
+    let mut map = FxHashMap::default();
     for (i_new, e_new) in new.model.edges() {
         let np0 = new.model[e_new.v0()].pos();
         let np1 = new.model[e_new.v1()].pos();
@@ -29,12 +29,12 @@ fn compute_edge_map(new: &Papercraft, old: &Papercraft) -> HashMap<EdgeIndex, (E
     map
 }
 
-type IslandFaceMap = HashMap<IslandKey, HashSet<FaceIndex>>;
+type IslandFaceMap = FxHashMap<IslandKey, FxHashSet<FaceIndex>>;
 
 fn compute_island_to_faces_map(pc: &Papercraft) -> IslandFaceMap {
-    let mut new_faces_map = HashMap::new();
+    let mut new_faces_map = FxHashMap::default();
     for (i_new, island) in pc.islands() {
-        let mut faces = HashSet::new();
+        let mut faces = FxHashSet::default();
         pc.traverse_faces_no_matrix(island, |f| {
             faces.insert(f);
             ControlFlow::Continue(())
@@ -44,8 +44,8 @@ fn compute_island_to_faces_map(pc: &Papercraft) -> IslandFaceMap {
     new_faces_map
 }
 
-fn compute_island_map(new: &Papercraft, old: &Papercraft, new_map: &IslandFaceMap, old_map: &IslandFaceMap) -> HashMap<IslandKey, IslandKey> {
-    let mut map = HashMap::new();
+fn compute_island_map(new: &Papercraft, old: &Papercraft, new_map: &IslandFaceMap, old_map: &IslandFaceMap) -> FxHashMap<IslandKey, IslandKey> {
+    let mut map = FxHashMap::default();
     for (i_island, _) in new.islands() {
         let new_faces = &new_map[&i_island];
         let best = old.islands().max_by_key(|&(i_oisland, _)| {
@@ -68,8 +68,8 @@ impl Papercraft {
         let eon_map = compute_edge_map(old_obj, self);
 
         // If the best match for A is B and for B is A, then it is a match
-        let mut real_edge_map = HashMap::new();
-        let mut edge_status_map = HashMap::new();
+        let mut real_edge_map = FxHashMap::default();
+        let mut edge_status_map = FxHashMap::default();
         for (i_edge, _) in self.model.edges() {
             // If an edge matches in both directions, then it is a match
             let (o, o_cross) = match eno_map.get(&i_edge) {
@@ -113,7 +113,7 @@ impl Papercraft {
         }
 
         // Match the faces: two faces are equivalent if their 3 edges match
-        let mut oi_real_face_map = HashMap::new();
+        let mut oi_real_face_map = FxHashMap::default();
         for (i_face, face) in self.model.faces() {
             let i_edges = face.index_edges();
             let o_edges = i_edges.map(|i| real_edge_map.get(&i));
@@ -123,12 +123,12 @@ impl Papercraft {
             };
 
             let o_faces = old_obj.model[o_edges[0]].faces();
-            let o_edges_set = o_edges.into_iter().collect::<HashSet<_>>();
+            let o_edges_set = o_edges.into_iter().collect::<FxHashSet<_>>();
             let o_faces = std::iter::once(o_faces.0).chain(o_faces.1);
             for o_face in o_faces {
                 let oface = &old_obj.model[o_face];
                 let real_edges = oface.index_edges();
-                if real_edges.into_iter().collect::<HashSet<_>>() == o_edges_set {
+                if real_edges.into_iter().collect::<FxHashSet<_>>() == o_edges_set {
                     oi_real_face_map.insert(o_face, i_face);
                     break;
                 }
@@ -151,7 +151,7 @@ impl Papercraft {
         }
 
         // If face A maps to B and B maps to A, then it is a match.
-        let mut real_island_map = HashMap::new();
+        let mut real_island_map = FxHashMap::default();
         let ino_map = compute_island_map(self, old_obj, &new_islands, &old_islands);
         let ion_map = compute_island_map(old_obj, self, &old_islands, &new_islands);
 

@@ -1,5 +1,4 @@
-use std::collections::{HashSet, HashMap};
-
+use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{InnerSpace, Rad, Angle, Zero};
 use image::DynamicImage;
 use serde::{Serialize, Deserialize};
@@ -105,9 +104,9 @@ impl Model {
         }
     }
 
-    pub fn from_waveobj(obj: &waveobj::Model, mut texture_map: HashMap<String, (String, DynamicImage)>) -> (Model, HashMap<FaceIndex, u32>) {
+    pub fn from_waveobj(obj: &waveobj::Model, mut texture_map: FxHashMap<String, (String, DynamicImage)>) -> (Model, FxHashMap<FaceIndex, u32>) {
         // Remove duplicated vertices by adding them into a set
-        let all_vertices: HashSet<waveobj::FaceVertex> =
+        let all_vertices: FxHashSet<waveobj::FaceVertex> =
             obj.faces()
                 .iter()
                 .flat_map(|f| f.vertices())
@@ -118,7 +117,7 @@ impl Model {
         let all_vertices = Vec::from_iter(all_vertices);
 
         // TODO: iterate all_vertices only once
-        let idx_vertices: HashMap<waveobj::FaceVertex, u32> =
+        let idx_vertices: FxHashMap<waveobj::FaceVertex, u32> =
             all_vertices
                 .iter()
                 .enumerate()
@@ -155,7 +154,7 @@ impl Model {
         let mut edges: Vec<Edge> = Vec::with_capacity(obj.faces().len() * 3 / 2);
         //TODO: index idx_edges?
         let mut idx_edges = Vec::with_capacity(obj.faces().len() * 3 / 2);
-        let mut facemap: HashMap<FaceIndex, u32> = HashMap::with_capacity(obj.faces().len());
+        let mut facemap: FxHashMap<FaceIndex, u32> = FxHashMap::with_capacity_and_hasher(obj.faces().len(), Default::default());
 
         'faces:
         for (index, face) in obj.faces().iter().enumerate() {

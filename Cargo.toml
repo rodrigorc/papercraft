@@ -33,6 +33,7 @@ mint = "*"
 image = { version = "*", default_features = false, features = ["png", "jpeg", "jpeg_rayon"] }
 clap = { version = "*", features = ["derive", "cargo"] }
 flate2 = "*"
+fxhash = "*"
 
 glutin = "*"
 glutin-winit = "*"

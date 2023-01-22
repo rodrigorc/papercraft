@@ -1,5 +1,6 @@
-use std::{collections::{HashSet, HashMap}, ops::ControlFlow};
+use std::ops::ControlFlow;
 
+use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad};
 use slotmap::{SlotMap, new_key_type};
 use serde::{Serialize, Deserialize};
@@ -181,7 +182,7 @@ impl Papercraft {
     pub fn set_options(&mut self, mut options: PaperOptions) -> PaperOptions{
         let scale = options.scale / self.options.scale;
         // Compute positions relative to the nearest page
-        let page_pos: HashMap<_, _> = self.islands
+        let page_pos: FxHashMap<_, _> = self.islands
             .iter()
             .map(|(i_island, island)| {
                 let po = self.options.global_to_page(island.location());
@@ -365,8 +366,8 @@ impl Papercraft {
     }
 
     //Retuns a map from the island that disappears into the extra join data.
-    pub fn edge_join(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> HashMap<IslandKey, JoinResult> {
-        let mut renames = HashMap::new();
+    pub fn edge_join(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> FxHashMap<IslandKey, JoinResult> {
+        let mut renames = FxHashMap::default();
         match self.edges[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => {}
             _ => { return renames; }
@@ -439,8 +440,8 @@ impl Papercraft {
         self.traverse_faces_no_matrix(island, |_| { count += 1; ControlFlow::Continue(()) });
         count
     }
-    pub fn get_flat_faces(&self, i_face: FaceIndex) -> HashSet<FaceIndex> {
-        let mut res = HashSet::new();
+    pub fn get_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
+        let mut res = FxHashSet::default();
         traverse_faces_ex(&self.model, i_face, (), FlatTraverseFace(self),
             |i_next_face, _, _| {
                 res.insert(i_next_face);
@@ -449,8 +450,8 @@ impl Papercraft {
         );
         res
     }
-    pub fn get_flat_faces_with_matrix(&self, i_face: FaceIndex, mx: Matrix3) -> HashMap<FaceIndex, Matrix3> {
-        let mut res = HashMap::new();
+    pub fn get_flat_faces_with_matrix(&self, i_face: FaceIndex, mx: Matrix3) -> FxHashMap<FaceIndex, Matrix3> {
+        let mut res = FxHashMap::default();
         traverse_faces_ex(&self.model, i_face, mx, FlatTraverseFaceWithMatrix(self),
             |i_next_face, _, mx| {
                 res.insert(i_next_face, *mx);
@@ -508,8 +509,8 @@ impl Papercraft {
     {
         traverse_faces_ex(&self.model, island.root_face(), (), NoMatrixTraverseFace(&self.model, &self.edges), |i, _, ()| visit_face(i))
     }
-    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> HashMap<IslandKey, JoinResult> {
-        let mut renames = HashMap::new();
+    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> FxHashMap<IslandKey, JoinResult> {
+        let mut renames = FxHashMap::default();
         let mut i_edges = vec![i_edge];
         while let Some(i_edge) = i_edges.pop() {
             // First try to join the edge, if it fails skip.
@@ -632,7 +633,7 @@ fn traverse_faces_ex<F, TP>(model: &Model, root: FaceIndex, initial_state: TP::S
 where F: FnMut(FaceIndex, &Face, &TP::State) -> ControlFlow<()>,
       TP: TraverseFacePolicy,
 {
-    let mut visited_faces = HashSet::new();
+    let mut visited_faces = FxHashSet::default();
     let mut stack = vec![(root, initial_state)];
     visited_faces.insert(root);
 

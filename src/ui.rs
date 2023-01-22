@@ -1,5 +1,7 @@
 /* Everything in this crate is public so that it can be freely used from main.rs */
-use std::{collections::HashMap, ops::ControlFlow};
+use std::ops::ControlFlow;
+
+use fxhash::FxHashMap;
 use cgmath::{
     prelude::*,
     Deg, Rad,
@@ -67,7 +69,7 @@ pub enum UndoAction {
     TabToggle { i_edge: EdgeIndex },
     EdgeCut { i_edge: EdgeIndex },
     EdgeJoin { join_result: JoinResult },
-    DocConfig { options: PaperOptions, island_pos: HashMap<FaceIndex, (Rad<f32>, Vector2)> },
+    DocConfig { options: PaperOptions, island_pos: FxHashMap<FaceIndex, (Rad<f32>, Vector2)> },
     Modified,
 }
 
@@ -908,7 +910,7 @@ impl PapercraftContext {
         Some(undo_actions)
     }
 
-    fn islands_renamed(&mut self, renames: &HashMap<IslandKey, JoinResult>) {
+    fn islands_renamed(&mut self, renames: &FxHashMap<IslandKey, JoinResult>) {
         for x in &mut self.selected_islands {
             while let Some(jr) = renames.get(x) {
                 *x = jr.i_island;

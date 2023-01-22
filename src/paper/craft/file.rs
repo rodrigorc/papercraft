@@ -1,5 +1,6 @@
-use std::{collections::{HashMap, HashSet}, io::{Read, Seek, Write}, path::Path, hash::Hash};
+use std::{io::{Read, Seek, Write}, path::Path, hash::Hash};
 
+use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{One, Rad, Zero};
 use slotmap::SlotMap;
 use crate::waveobj;
@@ -58,7 +59,7 @@ impl Papercraft {
             }
             None => None,
         };
-        let mut texture_map = HashMap::new();
+        let mut texture_map = FxHashMap::default();
 
         if let Some(matlib) = matlib {
             // Textures are read from the .mtl file
@@ -103,7 +104,7 @@ impl Papercraft {
             }
         }
 
-        let mut pending_faces: HashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
+        let mut pending_faces: FxHashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
 
         let mut islands = SlotMap::with_key();
         while let Some(root) = pending_faces.iter().copied().next() {
@@ -164,9 +165,9 @@ impl Papercraft {
         let f = std::fs::File::create(file_name)?;
         let mut f = std::io::BufWriter::new(f);
 
-        let mut index_v = HashMap::new();
-        let mut index_vn = HashMap::new();
-        let mut index_vt = HashMap::new();
+        let mut index_v = FxHashMap::default();
+        let mut index_vn = FxHashMap::default();
+        let mut index_vt = FxHashMap::default();
 
         // f32 cannot be used as a hash index because it does not implement Eq nor Hash, something to do with precision and ambiguous representations and NaNs...
         // But we never operate with the values in model, so same f32 values should always have the same bit pattern, and we can use that bit-pattern as the hash index.
@@ -228,7 +229,7 @@ impl Papercraft {
             by_mat[usize::from(face.material())].push(i_face);
         }
 
-        let mut done_faces = HashSet::new();
+        let mut done_faces = FxHashSet::default();
         for (i_mat, face_by_mat) in by_mat.iter().enumerate() {
             writeln!(f, "usemtl Material.{i_mat:03}")?;
             for &i_face in face_by_mat {

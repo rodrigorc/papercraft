@@ -178,7 +178,7 @@ impl Model {
             for tri in tris {
                 let i_face = FaceIndex(faces.len() as u32);
 
-                // Some faces may be degenerate and have to be skipped, so we must not modify the any model structure until we are sure we will accept it.
+                // Some faces may be degenerate and have to be skipped, so we must not modify the model structure until we are sure we will accept it.
                 enum EdgeCreation {
                     Existing(usize),
                     New(Edge, (u32, u32)),
@@ -190,24 +190,31 @@ impl Model {
                     *face_vertex = face_verts[tri[i]];
                     let v0 = face_verts_orig[tri[i]];
                     let v1 = face_verts_orig[tri[(i + 1) % 3]];
-                    if let Some(i_edge) = idx_edges.iter().position(|&(p0, p1)| (p0, p1) == (v0, v1) || (p0, p1) == (v1, v0)) {
-                        // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird. This is mostly harmless, though.
-                        if idx_edges[i_edge] != (v1, v0) {
-                            dbg!(idx_edges[i_edge], (v1, v0));
-                        }
-                        // Maximum 2 faces per edge, additional faces are wholly discarded
+                    let mut i_edge_candidate = idx_edges.iter().position(|&(p0, p1)| (p0, p1) == (v0, v1) || (p0, p1) == (v1, v0));
+
+                    if let Some(i_edge) = i_edge_candidate {
                         if edges[i_edge].f1.is_some() {
-                            dbg!(i_edge);
-                            continue 'faces;
+                            // Maximum 2 faces per edge, additional faces will clone the edge and be disconnected
+                            println!("Warning: three-faced edge #{i_edge}");
+                            i_edge_candidate = None;
+                        } else if idx_edges[i_edge] != (v1, v0) {
+                            // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird. This is mostly harmless, though.
+                            println!("Warning: inverted edge #{i_edge}: {v0}-{v1}");
                         }
-                        *face_edge = EdgeCreation::Existing(i_edge);
-                    } else {
-                        *face_edge = EdgeCreation::New(Edge {
-                            v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
-                            v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
-                            f0: i_face,
-                            f1: None,
-                        }, (v0, v1));
+                    }
+
+                    *face_edge = match i_edge_candidate {
+                        Some(i_edge) => {
+                            EdgeCreation::Existing(i_edge)
+                        }
+                        None => {
+                            EdgeCreation::New(Edge {
+                                v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
+                                v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
+                                f0: i_face,
+                                f1: None,
+                            }, (v0, v1))
+                        }
                     }
                 }
 

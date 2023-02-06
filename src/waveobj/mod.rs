@@ -111,8 +111,9 @@ impl Model {
                     }
                 }
                 "s" => { /* smoothing is ignored */}
-                p => {
-                    println!("{p}??");
+                _p => {
+                    // Unknown attribute
+                    //println!("{_p}??");
                 }
             }
         }
@@ -244,8 +245,9 @@ impl Material {
                     let map = words.next().ok_or_else(syn_error)?;
                     data.map = Some(String::from(map));
                 }
-                p => {
-                    println!("{p}??");
+                _p => {
+                    // Unknown attribute
+                    //println!("{_p}??");
                 }
            }
         }

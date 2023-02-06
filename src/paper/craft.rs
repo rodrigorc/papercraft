@@ -17,16 +17,18 @@ pub enum EdgeStatus {
     Cut(bool), //the tab will be drawn on the side with the same sign as this bool
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TabStyle {
+    #[default]
     Textured,
     HalfTextured,
     White,
     None,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum FoldStyle {
+    #[default]
     Full,
     FullAndOut,
     Out,
@@ -816,11 +818,6 @@ impl<'de> Deserialize<'de> for EdgeStatus {
     }
 }
 
-impl Default for TabStyle {
-    fn default() -> Self {
-        TabStyle::Textured
-    }
-}
 impl Serialize for TabStyle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: serde::Serializer
@@ -850,11 +847,6 @@ impl<'de> Deserialize<'de> for TabStyle {
     }
 }
 
-impl Default for FoldStyle {
-    fn default() -> Self {
-        FoldStyle::Full
-    }
-}
 impl Serialize for FoldStyle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: serde::Serializer

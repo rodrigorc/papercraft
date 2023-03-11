@@ -13,36 +13,38 @@ strip = "symbols"
 lto = true
 
 [build-dependencies]
-cc = "*"
-bindgen = "*"
+cc = "1"
+bindgen = "0.64"
 
 [dependencies]
 cairo-rs = { version = "0.15", features = ["pdf", "png", "v1_16"] }
-gl_loader = "*"
-cgmath = "*"
-anyhow = "*"
-slotmap = "*"
-serde = { version = "*", features = ["derive"] }
-serde_json = "*"
-gl ="*"
-smallvec = "*"
-zip = "*"
+gl_loader = "0.1"
+cgmath = "0.18"
+anyhow = "1"
+slotmap = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gl ="0.14"
+smallvec = "1"
+zip = "0.6"
 memoffset = "0.6"
-bitflags = "*"
-mint = "*"
-image = { version = "*", default_features = false, features = ["png", "jpeg", "jpeg_rayon"] }
-clap = { version = "*", features = ["derive", "cargo"] }
-flate2 = "*"
-fxhash = "*"
-
-glutin = "*"
-glutin-winit = "*"
+bitflags = "1"
+mint = "0.5"
+image = { version = "0.24", default_features = false, features = ["png", "jpeg", "jpeg_rayon"] }
+clap = { version = "4", features = ["derive", "cargo"] }
+flate2 = "1"
+fxhash = "0.2"
+glutin = "0.30"
+glutin-winit = "0.2"
 raw-window-handle = "0.5"
-signal-hook = "*"
-opener = "*"
-clipboard = "*"
+signal-hook = "0.3"
+opener = "0.5"
+clipboard = "0.5"
+winit = { version = "0.27", features = ["x11"] }
+
+# Patched dependencies below
+
 glow = "*"
-winit = "*"
 
 [dependencies.imgui]
 version = "*"
@@ -58,19 +60,19 @@ version = "*"
 version = "*"
 
 [patch.crates-io.glow]
-# this will be the next version, some day
+## something like this will be the next version, some day
 git = "https://github.com/grovesNL/glow"
 rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"
 
 [patch.crates-io.imgui]
 git = "https://github.com/rodrigorc/imgui-rs"
-#path = "thirdparty/imgui-rs/imgui"
+rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"
 [patch.crates-io.imgui-sys]
 git = "https://github.com/rodrigorc/imgui-rs"
-#path = "thirdparty/imgui-rs/imgui-sys"
+rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"
 [patch.crates-io.imgui-winit-support]
 git = "https://github.com/rodrigorc/imgui-rs"
-#path = "thirdparty/imgui-rs/imgui-winit-support"
+rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"
 [patch.crates-io.imgui-glow-renderer]
 git = "https://github.com/rodrigorc/imgui-rs"
-#path = "thirdparty/imgui-rs/imgui-glow-renderer"
+rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"

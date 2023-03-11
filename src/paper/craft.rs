@@ -72,6 +72,8 @@ pub struct PaperOptions {
     pub fold_line_len: f32, //only for folds in & out
     #[serde(default="default_fold_line_width")]
     pub fold_line_width: f32, //only for folds in & out
+    #[serde(default)]
+    pub hidden_line_angle: f32, //degrees
     #[serde(default="my_true")]
     pub show_self_promotion: bool,
     #[serde(default="my_true")]
@@ -94,6 +96,7 @@ impl Default for PaperOptions {
             tab_angle: 45.0,
             fold_line_len: 4.0,
             fold_line_width: default_fold_line_width(),
+            hidden_line_angle: 0.0,
             show_self_promotion: true,
             show_page_number: true,
         }

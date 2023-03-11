@@ -1030,6 +1030,9 @@ impl GlobalContext {
                     ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Line width", &mut options.fold_line_width).display_format("%g").build();
+
+                    ui.set_next_item_width(ui.current_font_size() * 5.5);
+                    ui.input_float("Hidden fold angle", &mut options.hidden_line_angle).display_format("%g").build();
                 }
                 if let Some(_t) = ui.tree_node("Information") {
                     self.build_read_only_options_inner_dialog(ui, &options);

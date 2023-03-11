@@ -377,6 +377,9 @@ impl PapercraftContext {
             //cut with a tab
             let dotted = if edge_status == EdgeStatus::Joined || draw_tab {
                 let angle_3d = self.papercraft.model().edge_angle(i_edge);
+                if edge_status == EdgeStatus::Joined && Rad(angle_3d.0.abs()) < Rad::from(Deg(self.papercraft.options().hidden_line_angle)) {
+                    continue;
+                }
                 angle_3d < Rad(0.0)
             } else {
                 false

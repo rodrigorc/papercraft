@@ -73,7 +73,7 @@ You can also move the pieces in any other mode, but this one disables clicking o
 
 In the menu Edit / Document properties you can edit many options related to the document as a whole:
 
-![Document properties](https://user-images.githubusercontent.com/1128630/212969449-167b321a-3683-40db-b7ac-312ee38c8ea0.png)
+![Document properties](https://user-images.githubusercontent.com/1128630/225430050-75ecdf71-e135-4257-87aa-df15c11ba647.png)
 
 * Model scale: the units in the original OBJ model are assumed to be millimeters. This value scales up or down that measure to make the final model bigger or smaller.
   You can check the final size of the model in the information box below.
@@ -96,6 +96,7 @@ In the menu Edit / Document properties you can edit many options related to the 
     * None: No fold line. How to fold them is up to you. You you use very thin paper you can even try to glue the model without folding.
 * Fold length: when using in or out segments, the length of the segment.
 * Line width: with of the folded printed lines, in millimeters.
+* Hidden fold angle: edges that separate faces with an angle below this one will not be drawn. It is 0 by default meaning that all edges will be printed. It affects only angles between faces of the model, it will never hide the fold line for a tab; if you want to hide those set the "Fold style" to "None" instead.
 * Pages: the number of pages of the output PDF.
 * Columns: how many columns are used to order the pages in the 2D view. It does not have any effect in the final PDF file.
 * Print Papercraft signature. You can disable the signature that is printed in the PDF linking to this Internet page.

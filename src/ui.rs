@@ -1,6 +1,7 @@
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
+use either::Either;
 use fxhash::FxHashMap;
 use cgmath::{
     prelude::*,
@@ -219,13 +220,26 @@ pub enum ClickResult {
     Edge(EdgeIndex, Option<FaceIndex>),
 }
 
-struct PaperDrawFaceArgs {
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum EdgeDrawKind {
+    Cut,
+    Mountain,
+    Valley,
+}
+
+pub struct PaperDrawFaceArgs {
     vertices: Vec<MVertex2D>,
     vertices_edge_border: Vec<MVertex2DLine>,
     vertices_edge_crease: Vec<MVertex2DLine>,
     vertices_tab: Vec<MVertex2DColor>,
     vertices_tab_edge: Vec<MVertex2DLine>,
+
+    // Maps a FaceIndex to the index into vertices
     face_index: Vec<u32>,
+    // For each line in vertices_edge_border says which kind of line
+    border_kind: Vec<EdgeDrawKind>,
+    // Ditto for vertices_edge_crease
+    crease_kind: Vec<EdgeDrawKind>,
 }
 
 impl PaperDrawFaceArgs {
@@ -237,6 +251,36 @@ impl PaperDrawFaceArgs {
             vertices_tab: Vec::new(),
             vertices_tab_edge: Vec::new(),
             face_index: vec![0; model.num_faces()],
+            border_kind: Vec::new(),
+            crease_kind: Vec::new(),
+        }
+    }
+
+    pub fn iter_edges(&self, kind: EdgeDrawKind) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+        match kind {
+            EdgeDrawKind::Cut => {
+                let it = self.vertices_tab_edge
+                    .chunks_exact(2)
+                    .chain(self.vertices_edge_border
+                        .chunks_exact(2)
+                        .zip(self.border_kind.iter())
+                        .filter_map(move |(line, kind)| (*kind == EdgeDrawKind::Cut).then_some(line))
+                    )
+                    .map(|s| (&s[0], &s[1]));
+                Either::Left(it)
+            }
+            kind => {
+                let it = self.vertices_edge_crease
+                    .chunks_exact(2)
+                    .zip(self.crease_kind.iter())
+                    .chain(self.vertices_edge_border
+                        .chunks_exact(2)
+                        .zip(self.border_kind.iter())
+                    )
+                    .filter_map(move |(line, ek)| (*ek == kind).then_some(line))
+                    .map(|s| (&s[0], &s[1]));
+            Either::Right(it)
+            }
         }
     }
 }
@@ -458,8 +502,19 @@ impl PapercraftContext {
             };
 
             let edge_container = if fold_faces {
+                let kind = match dotted {
+                    true => EdgeDrawKind::Valley,
+                    false => EdgeDrawKind::Mountain,
+                };
+                args.crease_kind.push(kind);
                 &mut args.vertices_edge_crease
             } else {
+                let kind = match (draw_tab, dotted) {
+                    (true, true) => EdgeDrawKind::Valley,
+                    (true, false) => EdgeDrawKind::Mountain,
+                    (false, _) => EdgeDrawKind::Cut,
+                };
+                args.border_kind.push(kind);
                 &mut args.vertices_edge_border
             };
             edge_container.extend_from_slice(new_lines);
@@ -1377,6 +1432,21 @@ impl PapercraftContext {
     }
     pub fn has_selected_edge(&self) -> bool {
         self.selected_edge.is_some()
+    }
+
+    pub fn lines_by_island(&self) -> Vec<(IslandKey, PaperDrawFaceArgs)> {
+        self.papercraft.islands()
+            .map(|(id, island)| {
+                let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
+                self.papercraft.traverse_faces(island,
+                    |i_face, face, mx| {
+                        self.paper_draw_face(face, i_face, mx, &mut args);
+                        ControlFlow::Continue(())
+                    }
+                );
+                (id, args)
+            })
+            .collect()
     }
 }
 

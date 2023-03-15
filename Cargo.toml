@@ -21,6 +21,8 @@ cairo-rs = { version = "0.15", features = ["pdf", "png", "v1_16"] }
 gl_loader = "0.1"
 cgmath = "0.18"
 anyhow = "1"
+either = "1"
+base64 = "0.21"
 slotmap = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

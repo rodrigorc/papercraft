@@ -1,7 +1,7 @@
 #![allow(clippy::collapsible_if)]
 
 use std::{num::NonZeroU32, ffi::CString, time::{Instant, Duration}, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
-use std::io::Read;
+use std::io::{Read, Write};
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
@@ -504,7 +504,7 @@ enum FileAction {
     ImportObj,
     UpdateObj,
     ExportObj,
-    GeneratePdf,
+    GeneratePrintable,
 }
 
 impl FileAction {
@@ -516,7 +516,7 @@ impl FileAction {
             FileAction::ImportObj => "Importing...",
             FileAction::UpdateObj => "Updating...",
             FileAction::ExportObj => "Exporting...",
-            FileAction::GeneratePdf => "Generating PDF...",
+            FileAction::GeneratePrintable => "Generating...",
         }
     }
 }
@@ -572,7 +572,7 @@ struct MenuActions {
     import_obj: BoolWithConfirm,
     update_obj: BoolWithConfirm,
     export_obj: bool,
-    generate_pdf: bool,
+    generate_printable: bool,
     quit: BoolWithConfirm,
     reset_views: bool,
     undo: bool,
@@ -1189,8 +1189,8 @@ impl GlobalContext {
                 if ui.menu_item("Export OBJ...") {
                     menu_actions.export_obj = true;
                 }
-                if ui.menu_item("Generate PDF...") {
-                    menu_actions.generate_pdf = true;
+                if ui.menu_item("Generate Printable...") {
+                    menu_actions.generate_printable = true;
                 }
                 ui.separator();
                 if ui.menu_item_config("Quit")
@@ -1546,13 +1546,13 @@ impl GlobalContext {
             self.file_dialog = Some((fd, "Export OBJ...", FileAction::ExportObj));
             open_file_dialog = true;
         }
-        if menu_actions.generate_pdf {
+        if menu_actions.generate_printable {
             let fd = imgui_filedialog::Builder::new("fd")
-                .filter("PDF document (*.pdf) {.pdf},All files {.*}")
+                .filter("PDF document (*.pdf) {.pdf},SVG documents (*.svg) {.svg},PNG documents (*.png) {.png},All files {.*}")
                 .path(&self.last_path)
                 .flags(imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG)
                 .open();
-            self.file_dialog = Some((fd, "Generate PDF...", FileAction::GeneratePdf));
+            self.file_dialog = Some((fd, "Generate Printable...", FileAction::GeneratePrintable));
             open_file_dialog = true;
         }
 
@@ -1903,7 +1903,7 @@ impl GlobalContext {
                 self.data.modified = true;
             }
             FileAction::ExportObj => self.export_obj(file_name)?,
-            FileAction::GeneratePdf => self.generate_pdf(file_name)?,
+            FileAction::GeneratePrintable => self.generate_printable(file_name)?,
         }
         Ok(())
     }
@@ -1952,29 +1952,165 @@ impl GlobalContext {
             .with_context(|| format!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
-    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
-        self.generate_pdf_impl(file_name.as_ref())
-            .with_context(|| format!("Error exporting to {}", file_name.display()))?;
+
+    fn generate_printable(&self, file_name: &Path) -> anyhow::Result<()> {
+        dbg!(file_name);
+        let res = match file_name.extension().map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase()).as_deref() {
+            Some("pdf") => self.generate_pdf(file_name),
+            Some("svg") => self.generate_svg(file_name),
+            Some("png") => self.generate_png(file_name),
+            _ => anyhow::bail!("Don't know how to write the format of {}", file_name.display()),
+        };
+        res.with_context(|| format!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
-    fn generate_pdf_impl(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
         let options = self.data.papercraft().options();
         let resolution = options.resolution as f32;
-        let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
         let page_size_mm = Vector2::from(options.page_size);
         let page_size_inches = page_size_mm / 25.4;
         let page_size_dots = page_size_inches * 72.0;
+
+        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
+        let title  = self.title(false);
+        let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
+        let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
+        let cr = cairo::Context::new(&pdf)?;
+
+        self.generate_pages(|_page, pixbuf| {
+            cr.set_source_surface(pixbuf, 0.0, 0.0)?;
+            let pat = cr.source();
+            let mut mc = cairo::Matrix::identity();
+            let scale = resolution / 72.0; // to dots
+            mc.scale(scale as f64, scale as f64);
+            pat.set_matrix(mc);
+
+            let _ = cr.paint();
+            cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+            let _ = cr.show_page();
+            Ok(())
+        })?;
+        drop(cr);
+        drop(pdf);
+
+        Ok(())
+    }
+
+    fn generate_svg(&self, file_name: &Path) -> anyhow::Result<()> {
+
+        let lines_by_island = self.data.lines_by_island();
+
+        self.generate_pages(|page, pixbuf| {
+            let name = Self::file_name_for_page(file_name, page);
+            let out = std::fs::File::create(name)?;
+            let mut out = std::io::BufWriter::new(out);
+            let options = self.data.papercraft().options();
+
+            let page_pos_0 = options.page_position(page);
+            let page_size = Vector2::from(options.page_size);
+            let in_page = |p: Vector2| -> Option<Vector2> {
+                let r = p - page_pos_0;
+                if r.x >= 0.0 && r.y >= 0.0 && r.x < page_size.x && r.y < page_size.y {
+                    Some(r)
+                } else {
+                    None
+                }
+            };
+
+            use base64::prelude::*;
+            let mut png = Vec::new();
+            pixbuf.write_to_png(&mut png)?;
+            let b64png = BASE64_STANDARD.encode(&png);
+
+
+            writeln!(&mut out, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
+            writeln!(
+                &mut out,
+                r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
+                page_size.x, page_size.y
+            )?;
+
+            writeln!(&mut out, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
+            writeln!(
+                &mut out,
+                r#"<image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/png;base64,{}" id="background" x="0" y="0" style="display:inline"/>"#,
+                page_size.x, page_size.y, b64png)?;
+            writeln!(&mut out, r#"</g>"#)?;
+
+            writeln!(&mut out, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
+            for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
+                writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
+                for (a, b) in lines.iter_edges(EdgeDrawKind::Cut) {
+                    if let (Some(a), Some(b)) = (in_page(a.pos), in_page(b.pos)) {
+                        writeln!(&mut out, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
+                    }
+                }
+                writeln!(&mut out, r#"" />"#)?;
+            }
+            writeln!(&mut out, r#"</g>"#)?;
+
+            writeln!(&mut out, r#"<g inkscape:label="Fold" inkscape:groupmode="layer" id="Fold" style="display:none">"#)?;
+            for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
+                writeln!(&mut out, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#, if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
+                for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
+                    writeln!(&mut out, r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
+                        idx,
+                        if fold_kind == EdgeDrawKind::Mountain  { "#ff0000" } else { "#0000ff" },
+                        if fold_kind == EdgeDrawKind::Mountain  { "foldm_" } else { "foldv_" }
+                    )?;
+                    for (a, b) in lines.iter_edges(fold_kind) {
+                        if let (Some(a), Some(b)) = (in_page(a.pos), in_page(b.pos)) {
+                            writeln!(&mut out, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
+                        }
+                    }
+                    writeln!(&mut out, r#"" />"#)?;
+                }
+                writeln!(&mut out, r#"</g>"#)?;
+            }
+            writeln!(&mut out, r#"</g>"#)?;
+            writeln!(&mut out, r#"</svg>"#)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+    fn generate_png(&self, file_name: &Path) -> anyhow::Result<()> {
+        self.generate_pages(|page, pixbuf| {
+            let name = Self::file_name_for_page(file_name, page);
+            let f = std::fs::File::create(name)?;
+            let mut f = std::io::BufWriter::new(f);
+            pixbuf.write_to_png(&mut f)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
+        if page == 0 {
+            return file_name.to_owned();
+        }
+        let ext = file_name.extension().unwrap_or_default();
+        let stem = file_name.file_stem().unwrap_or_default();
+        let stem = stem.to_string_lossy();
+        let stem = stem.strip_suffix("_1").unwrap_or(&stem);
+        let parent = file_name.parent().map(|p| p.to_owned()).unwrap_or_default();
+        let mut name = PathBuf::from(format!("{}_{}", stem, page + 1));
+        name.set_extension(ext);
+        parent.join(name)
+    }
+    fn generate_pages<F>(&self, mut do_page_fn: F) -> anyhow::Result<()>
+        where F: FnMut(u32, &cairo::ImageSurface) -> anyhow::Result<()>
+    {
+        let options = self.data.papercraft().options();
+        let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
+        let resolution = options.resolution as f32;
+        let page_size_mm = Vector2::from(options.page_size);
+        let page_size_inches = page_size_mm / 25.4;
         let page_size_pixels = page_size_inches * resolution;
         let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
         let mut pixbuf = cairo::ImageSurface::create(cairo::Format::ARgb32, page_size_pixels.x, page_size_pixels.y)
             .with_context(|| anyhow!("Unable to create output pixbuf"))?;
         let stride = pixbuf.stride();
-        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
-        let title  = self.title(false);
-        let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
-        let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
-        let cr = cairo::Context::new(&pdf)?;
 
         unsafe {
             gl::PixelStorei(gl::PACK_ROW_LENGTH, stride / 4);
@@ -2040,26 +2176,6 @@ impl GlobalContext {
             let tab_style = options.tab_style;
 
             for page in 0..page_count {
-                const FONT_SIZE: f32 = 3.0;
-                if options.show_self_promotion {
-                    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                    cr.set_font_size(FONT_SIZE as f64 * 72.0 / 25.4);
-                    let x = margin_left;
-                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
-                    cr.move_to(x as f64 * 72.0 / 25.4, y as f64 * 72.0 / 25.4);
-                    let _ = cr.show_text(signature());
-                }
-                if options.show_page_number {
-                    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                    cr.set_font_size(FONT_SIZE as f64 * 72.0 / 25.4);
-                    let text = format!("Page {}/{}", page + 1, page_count);
-                    let ext = cr.text_extents(&text).unwrap();
-                    let x = page_size_mm.x - margin_right;
-                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
-                    cr.move_to(x as f64 * 72.0 / 25.4 - ext.width, y as f64 * 72.0 / 25.4);
-                    let _ = cr.show_text(&text);
-                }
-
                 // Start render
                 gl::Clear(gl::COLOR_BUFFER_BIT);
                 let page_pos = options.page_position(page);
@@ -2112,20 +2228,37 @@ impl GlobalContext {
                     gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::BGRA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
                 }
 
-                cr.set_source_surface(&pixbuf, 0.0, 0.0)?;
-                let pat = cr.source();
-                let mut mc = cairo::Matrix::identity();
-                let scale = resolution / 72.0;
-                mc.scale(scale as f64, scale as f64);
-                pat.set_matrix(mc);
+                if options.show_self_promotion || options.show_page_number {
+                    let cr = cairo::Context::new(&pixbuf)?;
+                    let mut mc = cairo::Matrix::identity();
+                    let scale = resolution / 25.4; // use millimeters
+                    mc.scale(scale as f64, scale as f64);
+                    cr.set_matrix(mc);
 
-                let _ = cr.paint();
-                let _ = cr.show_page();
-                //let _ = pixbuf.write_to_png(&mut std::fs::File::create(&format!("test_{}.png", page)).unwrap());
+                    const FONT_SIZE: f32 = 3.0;
+                    if options.show_self_promotion {
+                        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                        cr.set_font_size(FONT_SIZE as f64);
+                        let x = margin_left;
+                        let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                        cr.move_to(x as f64, y as f64);
+                        let _ = cr.show_text(signature());
+                    }
+                    if options.show_page_number {
+                        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                        cr.set_font_size(FONT_SIZE as f64);
+                        let text = format!("Page {}/{}", page + 1, page_count);
+                        let ext = cr.text_extents(&text).unwrap();
+                        let x = page_size_mm.x - margin_right;
+                        let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                        cr.move_to(x as f64 - ext.width, y as f64);
+                        let _ = cr.show_text(&text);
+                    }
+                }
+
+                do_page_fn(page, &pixbuf)?;
             }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
-            drop(cr);
-            drop(pdf);
         }
         Ok(())
     }

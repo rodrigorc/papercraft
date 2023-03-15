@@ -4,7 +4,7 @@
 
 Papercraft is a tool to unwrap paper 3D models, so that you can cut and glue them together and get a real world paper model.
 
-The main purpose of this program is to do the _unwrapping_, that is, it takes a 3D model as input and outputs a PDF file with the pieces to cut.
+The main purpose of this program is to do the _unwrapping_, that is, it takes a 3D model as input and outputs a printable document with the pieces to cut.
 It is not a 3D modelling program. For that I recommend using [Blender][BLENDER].
 
 The interface looks like this:
@@ -22,7 +22,7 @@ You can get this Papercraft project from the [examples](./examples) directory, w
 
 This program is published under the GPL-3.0-or-later license. See the [LICENSE][LIC] file for the full text.
 
-PDF files generated with this program are not affected by this license but by that of the 3D model you use, as it will be a derivative work.
+Files generated with this program are not affected by this license but by that of the 3D model you use, as it will be a derivative work.
 If in doubt contact a real lawyer.
 
 If you create any nice paper model, I'd appreciate if you open an [issue][ISSUE] and send some pictures.
@@ -97,14 +97,14 @@ In the menu Edit / Document properties you can edit many options related to the 
 * Fold length: when using in or out segments, the length of the segment.
 * Line width: with of the folded printed lines, in millimeters.
 * Hidden fold angle: edges that separate faces with an angle below this one will not be drawn. It is 0 by default meaning that all edges will be printed. It affects only angles between faces of the model, it will never hide the fold line for a tab; if you want to hide those set the "Fold style" to "None" instead.
-* Pages: the number of pages of the output PDF.
-* Columns: how many columns are used to order the pages in the 2D view. It does not have any effect in the final PDF file.
-* Print Papercraft signature. You can disable the signature that is printed in the PDF linking to this Internet page.
+* Pages: the number of pages of the output printable document.
+* Columns: how many columns are used to order the pages in the 2D view. It does not have any effect in the final printable file.
+* Print Papercraft signature. You can disable the signature that is printed in the printable document linking to this Internet page.
   It is useful if you want to let your friends know how you create all these awesome paper models. Or you can disable it to keep your secrets.
 * Print page number: big models can be a bit of a mess, adding the page numer may help in keeping order.
 * Paper size: the size of the paper, in millimeters. The most usual paper sizes are listed in the drop-down menu.
-* DPI: (dots-per-inch) the resolution of the final PDF. Usual values are 300 and 600. Higher values mean better resolution but bigger files.
-* Margins: the margins of the page, in millimeters. The margins are shown in the 2D view but have no effect in the final PDF.
+* DPI: (dots-per-inch) the resolution of the final printable file. Usual values are 300 and 600. Higher values mean better resolution but bigger files.
+* Margins: the margins of the page, in millimeters. The margins are shown in the 2D view but have no effect in the final printable file.
 
 ## Other options
 
@@ -133,13 +133,22 @@ It will try to keep the current work as much as it can.
 
 Did you import an OBJ model into Papercraft and then lost the original model? No problem, you can re-export the OBJ with this option and then import it in your 3D model software.
 
-### Generate PDF
+### Generate Printable
 
-The main purpose of this program is to create a PDF with the 2D unwrapping of the 3D model. This option does it. Big models with big paper and high resolution may take a while, so be patient.
+The main purpose of this program is to create a document with the 2D unwrapping of the 3D model. This option does it. Big models with big paper and high resolution may take a while, so be patient.
+
+There are currently three formats for the printable document:
+
+* PDF: default format. It will create a multi-page PDF.
+* PNG: it creates one PNG file per page, autonumbered.
+* SVG: it creates one SVG file per page, as SVG format does not support multiple pages. Each SVG will have several layers, the idea is that those layers may be used to feed an automatic cutting machine.
+    * One visible layer with the image to be printed.
+    * One hidden layer with the cuts.
+    * One hidden layer with the folds: one sublayer with the _valleys_ another with the _mountains_.
 
 ### View/Textures
 
-Hides/shows the texture from 3D and 2D views. It may be easier to see the geometry. It will not affect the PDF output
+Hides/shows the texture from 3D and 2D views. It may be easier to see the geometry. It will not affect the printable document.
 
 ### View/3D lines
 
@@ -147,7 +156,7 @@ Hides/shows the lines from the 3D view. It makes the model look nicer.
 
 ### View/Tabs
 
-Hides/shows the tabs in the 2D view. It may be easier to see the geometry, particularly with small pieces. It will not affect the PDF output
+Hides/shows the tabs in the 2D view. It may be easier to see the geometry, particularly with small pieces. It will not affect the printable document.
 
 ### View/X-ray selection
 

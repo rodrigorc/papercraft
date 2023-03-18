@@ -68,13 +68,13 @@ rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"
 
 [patch.crates-io.imgui]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"
+rev = "e959b2988e7081b0eb1beeb65b06030436891b1b"
 [patch.crates-io.imgui-sys]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"
+rev = "e959b2988e7081b0eb1beeb65b06030436891b1b"
 [patch.crates-io.imgui-winit-support]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"
+rev = "e959b2988e7081b0eb1beeb65b06030436891b1b"
 [patch.crates-io.imgui-glow-renderer]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "8345d762bed81a2a5bece665c1a4ece5598bb7ba"
+rev = "e959b2988e7081b0eb1beeb65b06030436891b1b"

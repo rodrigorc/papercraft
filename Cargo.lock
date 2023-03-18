@@ -1548,7 +1548,7 @@ checksum = "9b7820b9daea5457c9f21c69448905d723fbd21136ccf521748f23fd49e723ee"
 
 [[package]]
 name = "papercraft"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "base64",

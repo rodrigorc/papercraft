@@ -1052,7 +1052,7 @@ dependencies = [
 [[package]]
 name = "imgui"
 version = "0.9.0"
-source = "git+https://github.com/rodrigorc/imgui-rs?rev=e959b2988e7081b0eb1beeb65b06030436891b1b#e959b2988e7081b0eb1beeb65b06030436891b1b"
+source = "git+https://github.com/rodrigorc/imgui-rs?rev=59c366540cb1b21ba99a662bc1186147760a53a2#59c366540cb1b21ba99a662bc1186147760a53a2"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -1064,7 +1064,7 @@ dependencies = [
 [[package]]
 name = "imgui-glow-renderer"
 version = "0.9.0"
-source = "git+https://github.com/rodrigorc/imgui-rs?rev=e959b2988e7081b0eb1beeb65b06030436891b1b#e959b2988e7081b0eb1beeb65b06030436891b1b"
+source = "git+https://github.com/rodrigorc/imgui-rs?rev=59c366540cb1b21ba99a662bc1186147760a53a2#59c366540cb1b21ba99a662bc1186147760a53a2"
 dependencies = [
  "glow",
  "imgui",
@@ -1074,7 +1074,7 @@ dependencies = [
 [[package]]
 name = "imgui-sys"
 version = "0.9.0"
-source = "git+https://github.com/rodrigorc/imgui-rs?rev=e959b2988e7081b0eb1beeb65b06030436891b1b#e959b2988e7081b0eb1beeb65b06030436891b1b"
+source = "git+https://github.com/rodrigorc/imgui-rs?rev=59c366540cb1b21ba99a662bc1186147760a53a2#59c366540cb1b21ba99a662bc1186147760a53a2"
 dependencies = [
  "cc",
  "cfg-if",
@@ -1086,7 +1086,7 @@ dependencies = [
 [[package]]
 name = "imgui-winit-support"
 version = "0.9.0"
-source = "git+https://github.com/rodrigorc/imgui-rs?rev=e959b2988e7081b0eb1beeb65b06030436891b1b#e959b2988e7081b0eb1beeb65b06030436891b1b"
+source = "git+https://github.com/rodrigorc/imgui-rs?rev=59c366540cb1b21ba99a662bc1186147760a53a2#59c366540cb1b21ba99a662bc1186147760a53a2"
 dependencies = [
  "imgui",
  "winit",

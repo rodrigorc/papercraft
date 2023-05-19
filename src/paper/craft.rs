@@ -63,6 +63,8 @@ pub struct PaperOptions {
     pub margin: (f32, f32, f32, f32), //top, left, right, bottom
     #[serde(default="my_true")]
     pub texture: bool,
+    #[serde(default="my_true")]
+    pub tex_filter: bool,
     #[serde(default)]
     pub tab_style: TabStyle,
     #[serde(default)]
@@ -90,6 +92,7 @@ impl Default for PaperOptions {
             page_cols: 2,
             margin: (10.0, 10.0, 10.0, 10.0),
             texture: true,
+            tex_filter: true,
             tab_style: TabStyle::Textured,
             fold_style: FoldStyle::Full,
             tab_width: 5.0,

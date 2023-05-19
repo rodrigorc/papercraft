@@ -968,6 +968,8 @@ impl GlobalContext {
                 ui.input_float("Scale", &mut options.scale).display_format("%g").build();
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
                 ui.checkbox("Textured", &mut options.texture);
+                ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
+                ui.checkbox("Texture filter", &mut options.tex_filter);
 
                 if let Some(_t) = ui.tree_node_config("Tabs")
                     //.flags(imgui::TreeNodeFlags::DEFAULT_OPEN)

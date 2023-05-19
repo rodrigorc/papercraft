@@ -213,6 +213,16 @@ fn default_transformations(obj: Matrix4, sz_scene: Vector2, sz_paper: Vector2, o
     (trans_scene, trans_paper)
 }
 
+unsafe fn set_texture_filter(tex_filter: bool) {
+    if tex_filter {
+        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+    } else {
+        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+    }
+}
+
 #[derive(Debug)]
 pub enum ClickResult {
     None,
@@ -303,8 +313,7 @@ impl PapercraftContext {
         let island_pos = self.papercraft().islands()
             .map(|(_, island)| (island.root_face(), (island.rotation(), island.location())))
             .collect();
-        self.ui.show_textures = options.texture;
-        let old_options = self.papercraft.set_options(options);
+        let old_options = self.set_options(options);
         self.push_undo_action(vec![UndoAction::DocConfig { options: old_options, island_pos }]);
     }
     pub fn from_papercraft(papercraft: Papercraft) -> PapercraftContext {
@@ -323,7 +332,7 @@ impl PapercraftContext {
         let sz_dummy = Vector2::new(1.0, 1.0);
         let (trans_scene, trans_paper) = default_transformations(obj, sz_dummy, sz_dummy, papercraft.options());
         let show_textures = papercraft.options().texture;
-        let gl_objs = GLObjects::new(papercraft.model());
+        let gl_objs = GLObjects::new(&papercraft);
 
         PapercraftContext {
             papercraft,
@@ -366,6 +375,18 @@ impl PapercraftContext {
 
     pub fn reset_views(&mut self, sz_scene: Vector2, sz_paper: Vector2) {
         (self.ui.trans_scene, self.ui.trans_paper) = default_transformations(self.ui.trans_scene.obj, sz_scene, sz_paper, self.papercraft.options());
+    }
+
+    fn set_options(&mut self, options: PaperOptions) -> PaperOptions {
+        self.ui.show_textures = options.texture;
+        if let Some(tex) = &self.gl_objs.textures {
+            unsafe {
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
+                set_texture_filter(options.tex_filter);
+            }
+        }
+        self.papercraft.set_options(options)
     }
 
     fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
@@ -1405,7 +1426,7 @@ impl PapercraftContext {
                     island.reset_transformation(join_result.prev_root, join_result.prev_rot, join_result.prev_loc);
                 }
                 UndoAction::DocConfig { options, island_pos } => {
-                    self.papercraft.set_options(options);
+                    self.set_options(options);
                     for (i_root_face, (rot, loc)) in island_pos {
                         let i_island = self.papercraft.island_by_face(i_root_face);
                         let island = self.papercraft.island_by_key_mut(i_island).unwrap();
@@ -1451,7 +1472,8 @@ impl PapercraftContext {
 }
 
 impl GLObjects {
-    fn new(model: &Model) -> GLObjects {
+    fn new(papercraft: &Papercraft) -> GLObjects {
+        let model = papercraft.model();
         let images = model
             .textures()
             .map(|tex| tex.pixbuf())
@@ -1478,8 +1500,7 @@ impl GLObjects {
                                    gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
                     gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
                     gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
-                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+                    set_texture_filter(papercraft.options().tex_filter);
 
                     for (layer, image) in images.iter().enumerate() {
                         if let Some(image) = image {

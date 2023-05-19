@@ -73,11 +73,12 @@ You can also move the pieces in any other mode, but this one disables clicking o
 
 In the menu Edit / Document properties you can edit many options related to the document as a whole:
 
-![Document properties](https://user-images.githubusercontent.com/1128630/225430050-75ecdf71-e135-4257-87aa-df15c11ba647.png)
+![Document properties](https://github.com/rodrigorc/papercraft/assets/1128630/b85a669b-af9b-4e97-9b99-95d9587ea444)
 
 * Model scale: the units in the original OBJ model are assumed to be millimeters. This value scales up or down that measure to make the final model bigger or smaller.
   You can check the final size of the model in the information box below.
 * Textured: you can disable the texture images so that in the 2D output you get only the outline of the pieces. Useful if you intend to paint it by hand.
+* Texture filter: whether you want to apply a bilinear filter to the texture image. You can unset if you prefer a pixelated minecraft-ly look, particularly with very low-resolution textures.
 * Tab style: how are the tabs (those paper flaps here the glue goes) generated:
     * Textured: they get the texture of the neighboring face, so that small imperfections when gluing them together are not so noticeable.
     * Half-textured: as textured but fading to white at the far edge. It makes them more easy to see, particularly if there are many small faces.

@@ -43,10 +43,7 @@ signal-hook = "0.3"
 opener = "0.5"
 clipboard = "0.5"
 winit = { version = "0.27", features = ["x11"] }
-
-# Patched dependencies below
-
-glow = "*"
+glow = "0.12"
 
 [dependencies.imgui]
 version = "*"
@@ -61,21 +58,21 @@ version = "*"
 [dependencies.imgui-glow-renderer]
 version = "*"
 
-[patch.crates-io.glow]
+#[patch.crates-io.glow]
 ## something like this will be the next version, some day
-git = "https://github.com/grovesNL/glow"
-rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"
+#git = "https://github.com/grovesNL/glow"
+#rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"
 
 [patch.crates-io.imgui]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "59c366540cb1b21ba99a662bc1186147760a53a2"
+rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
 [patch.crates-io.imgui-sys]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "59c366540cb1b21ba99a662bc1186147760a53a2"
+rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
 [patch.crates-io.imgui-winit-support]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "59c366540cb1b21ba99a662bc1186147760a53a2"
+rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
 [patch.crates-io.imgui-glow-renderer]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "59c366540cb1b21ba99a662bc1186147760a53a2"
+rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
 

@@ -75,6 +75,7 @@ pub enum UndoAction {
 }
 
 bitflags::bitflags! {
+    #[derive(Copy, Clone)]
     pub struct RebuildFlags: u32 {
         const PAGES = 0x0001;
         const PAPER = 0x0002;
@@ -83,8 +84,8 @@ bitflags::bitflags! {
         const PAPER_REDRAW = 0x0010;
         const SCENE_REDRAW = 0x0020;
 
-        const ANY_REDRAW_PAPER = Self::PAGES.bits | Self::PAPER.bits | Self::SELECTION.bits | Self::PAPER_REDRAW.bits;
-        const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits | Self::SELECTION.bits | Self::SCENE_REDRAW.bits;
+        const ANY_REDRAW_PAPER = Self::PAGES.bits() | Self::PAPER.bits() | Self::SELECTION.bits() | Self::PAPER_REDRAW.bits();
+        const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits() | Self::SELECTION.bits() | Self::SCENE_REDRAW.bits();
     }
 }
 

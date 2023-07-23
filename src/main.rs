@@ -2253,7 +2253,7 @@ impl GlobalContext {
                         let ext = cr.text_extents(&text).unwrap();
                         let x = page_size_mm.x - margin_right;
                         let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
-                        cr.move_to(x as f64 - ext.width, y as f64);
+                        cr.move_to(x as f64 - ext.width(), y as f64);
                         let _ = cr.show_text(&text);
                     }
                 }

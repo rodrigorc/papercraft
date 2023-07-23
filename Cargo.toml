@@ -14,10 +14,10 @@ lto = true
 
 [build-dependencies]
 cc = "1"
-bindgen = "0.64"
+bindgen = "0.66"
 
 [dependencies]
-cairo-rs = { version = "0.15", features = ["pdf", "png", "v1_16"] }
+cairo-rs = { version = "0.17", features = ["pdf", "png", "v1_16"] }
 gl_loader = "0.1"
 cgmath = "0.18"
 anyhow = "1"
@@ -29,20 +29,20 @@ serde_json = "1"
 gl ="0.14"
 smallvec = "1"
 zip = "0.6"
-memoffset = "0.6"
-bitflags = "1"
+memoffset = "0.9"
+bitflags = "2"
 mint = "0.5"
 image = { version = "0.24", default_features = false, features = ["png", "jpeg", "jpeg_rayon"] }
 clap = { version = "4", features = ["derive", "cargo"] }
 flate2 = "1"
 fxhash = "0.2"
 glutin = "0.30"
-glutin-winit = "0.2"
+glutin-winit = "0.3"
 raw-window-handle = "0.5"
 signal-hook = "0.3"
-opener = "0.5"
+opener = "0.6"
 clipboard = "0.5"
-winit = { version = "0.27", features = ["x11"] }
+winit = { version = "0.28", features = ["x11"] }
 glow = "0.12"
 
 [dependencies.imgui]
@@ -58,21 +58,20 @@ version = "*"
 [dependencies.imgui-glow-renderer]
 version = "*"
 
-#[patch.crates-io.glow]
-## something like this will be the next version, some day
-#git = "https://github.com/grovesNL/glow"
-#rev = "7e702f6724f61955d5323376ce66a0ca5f14a73d"
-
 [patch.crates-io.imgui]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
+rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
+#path = "thirdparty/imgui-rs/imgui"
 [patch.crates-io.imgui-sys]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
+rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
+#path = "thirdparty/imgui-rs/imgui-sys"
 [patch.crates-io.imgui-winit-support]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
+rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
+#path = "thirdparty/imgui-rs/imgui-winit-support"
 [patch.crates-io.imgui-glow-renderer]
 git = "https://github.com/rodrigorc/imgui-rs"
-rev = "c34ecca65d02a68a20e0f6b42eadb029605a48b6"
+rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
+#path = "thirdparty/imgui-rs/imgui-glow-renderer"
 

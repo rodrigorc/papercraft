@@ -378,7 +378,19 @@ fn main() {
                     loop { std::thread::park(); }
                 }
                 event::Event::DeviceEvent { .. } => {
-                    // Ignore deviceevents, they are not used and they wake up the loop needlessly
+                    // Do not reset last_input_time to avoid to wake up the loop needlessly
+                    winit_platform.handle_event(imgui_context.io_mut(), &gl_window.window, &event);
+                }
+                event::Event::WindowEvent {
+                    event: event::WindowEvent::Resized(size),
+                    ..
+                } => {
+                    if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
+                        gl_window.surface.resize(&gl_context, w, h);
+                    }
+                    last_input_time = Instant::now();
+                    last_input_frame = 0;
+                    winit_platform.handle_event(imgui_context.io_mut(), &gl_window.window, &event);
                 }
                 event => {
                     last_input_time = Instant::now();

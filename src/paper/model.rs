@@ -178,11 +178,12 @@ impl Model {
             for tri in tris {
                 let i_face = FaceIndex(faces.len() as u32);
 
-                // Some faces may be degenerate and have to be skipped, so we must not modify the model structure until we are sure we will accept it.
+                // Some faces may be degenerate and have to be skipped, and we must not modify the model structure, so be sure it is correct before we accept it
                 enum EdgeCreation {
                     Existing(usize),
                     New(Edge, (u32, u32)),
                 }
+                // dummy values, will be filled later
                 let mut face_edges = [EdgeCreation::Existing(0), EdgeCreation::Existing(0), EdgeCreation::Existing(0)];
                 let mut face_vertices = [VertexIndex(0); 3];
 
@@ -448,12 +449,13 @@ impl Edge {
     pub fn faces(&self) -> (FaceIndex, Option<FaceIndex>) {
         (self.f0, self.f1)
     }
-    pub fn face_sign(&self, face: FaceIndex) -> bool {
-        if self.f0 == face {
+    pub fn face_sign(&self, i_face: FaceIndex) -> bool {
+        if self.f0 == i_face {
             false
-        } else if self.f1 == Some(face) {
+        } else if self.f1.map_or(false, |f| f == i_face) {
             true
         } else {
+            // Model is inconsistent
             panic!();
         }
     }

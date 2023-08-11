@@ -621,7 +621,7 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
                 if self.data.len() > self.buf_len.get() {
                     gl::BufferData(gl::ARRAY_BUFFER,
                         len,
-                        self.data.as_ptr() as *const A as *const _,
+                        self.data.as_ptr() as *const _,
                         gl::DYNAMIC_DRAW
                     );
                     self.buf_len.set(self.data.len());
@@ -629,7 +629,7 @@ impl<A: AttribProvider> DynamicVertexArray<A> {
                     gl::BufferSubData(gl::ARRAY_BUFFER,
                         0,
                         len,
-                        self.data.as_ptr() as *const A as *const _
+                        self.data.as_ptr() as *const _
                     );
                 }
                 self.dirty.set(false);

@@ -249,7 +249,7 @@ impl Papercraft {
         let mut vx = Vec::new();
         traverse_faces_ex(&self.model, island.root_face(),
             mx,
-            NormalTraverseFace(&self),
+            NormalTraverseFace(self),
             |_, face, mx| {
                 let vs = face.index_vertices().map(|v| {
                     let normal = self.model.face_plane(face);
@@ -641,7 +641,7 @@ impl Papercraft {
                 // Check the intersections with the edges of the imaginary tab:
                 for (tab_sin, side) in [(tab_sin_0, side_0), (tab_sin_1, side_1)] {
                     let (_, o1, o2) = util_3d::line_line_intersection((other.p0, other.p1), side);
-                    if ZERO <= o1 && o1 <= ONE && ZERO <= o2 {
+                    if (ZERO..=ONE).contains(&o1) && ZERO <= o2 {
                         minimum_width = minimum_width.min(o2 * tab_sin);
                     }
                 }
@@ -656,7 +656,7 @@ impl Papercraft {
                         && !util_3d::point_line_side(other.p0, base)
                         {
                             let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
-                            if ZERO <= seg_0_off && seg_0_off <= ONE {
+                            if (ZERO..=ONE).contains(&seg_0_off) {
                                 minimum_width = minimum_width.min(seg_0_dist);
                             }
                         }
@@ -746,7 +746,7 @@ impl Papercraft {
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
     {
-        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self), visit_face)
+        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(self), visit_face)
     }
     pub fn traverse_faces_no_matrix<F>(&self, island: &Island, mut visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex) -> ControlFlow<()>

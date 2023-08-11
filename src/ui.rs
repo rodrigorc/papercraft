@@ -703,7 +703,7 @@ impl PapercraftContext {
             let mat = MaterialIndex::from(0);
             let color = Rgba::new(0.0, 0.0, 0.0, shadow_tab_alpha);
             for (i_face_b, ps) in tab_cache {
-                let Some(mx) = mx_face.get(&i_face_b) else {
+                let Some(mx) = mx_face.get(i_face_b) else {
                     continue; // should not happen
                 };
                 args.vertices_shadow_tab.extend(ps

@@ -14,7 +14,7 @@ use image::DynamicImage;
 use imgui::{ClipboardBackend, MouseButton};
 use clipboard::ClipboardProvider;
 use imgui_winit_support::WinitPlatform;
-use raw_window_handle::{HasRawWindowHandle};
+use raw_window_handle::HasRawWindowHandle;
 use winit::{event, event_loop::EventLoopBuilder, window::{WindowBuilder, Window}};
 use imgui_glow_renderer::TextureMap;
 

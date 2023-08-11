@@ -468,43 +468,61 @@ impl Papercraft {
         );
         res
     }
-    pub fn flat_face_angles(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> (Rad<f32>, Rad<f32>) {
+    // TODO: This could be memoized
+    // Returns the max. angles of the tab sides and the max. width
+    pub fn flat_face_tab_limit(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> (Rad<f32>, Rad<f32>, f32) {
+        struct EData {
+            i_edge: EdgeIndex,
+            i_v0: VertexIndex,
+            i_v1: VertexIndex,
+            p0: Vector2,
+            p1: Vector2,
+        }
         let flat_face = self.get_flat_faces_with_matrix(i_face_b, Matrix3::one());
-        let flat_contour: Vec<_> = flat_face
+        let flat_contour: Vec<EData> = flat_face
             .iter()
-            .flat_map(|(&f, _m)| self.model()[f].vertices_with_edges().map(move |(v0,v1,e)| (f, v0, v1, e)))
-            .filter(|&(_f, _v0, _v1, e)| self.edge_status(e) != EdgeStatus::Hidden)
+            .flat_map(|(f, _m)| {
+                let face = &self.model()[*f];
+                face.vertices_with_edges()
+                      .filter_map(|(i_v0, i_v1, i_edge)| {
+                          if self.edge_status(i_edge) == EdgeStatus::Hidden {
+                              return None;
+                          }
+                          let p0 = self.face_plane(face).project(&self.model()[i_v0].pos());
+                          let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
+                          let p1 = self.face_plane(face).project(&self.model()[i_v1].pos());
+                          let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
+                          Some(EData { i_edge, i_v0, i_v1, p0, p1 })
+                      })
+            })
             .collect();
-        let (_f, i_v0_b, i_v1_b, _edge_b) = flat_contour
+        // The selected edge data
+        let the_edge = flat_contour
             .iter()
-            .copied()
-            .find(|&(_f, _v0, _v1, e)| e == i_edge)
-            .unwrap();
-        let x0 = flat_contour
-            .iter()
-            .copied()
-            .find(|&(_f, _v0, v1, _e)| i_v0_b == v1)
-            .unwrap();
-        let x1 = flat_contour
-            .iter()
-            .copied()
-            .find(|&(_f, v0, _v1, _e)| i_v1_b == v0)
+            .find(|d| d.i_edge == i_edge)
             .unwrap();
 
-        let pps = [(x0.0, x0.1), (x0.0, x0.2), (x1.0, x1.1), (x1.0, x1.2)]
-            .map(|(f, v)| {
-                let face = &self.model()[f];
-                let lpos = self.face_plane(face).project(&self.model()[v].pos());
-                flat_face[&f].transform_point(Point2::from_vec(lpos)).to_vec()
-            });
-        let e0 = pps[1] - pps[0];
-        let e1 = pps[2] - pps[1];
-        let e2 = pps[3] - pps[2];
+        // Adjacent edges data
+        let d0 = flat_contour
+            .iter()
+            .find(|d| the_edge.i_v0 == d.i_v1)
+            .unwrap();
+        let d1 = flat_contour
+            .iter()
+            .find(|d| the_edge.i_v1 == d.i_v0)
+            .unwrap();
+
+        // Compute angles
+        let e0 = d0.p1 - d0.p0;
+        let e1 = d1.p0 - d0.p1;
+        let e2 = d1.p1 - d1.p0;
         let a0 = e1.angle(e0);
         let a1 = e2.angle(e1);
         let a0 = Rad::turn_div_2() - a0;
         let a1 = Rad::turn_div_2() - a1;
-        (a0, a1)
+
+        // Compute width (TODO)
+        (a0, a1, f32::MAX)
     }
 
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>

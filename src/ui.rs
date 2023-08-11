@@ -549,22 +549,23 @@ impl PapercraftContext {
                     _ => None
                 };
                 if let Some(i_face_b) = i_face_b {
-                    let tab = self.papercraft.options().tab_width;
+                    let tab_width = self.papercraft.options().tab_width;
                     let tab_angle = Rad::from(Deg(self.papercraft.options().tab_angle));
                     let face_b = &self.papercraft.model()[i_face_b];
 
                     //swap the angles because this is from the POV of the other face
-                    let (angle_1, angle_0) = self.papercraft.flat_face_angles(i_face_b, i_edge);
+                    let (angle_1, angle_0, max_tab_width) = self.papercraft.flat_face_tab_limit(i_face_b, i_edge);
                     let angle_0 = Rad(angle_0.0.min(tab_angle.0));
                     let angle_1 = Rad(angle_1.0.min(tab_angle.0));
+                    let tab_width = tab_width.min(max_tab_width);
 
                     let v = pos1 - pos0;
                     let tan_0 = angle_0.cot();
                     let tan_1 = angle_1.cot();
                     let v_len = v.magnitude();
 
-                    let mut tab_h_0 = tan_0 * tab;
-                    let mut tab_h_1 = tan_1 * tab;
+                    let mut tab_h_0 = tan_0 * tab_width;
+                    let mut tab_h_1 = tan_1 * tab_width;
                     let just_one_tri = v_len - tab_h_0 - tab_h_1 <= 0.0;
                     if just_one_tri {
                         let sum = tab_h_0 + tab_h_1;

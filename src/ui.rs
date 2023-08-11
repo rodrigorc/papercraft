@@ -392,10 +392,11 @@ impl PapercraftContext {
 
     fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
         args.face_index[usize::from(i_face)] = args.vertices.len() as u32 / 3;
+        let scale = self.papercraft.options().scale;
 
         for i_v in face.index_vertices() {
             let v = &self.papercraft.model()[i_v];
-            let p = self.papercraft.face_plane(face).project(&v.pos());
+            let p = self.papercraft.model().face_plane(face).project(&v.pos(), scale);
             let pos = m.transform_point(Point2::from_vec(p)).to_vec();
 
             args.vertices.push(MVertex2D {
@@ -430,13 +431,13 @@ impl PapercraftContext {
                 }
             };
 
-            let plane = self.papercraft.face_plane(face);
+            let plane = self.papercraft.model().face_plane(face);
             let v0 = &self.papercraft.model()[i_v0];
-            let p0 = plane.project(&v0.pos());
+            let p0 = plane.project(&v0.pos(), scale);
             let pos0 = m.transform_point(Point2::from_vec(p0)).to_vec();
 
             let v1 = &self.papercraft.model()[i_v1];
-            let p1 = plane.project(&v1.pos());
+            let p1 = plane.project(&v1.pos(), scale);
             let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
 
             //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
@@ -554,10 +555,10 @@ impl PapercraftContext {
                     let face_b = &self.papercraft.model()[i_face_b];
 
                     //swap the angles because this is from the POV of the other face
-                    let (angle_1, angle_0, max_tab_width) = self.papercraft.flat_face_tab_limit(i_face_b, i_edge);
+                    let (angle_1, angle_0, _max_tab_width) = self.papercraft.flat_face_tab_limit(i_face_b, i_edge);
                     let angle_0 = Rad(angle_0.0.min(tab_angle.0));
                     let angle_1 = Rad(angle_1.0.min(tab_angle.0));
-                    let tab_width = tab_width.min(max_tab_width);
+                    //TODO: let tab_width = tab_width.min(max_tab_width);
 
                     let v = pos1 - pos0;
                     let tan_0 = angle_0.cot();
@@ -617,13 +618,13 @@ impl PapercraftContext {
                             vec![Vector2::zero(); 4]
                         } else {
                             //Now we have to compute the texture coordinates of `p` in the adjacent face
-                            let plane_b = self.papercraft.face_plane(face_b);
+                            let plane_b = self.papercraft.model().face_plane(face_b);
                             let vs_b = face_b.index_vertices().map(|v| {
                                 let v = &self.papercraft.model()[v];
-                                let p = plane_b.project(&v.pos());
+                                let p = plane_b.project(&v.pos(), scale);
                                 (v, p)
                             });
-                            let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
+                            let mx_b = m * self.papercraft.face_to_face_edge_matrix(edge, face, face_b);
                             let mx_b_inv = mx_b.invert().unwrap();
                             let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 
@@ -1082,6 +1083,7 @@ impl PapercraftContext {
     pub fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
         let click = self.ui.trans_paper.paper_click(size, pos);
         let mx = self.ui.trans_paper.ortho * self.ui.trans_paper.mx;
+        let scale = self.papercraft.options().scale;
 
         let mut hit_edge = None;
         let mut hit_face = None;
@@ -1089,12 +1091,12 @@ impl PapercraftContext {
         for (_i_island, island) in self.papercraft.islands().collect::<Vec<_>>().into_iter().rev() {
             self.papercraft.traverse_faces(island,
                 |i_face, face, fmx| {
-                    let normal = self.papercraft.face_plane(face);
+                    let plane = self.papercraft.model().face_plane(face);
 
                     let tri = face.index_vertices();
                     let tri = tri.map(|v| {
                         let v3 = self.papercraft.model()[v].pos();
-                        let v2 = normal.project(&v3);
+                        let v2 = plane.project(&v3, scale);
                         fmx.transform_point(Point2::from_vec(v2)).to_vec()
                     });
                     if hit_face.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
@@ -1111,10 +1113,10 @@ impl PapercraftContext {
                                 }
                                 let edge = &self.papercraft.model()[i_edge];
                                 let v0 = self.papercraft.model()[edge.v0()].pos();
-                                let v0 = normal.project(&v0);
+                                let v0 = plane.project(&v0, scale);
                                 let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
                                 let v1 = self.papercraft.model()[edge.v1()].pos();
-                                let v1 = normal.project(&v1);
+                                let v1 = plane.project(&v1, scale);
                                 let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
 
                                 let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));

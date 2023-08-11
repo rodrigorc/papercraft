@@ -1,4 +1,5 @@
 use std::ops::ControlFlow;
+use std::cell::RefCell;
 
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad};
@@ -168,6 +169,15 @@ pub struct Papercraft {
     edges: Vec<EdgeStatus>, //parallel to EdgeIndex
     #[serde(with="super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
+
+    #[serde(skip)]
+    memo: Memoization,
+}
+
+#[derive(Default)]
+struct Memoization {
+    flat_face_tab_limit: RefCell<FxHashMap<(FaceIndex, EdgeIndex), (Rad<f32>, Rad<f32>, f32)>>,
+    face_to_face_edge_matrix_unscaled: RefCell<FxHashMap<(EdgeIndex, FaceIndex, FaceIndex), Matrix3>>,
 }
 
 impl Papercraft {
@@ -177,6 +187,7 @@ impl Papercraft {
             options: PaperOptions::default(),
             edges: Vec::new(),
             islands: SlotMap::with_key(),
+            memo: Memoization::default(),
         }
     }
 
@@ -213,9 +224,6 @@ impl Papercraft {
 
         options
     }
-    pub fn face_plane(&self, face: &Face) -> Plane {
-        face.plane(&self.model, self.options.scale)
-    }
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
     }
@@ -227,11 +235,11 @@ impl Papercraft {
         let mut vx = Vec::new();
         traverse_faces_ex(&self.model, island.root_face(),
             mx,
-            NormalTraverseFace(&self.model, &self.edges, self.options.scale),
+            NormalTraverseFace(&self),
             |_, face, mx| {
                 let vs = face.index_vertices().map(|v| {
-                    let normal = self.face_plane(face);
-                    mx.transform_point(Point2::from_vec(normal.project(&self.model[v].pos()))).to_vec()
+                    let normal = self.model.face_plane(face);
+                    mx.transform_point(Point2::from_vec(normal.project(&self.model[v].pos(), self.options.scale))).to_vec()
                 });
                 vx.extend(vs);
                 ControlFlow::Continue(())
@@ -340,7 +348,7 @@ impl Papercraft {
         );
         let (face_mx, new_root, i_face_old) = data_found.unwrap();
 
-        let medge = self.model.face_to_face_edge_matrix(self.options.scale, edge, &self.model[i_face_old], &self.model[new_root]);
+        let medge = self.face_to_face_edge_matrix(edge, &self.model[i_face_old], &self.model[new_root]);
         let mx = face_mx * medge;
 
         let mut new_island = Island {
@@ -355,9 +363,9 @@ impl Papercraft {
         if let Some(offset_on_cut) = offset {
             let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
             let new_root = &self.model[new_root];
-            let new_root_plane = self.face_plane(new_root);
-            let v0 = new_root_plane.project(&self.model[edge.v0()].pos());
-            let v1 = new_root_plane.project(&self.model[edge.v1()].pos());
+            let new_root_plane = self.model.face_plane(new_root);
+            let v0 = new_root_plane.project(&self.model[edge.v0()].pos(), self.options.scale);
+            let v1 = new_root_plane.project(&self.model[edge.v1()].pos(), self.options.scale);
             let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
             let v1 = mx.transform_point(Point2::from_vec(v1)).to_vec();
             let v = (v1 - v0).normalize_to(offset_on_cut);
@@ -458,9 +466,9 @@ impl Papercraft {
         );
         res
     }
-    pub fn get_flat_faces_with_matrix(&self, i_face: FaceIndex, mx: Matrix3) -> FxHashMap<FaceIndex, Matrix3> {
+    fn get_flat_faces_with_matrix_unscaled(&self, i_face: FaceIndex) -> FxHashMap<FaceIndex, Matrix3> {
         let mut res = FxHashMap::default();
-        traverse_faces_ex(&self.model, i_face, mx, FlatTraverseFaceWithMatrix(self),
+        traverse_faces_ex(&self.model, i_face, Matrix3::one(), FlatTraverseFaceWithMatrixUnscaled(self),
             |i_next_face, _, mx| {
                 res.insert(i_next_face, *mx);
                 ControlFlow::Continue(())
@@ -468,9 +476,60 @@ impl Papercraft {
         );
         res
     }
-    // TODO: This could be memoized
+    pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
+        let mut m = self.face_to_face_edge_matrix_unscaled(edge, face_a, face_b);
+        //Scale only the translation part
+        let scale = self.options.scale;
+        let tr_col = &mut m[2];
+        tr_col.x *= scale;
+        tr_col.y *= scale;
+        m
+    }
+    pub fn face_to_face_edge_matrix_unscaled(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
+        let mut memo = self.memo.face_to_face_edge_matrix_unscaled.borrow_mut();
+        use std::collections::hash_map::Entry::*;
+
+        let i_edge = self.model.edge_index(edge);
+        let i_face_a = self.model.face_index(face_a);
+        let i_face_b = self.model.face_index(face_b);
+        match memo.entry((i_edge, i_face_a, i_face_b)) {
+            Occupied(o) => return *o.get(),
+            Vacant(v) => {
+                let value = self.face_to_face_edge_matrix_internal(edge, face_a, face_b);
+                *v.insert(value)
+            }
+        }
+    }
+    fn face_to_face_edge_matrix_internal(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
+        let v0 = self.model[edge.v0()].pos();
+        let v1 = self.model[edge.v1()].pos();
+        let plane_a = self.model.face_plane(face_a);
+        let plane_b = self.model.face_plane(face_b);
+        let a0 = plane_a.project(&v0, 1.0);
+        let b0 = plane_b.project(&v0, 1.0);
+        let a1 = plane_a.project(&v1, 1.0);
+        let b1 = plane_b.project(&v1, 1.0);
+        let mabt0 = Matrix3::from_translation(-b0);
+        let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
+        let mabt1 = Matrix3::from_translation(a0);
+        mabt1 * mabr * mabt0
+    }
     // Returns the max. angles of the tab sides and the max. width
     pub fn flat_face_tab_limit(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> (Rad<f32>, Rad<f32>, f32) {
+        // Try to use a memoized value, it is ok because the flat-face structure is immutable
+        // Beware, the width is memoized unscaled
+        let mut memo = self.memo.flat_face_tab_limit.borrow_mut();
+        use std::collections::hash_map::Entry::*;
+        let (a0, a1, width) = match memo.entry((i_face_b, i_edge)) {
+            Occupied(o) => *o.get(),
+            Vacant(v) => {
+                let value = self.flat_face_tab_limit_internal(i_face_b, i_edge);
+                *v.insert(value)
+            }
+        };
+        (a0, a1, width)
+    }
+    fn flat_face_tab_limit_internal(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> (Rad<f32>, Rad<f32>, f32) {
         struct EData {
             i_edge: EdgeIndex,
             i_v0: VertexIndex,
@@ -478,7 +537,7 @@ impl Papercraft {
             p0: Vector2,
             p1: Vector2,
         }
-        let flat_face = self.get_flat_faces_with_matrix(i_face_b, Matrix3::one());
+        let flat_face = self.get_flat_faces_with_matrix_unscaled(i_face_b);
         let flat_contour: Vec<EData> = flat_face
             .iter()
             .flat_map(|(f, _m)| {
@@ -488,9 +547,11 @@ impl Papercraft {
                           if self.edge_status(i_edge) == EdgeStatus::Hidden {
                               return None;
                           }
-                          let p0 = self.face_plane(face).project(&self.model()[i_v0].pos());
+                          let plane = self.model.face_plane(face);
+
+                          let p0 = plane.project(&self.model()[i_v0].pos(), 1.0);
                           let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
-                          let p1 = self.face_plane(face).project(&self.model()[i_v1].pos());
+                          let p1 = plane.project(&self.model()[i_v1].pos(), 1.0);
                           let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
                           Some(EData { i_edge, i_v0, i_v1, p0, p1 })
                       })
@@ -522,13 +583,13 @@ impl Papercraft {
         let a1 = Rad::turn_div_2() - a1;
 
         // Compute width (TODO)
-        (a0, a1, f32::MAX)
+        (a0, a1, 0.0)
     }
 
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
     {
-        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self.model, &self.edges, self.options.scale), visit_face)
+        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(&self), visit_face)
     }
     pub fn traverse_faces_no_matrix<F>(&self, island: &Island, mut visit_face: F) -> ControlFlow<()>
         where F: FnMut(FaceIndex) -> ControlFlow<()>
@@ -690,13 +751,13 @@ trait TraverseFacePolicy {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool;
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State;
 }
-struct NormalTraverseFace<'a>(&'a Model, &'a [EdgeStatus], f32);
+struct NormalTraverseFace<'a>(&'a Papercraft);
 
 impl TraverseFacePolicy for NormalTraverseFace<'_> {
     type State = Matrix3;
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
-        match self.1[usize::from(i_edge)] {
+        match self.0.edges[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => false,
             EdgeStatus::Joined |
             EdgeStatus::Hidden => true,
@@ -704,8 +765,8 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
     }
 
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
-        let next_face = &self.0[i_next_face];
-        let medge = self.0.face_to_face_edge_matrix(self.2, edge, face, next_face);
+        let next_face = &self.0.model[i_next_face];
+        let medge = self.0.face_to_face_edge_matrix(edge, face, next_face);
         st * medge
     }
 }
@@ -744,10 +805,10 @@ impl TraverseFacePolicy for FlatTraverseFace<'_> {
     }
 }
 
-struct FlatTraverseFaceWithMatrix<'a>(&'a Papercraft);
+struct FlatTraverseFaceWithMatrixUnscaled<'a>(&'a Papercraft);
 
 
-impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
+impl TraverseFacePolicy for FlatTraverseFaceWithMatrixUnscaled<'_> {
     type State = Matrix3;
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
@@ -760,7 +821,7 @@ impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
 
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
         let next_face = &self.0.model[i_next_face];
-        let medge = self.0.model.face_to_face_edge_matrix(self.0.options.scale, edge, face, next_face);
+        let medge = self.0.face_to_face_edge_matrix_unscaled(edge, face, next_face);
         st * medge
     }
 }

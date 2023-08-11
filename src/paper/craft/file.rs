@@ -131,6 +131,7 @@ impl Papercraft {
             options: PaperOptions::default(),
             edges,
             islands,
+            memo: Memoization::default(),
         };
         let (v_min, v_max) = crate::util_3d::bounding_box_3d(
             papercraft.model()

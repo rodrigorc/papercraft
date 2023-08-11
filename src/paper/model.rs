@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 
 use crate::waveobj;
-use crate::util_3d::{self, Vector2, Vector3, Matrix2, Matrix3, TransparentType};
+use crate::util_3d::{self, Vector2, Vector3, TransparentType};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Texture {
@@ -312,6 +312,17 @@ impl Model {
             .enumerate()
             .map(|(i, e)| (EdgeIndex(i as u32), e))
     }
+    // These are a bit hacky...
+    pub fn edge_index(&self, e: &Edge) -> EdgeIndex {
+        let e = e as *const Edge as usize;
+        let s = self.edges.as_ptr() as usize;
+        EdgeIndex(((e - s) / std::mem::size_of::<Edge>()) as u32)
+    }
+    pub fn face_index(&self, f: &Face) -> FaceIndex {
+        let e = f as *const Face as usize;
+        let s = self.faces.as_ptr() as usize;
+        FaceIndex(((e - s) / std::mem::size_of::<Face>()) as u32)
+    }
     pub fn num_edges(&self) -> usize {
         self.edges.len()
     }
@@ -335,19 +346,12 @@ impl Model {
         }
         Ok(())
     }
-    pub fn face_to_face_edge_matrix(&self, scale: f32, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
-        let v0 = self[edge.v0()].pos();
-        let v1 = self[edge.v1()].pos();
-        let plane_a = face_a.plane(self, scale);
-        let plane_b = face_b.plane(self, scale);
-        let a0 = plane_a.project(&v0);
-        let b0 = plane_b.project(&v0);
-        let a1 = plane_a.project(&v1);
-        let b1 = plane_b.project(&v1);
-        let mabt0 = Matrix3::from_translation(-b0);
-        let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
-        let mabt1 = Matrix3::from_translation(a0);
-        mabt1 * mabr * mabt0
+    pub fn face_plane(&self, face: &Face) -> util_3d::Plane {
+        util_3d::Plane::from_tri([
+            self[face.vertices[0]].pos(),
+            self[face.vertices[1]].pos(),
+            self[face.vertices[2]].pos(),
+        ])
     }
     pub fn edge_angle(&self, i_edge: EdgeIndex) -> Rad<f32> {
         let edge = &self[i_edge];
@@ -355,8 +359,8 @@ impl Model {
             (fa, Some(fb)) => {
                 let fa = &self[fa];
                 let fb = &self[fb];
-                let na = fa.plane(self, 1.0).normal();
-                let nb = fb.plane(self, 1.0).normal();
+                let na = self.face_plane(fa).normal();
+                let nb = self.face_plane(fb).normal();
 
                 let i_va = fa.opposite_edge(i_edge);
                 let pos_va = &self[i_va].pos();
@@ -404,13 +408,6 @@ impl Face {
     }
     pub fn material(&self) -> MaterialIndex {
         self.material
-    }
-    pub fn plane(&self, model: &Model, scale: f32) -> util_3d::Plane {
-        util_3d::Plane::from_tri([
-            model[self.vertices[0]].pos(),
-            model[self.vertices[1]].pos(),
-            model[self.vertices[2]].pos(),
-        ], scale)
     }
     pub fn vertices_with_edges(&self) -> impl Iterator<Item = (VertexIndex, VertexIndex, EdgeIndex)> + '_ {
         self.edges

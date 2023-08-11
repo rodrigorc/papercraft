@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
@@ -38,6 +39,7 @@ pub struct GLObjects {
     pub paper_vertices_tab: glr::DynamicVertexArray<MVertex2DColor>,
     pub paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_shadow_tab: glr::DynamicVertexArray<MVertex2DColor>,
 
     // Maps a FaceIndex to the index into paper_vertices
     pub paper_face_index: Vec<u32>,
@@ -244,6 +246,7 @@ pub struct PaperDrawFaceArgs {
     vertices_edge_crease: Vec<MVertex2DLine>,
     vertices_tab: Vec<MVertex2DColor>,
     vertices_tab_edge: Vec<MVertex2DLine>,
+    vertices_shadow_tab: Vec<MVertex2DColor>,
 
     // Maps a FaceIndex to the index into vertices
     face_index: Vec<u32>,
@@ -261,6 +264,7 @@ impl PaperDrawFaceArgs {
             vertices_edge_crease: Vec::new(),
             vertices_tab: Vec::new(),
             vertices_tab_edge: Vec::new(),
+            vertices_shadow_tab: Vec::new(),
             face_index: vec![0; model.num_faces()],
             border_kind: Vec::new(),
             crease_kind: Vec::new(),
@@ -390,7 +394,7 @@ impl PapercraftContext {
         self.papercraft.set_options(options)
     }
 
-    fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs) {
+    fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs, mut tab_cache: Option<&mut Vec<(FaceIndex, TabVertices)>>) {
         args.face_index[usize::from(i_face)] = args.vertices.len() as u32 / 3;
         let scale = self.papercraft.options().scale;
 
@@ -614,6 +618,10 @@ impl PapercraftContext {
                     };
 
                     if tab_style != TabStyle::None {
+                        let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
+                        let mx_b_inv = mx_b.invert().unwrap();
+                        // mx_b_inv converts from paper to local face_b coordinates
+
                         let uvs: Vec<Vector2> = if tab_style == TabStyle::White {
                             vec![Vector2::zero(); 4]
                         } else {
@@ -624,13 +632,10 @@ impl PapercraftContext {
                                 let p = plane_b.project(&v.pos(), scale);
                                 (v, p)
                             });
-                            let mx_b = m * self.papercraft.face_to_face_edge_matrix(edge, face, face_b);
-                            let mx_b_inv = mx_b.invert().unwrap();
                             let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
 
-                            // mx_b_inv converts from paper to local face_b coordinates
                             // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
-                            // mxx do both convertions at once
+                            // mxx does both convertions at once
                             let mxx = Matrix3::from(mx_basis) * mx_b_inv;
 
                             p.iter().map(|px| {
@@ -665,6 +670,17 @@ impl PapercraftContext {
                             ];
                             args.vertices_tab.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
                         }
+                        if let Some(tabs) = &mut tab_cache {
+                            let mut tab_vs = if just_one_tri {
+                                TabVertices::Tri([p[0].pos, p[1].pos, p[2].pos])
+                            } else {
+                                TabVertices::Quad([p[0].pos, p[2].pos, p[1].pos, p[0].pos, p[3].pos, p[2].pos])
+                            };
+                            for sp in tab_vs.iter_mut() {
+                                *sp = mx_b_inv.transform_point(Point2::from_vec(*sp)).to_vec();
+                            }
+                            tabs.push((i_face_b, tab_vs));
+                        }
                     }
                 }
             }
@@ -675,13 +691,44 @@ impl PapercraftContext {
         //Maps VertexIndex in the model to index in vertices
         let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
 
+        // Shadow tabs have to be drawn the the face adjacent to the one being drawn, but we do not
+        // now its coordinates yet.
+        // So we store the tab vertices and the face matrixes in temporary storage and draw the
+        // shadow tabs later.
+        let shadow_tab_alpha = self.papercraft.options().shadow_tab_alpha;
+        let mut shadow_cache = if shadow_tab_alpha > 0.0 {
+            Some((HashMap::new(), Vec::new()))
+        } else {
+            None
+        };
         for (_, island) in self.papercraft.islands() {
             self.papercraft.traverse_faces(island,
                 |i_face, face, mx| {
-                    self.paper_draw_face(face, i_face, mx, &mut args);
+                    if let Some((mx_face, _)) = &mut shadow_cache {
+                        mx_face.insert(i_face, *mx);
+                    }
+                    self.paper_draw_face(face, i_face, mx, &mut args, shadow_cache.as_mut().map(|(_, t)| t));
                     ControlFlow::Continue(())
                 }
             );
+        }
+
+        if let Some((mx_face, tab_cache)) = &shadow_cache {
+            let uv = Vector2::zero();
+            let mat = MaterialIndex::from(0);
+            let color = Rgba::new(0.0, 0.0, 0.0, shadow_tab_alpha);
+            for (i_face_b, ps) in tab_cache {
+                let Some(mx) = mx_face.get(&i_face_b) else {
+                    continue; // should not happen
+                };
+                args.vertices_shadow_tab.extend(ps
+                    .iter()
+                    .map(|p| {
+                        let pos = mx.transform_point(Point2::from_vec(*p)).to_vec();
+                        MVertex2DColor { pos, uv, mat, color}
+                    })
+                );
+            }
         }
 
         self.gl_objs.paper_vertices.set(args.vertices);
@@ -690,6 +737,7 @@ impl PapercraftContext {
         self.gl_objs.paper_vertices_tab.set(args.vertices_tab);
         self.gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge);
         self.gl_objs.paper_face_index = args.face_index;
+        self.gl_objs.paper_vertices_shadow_tab.set(args.vertices_shadow_tab);
     }
 
     fn pages_rebuild(&mut self) {
@@ -1465,7 +1513,7 @@ impl PapercraftContext {
                 let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
                 self.papercraft.traverse_faces(island,
                     |i_face, face, mx| {
-                        self.paper_draw_face(face, i_face, mx, &mut args);
+                        self.paper_draw_face(face, i_face, mx, &mut args, None);
                         ControlFlow::Continue(())
                     }
                 );
@@ -1581,6 +1629,7 @@ impl GLObjects {
         let paper_vertices_tab = glr::DynamicVertexArray::new();
         let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
         let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
+        let paper_vertices_shadow_tab = glr::DynamicVertexArray::new();
 
         let paper_vertices_page = glr::DynamicVertexArray::new();
         let paper_vertices_margin = glr::DynamicVertexArray::new();
@@ -1600,6 +1649,7 @@ impl GLObjects {
             paper_vertices_tab,
             paper_vertices_tab_edge,
             paper_vertices_edge_sel,
+            paper_vertices_shadow_tab,
 
             paper_face_index: Vec::new(),
 
@@ -1611,4 +1661,28 @@ impl GLObjects {
 
 pub fn signature() -> &'static str {
     "Created with Papercraft. https://github.com/rodrigorc/papercraft"
+}
+
+enum TabVertices {
+    Tri([Vector2; 3]),
+    Quad([Vector2; 6]),
+}
+
+impl std::ops::Deref for TabVertices {
+    type Target = [Vector2];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            TabVertices::Tri(s) => s,
+            TabVertices::Quad(s) => s,
+        }
+    }
+}
+impl std::ops::DerefMut for TabVertices {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            TabVertices::Tri(s) => s,
+            TabVertices::Quad(s) => s,
+        }
+    }
 }

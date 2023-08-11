@@ -1010,13 +1010,18 @@ impl GlobalContext {
                     if ui.combo("Style", &mut i_tab_style, TAB_STYLES, |s| fmt_tab_style(*s).into()) {
                         options.tab_style = TAB_STYLES[i_tab_style];
                     }
-                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                    ui.set_next_item_width(ui.current_font_size() * 5.5);
+                    ui.same_line_with_spacing(ui.current_font_size() * 12.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 8.0);
+                    ui.slider_config("Shadow", 0.0, 1.0)
+                        .display_format("%.2f")
+                        .build(&mut options.shadow_tab_alpha);
+
+                    ui.set_next_item_width(ui.current_font_size() * 8.0);
                     ui.input_float("Width", &mut options.tab_width).display_format("%g").build();
                     options.tab_width = options.tab_width.max(0.0);
 
-                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                    ui.set_next_item_width(ui.current_font_size() * 5.5);
+                    ui.same_line_with_spacing(ui.current_font_size() * 12.0, ui.current_font_size() * 1.5);
+                    ui.set_next_item_width(ui.current_font_size() * 8.0);
                     ui.input_float("Angle", &mut options.tab_angle)
                         .display_format("%g").build();
                     options.tab_angle = options.tab_angle.clamp(0.0, 180.0);
@@ -1840,6 +1845,14 @@ impl GlobalContext {
 
             gl::Disable(gl::STENCIL_TEST);
 
+            // Shadow tabs
+            u.texturize = 0;
+            if self.data.ui.show_tabs {
+                u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_tab, gl::TRIANGLES);
+                u.notex_color = Rgba::new(0.75, 0.75, 0.75, 1.0);
+            }
+
             // Creases
             gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, gl::LINES);
 
@@ -2206,7 +2219,7 @@ impl GlobalContext {
                 gl::Clear(gl::COLOR_BUFFER_BIT);
                 let page_pos = options.page_position(page);
                 let mt = Matrix3::from_translation(-page_pos);
-                let u = Uniforms2D {
+                let mut u = Uniforms2D {
                     m: ortho * mt,
                     tex: 0,
                     frac_dash: 0.5,
@@ -2230,6 +2243,12 @@ impl GlobalContext {
                 // Textured faces
                 gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
                 gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices, gl::TRIANGLES);
+
+                // Shadow tabs
+                u.texturize = 0;
+                u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_tab, gl::TRIANGLES);
+                u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
 
                 // Creases
                 gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, gl::LINES);

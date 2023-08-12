@@ -113,7 +113,7 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
                     i_other != i &&
                     i_other != (i + 1) % ps.len() &&
                     i_other != (i + 2) % ps.len() &&
-                    point_in_triangle(*p_other, a, b, c)
+                    point_in_triangle(*p_other, [a, b, c])
                 }) {
                     min_angle = Some((i, inner_angle));
                 }
@@ -130,7 +130,8 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
     (res, plane)
 }
 
-pub fn point_in_triangle(p: Vector2, p0: Vector2, p1: Vector2, p2: Vector2) -> bool {
+pub fn point_in_triangle(p: Vector2, tri: [Vector2; 3]) -> bool {
+    let [p0, p1, p2] = tri;
     let s = (p0.x - p2.x) * (p.y - p2.y) - (p0.y - p2.y) * (p.x - p2.x);
     let t = (p1.x - p0.x) * (p.y - p0.y) - (p1.y - p0.y) * (p.x - p0.x);
 
@@ -271,6 +272,13 @@ pub fn point_line_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
     (o, d)
 }
 
+pub fn point_line_side(p: Vector2, line: (Vector2, Vector2)) -> bool {
+    let v1 = line.1 - line.0;
+    let v2 = p - line.0;
+    (v1.x * v2.y - v1.y  * v2.x) >= 0.0
+}
+
+// (offset, distance)
 pub fn point_segment_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
     let (o, d) = point_line_distance(p, line);
     if o < 0.0 {
@@ -280,6 +288,23 @@ pub fn point_segment_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32
     } else {
         (o, d)
     }
+}
+
+// (intersection, offset_1, offset_2)
+pub fn line_line_intersection(line_1: (Vector2, Vector2), line_2: (Vector2, Vector2)) -> (Vector2, f32, f32) {
+    let s1 = line_1.1 - line_1.0;
+    let s2 = line_2.1 - line_2.0;
+    let d = line_1.0 - line_2.0;
+
+    let dd = s1.x * s2.y - s2.x * s1.y;
+    if dd.abs() < 0.000001 {
+        return (line_1.0, f32::MAX, f32::MAX);
+    }
+
+    let s = ( s2.x * d.y - s2.y * d.x) / dd;
+    let t = ( s1.x * d.y - s1.y * d.x) / dd;
+
+    ((line_1.0 + s * s1), s, t)
 }
 
 pub fn ortho2d(width: f32, height: f32) -> Matrix3 {

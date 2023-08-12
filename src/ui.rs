@@ -10,7 +10,7 @@ use cgmath::{
 };
 use image::DynamicImage;
 
-use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle};
+use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, TabGeom};
 use crate::util_3d::{self, Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use crate::util_gl::{MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 use crate::glr::{self, Rgba};
@@ -547,40 +547,24 @@ impl PapercraftContext {
             edge_container.extend_from_slice(new_lines);
 
             // Draw the tab?
-            if draw_tab {
+            if draw_tab && tab_style != TabStyle::None {
                 let i_face_b = match edge.faces() {
                     (fa, Some(fb)) if i_face == fb => Some(fa),
                     (fa, Some(fb)) if i_face == fa => Some(fb),
                     _ => None
                 };
                 if let Some(i_face_b) = i_face_b {
-                    let tab_width = self.papercraft.options().tab_width;
-                    let tab_angle = Rad::from(Deg(self.papercraft.options().tab_angle));
-                    let face_b = &self.papercraft.model()[i_face_b];
+                    let TabGeom {
+                        tan_0,
+                        tan_1,
+                        width,
+                        triangular,
+                    } = self.papercraft.flat_face_tab_dimensions(i_face_b, i_edge);
 
-                    //swap the angles because this is from the POV of the other face
-                    let (angle_1, angle_0, _max_tab_width) = self.papercraft.flat_face_tab_limit(i_face_b, i_edge);
-                    let angle_0 = Rad(angle_0.0.min(tab_angle.0));
-                    let angle_1 = Rad(angle_1.0.min(tab_angle.0));
-                    //TODO: let tab_width = tab_width.min(max_tab_width);
-
-                    let v = pos1 - pos0;
-                    let tan_0 = angle_0.cot();
-                    let tan_1 = angle_1.cot();
-                    let v_len = v.magnitude();
-
-                    let mut tab_h_0 = tan_0 * tab_width;
-                    let mut tab_h_1 = tan_1 * tab_width;
-                    let just_one_tri = v_len - tab_h_0 - tab_h_1 <= 0.0;
-                    if just_one_tri {
-                        let sum = tab_h_0 + tab_h_1;
-                        tab_h_0 = tab_h_0 * v_len / sum;
-                        //this will not be used, eventually
-                        tab_h_1 = tab_h_1 * v_len / sum;
-                    }
-                    let v_0 = v * (tab_h_0 / v_len);
-                    let v_1 = v * (tab_h_1 / v_len);
-                    let n = Vector2::new(-v_0.y, v_0.x) / tan_0;
+                    let vn = v * (width / v_len);
+                    let v_0 = vn * tan_0;
+                    let v_1 = vn * tan_1;
+                    let n = Vector2::new(-vn.y, vn.x);
                     let mut p = [
                         MVertex2DLine {
                             pos: pos0,
@@ -589,13 +573,13 @@ impl PapercraftContext {
                             width_right: 0.0,
                         },
                         MVertex2DLine {
-                            pos: pos0 + n + v_0,
+                            pos: pos0 + n + v_1,
                             line_dash: 0.0,
                             width_left: TAB_LINE_WIDTH,
                             width_right: 0.0,
                         },
                         MVertex2DLine {
-                            pos: pos1 + n - v_1,
+                            pos: pos1 + n - v_0,
                             line_dash: 0.0,
                             width_left: TAB_LINE_WIDTH,
                             width_right: 0.0,
@@ -606,8 +590,8 @@ impl PapercraftContext {
                             width_left: TAB_LINE_WIDTH,
                             width_right: 0.0,
                         },
-                    ];
-                    let p = if just_one_tri {
+                        ];
+                    let p = if triangular {
                         //The unneeded vertex is actually [2], so remove that copying the [3] over
                         p[2] = p[3];
                         args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
@@ -617,70 +601,71 @@ impl PapercraftContext {
                         &mut p[..]
                     };
 
-                    if tab_style != TabStyle::None {
-                        let mx_b = m * self.papercraft.model().face_to_face_edge_matrix(self.papercraft.options().scale, edge, face, face_b);
-                        let mx_b_inv = mx_b.invert().unwrap();
-                        // mx_b_inv converts from paper to local face_b coordinates
+                    let face_b = &self.papercraft.model()[i_face_b];
+                    let mx_b = m * self.papercraft.face_to_face_edge_matrix(edge, face, face_b);
+                    let mx_b_inv = mx_b.invert().unwrap();
+                    // mx_b_inv converts from paper to local face_b coordinates
 
-                        let uvs: Vec<Vector2> = if tab_style == TabStyle::White {
-                            vec![Vector2::zero(); 4]
+                    let uvs: Vec<Vector2> = if tab_style == TabStyle::White {
+                        vec![Vector2::zero(); 4]
+                    } else {
+                        //Now we have to compute the texture coordinates of `p` in the adjacent face
+                        let plane_b = self.papercraft.model().face_plane(face_b);
+                        let vs_b = face_b.index_vertices().map(|v| {
+                            let v = &self.papercraft.model()[v];
+                            let p = plane_b.project(&v.pos(), scale);
+                            (v, p)
+                        });
+                        let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
+
+                        // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
+                        // mxx does both convertions at once
+                        let mxx = Matrix3::from(mx_basis) * mx_b_inv;
+
+                        p.iter().map(|px| {
+                            //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
+                            let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
+                            let uv0 = vs_b[0].0.uv();
+                            let uv1 = vs_b[1].0.uv();
+                            let uv2 = vs_b[2].0.uv();
+                            uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
+                        }).collect()
+                    };
+
+                    let mat = face_b.material();
+                    let (root_alpha, tip_alpha) = match tab_style {
+                        TabStyle::Textured => (0.0, 0.0),
+                        TabStyle::HalfTextured => (0.0, 1.0),
+                        TabStyle::White => (1.0, 1.0),
+                        TabStyle::None => (0.0, 0.0),
+                    };
+                    let root_color = Rgba::new(1.0, 1.0, 1.0, root_alpha);
+                    let tip_color = Rgba::new(1.0, 1.0, 1.0, tip_alpha);
+                    if triangular {
+                        args.vertices_tab.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color });
+                        args.vertices_tab.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color });
+                        args.vertices_tab.push(MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: root_color });
+                    } else {
+                        let pp = [
+                            MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color },
+                            MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color },
+                            MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: tip_color },
+                            MVertex2DColor { pos: p[3].pos, uv: uvs[3], mat, color: root_color },
+                        ];
+                        args.vertices_tab.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
+                    }
+                    if let Some(tabs) = &mut tab_cache {
+                        let mut tab_vs = if triangular {
+                            TabVertices::Tri([p[0].pos, p[1].pos, p[2].pos])
                         } else {
-                            //Now we have to compute the texture coordinates of `p` in the adjacent face
-                            let plane_b = self.papercraft.model().face_plane(face_b);
-                            let vs_b = face_b.index_vertices().map(|v| {
-                                let v = &self.papercraft.model()[v];
-                                let p = plane_b.project(&v.pos(), scale);
-                                (v, p)
-                            });
-                            let mx_basis = Matrix2::from_cols(vs_b[1].1 - vs_b[0].1, vs_b[2].1 - vs_b[0].1).invert().unwrap();
-
-                            // mx_basis converts from local face_b to edge-relative coordinates, where position of the tri vertices are [(0,0), (1,0), (0,1)]
-                            // mxx does both convertions at once
-                            let mxx = Matrix3::from(mx_basis) * mx_b_inv;
-
-                            p.iter().map(|px| {
-                                //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
-                                let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
-                                let uv0 = vs_b[0].0.uv();
-                                let uv1 = vs_b[1].0.uv();
-                                let uv2 = vs_b[2].0.uv();
-                                uv0 + vlocal.x * (uv1 - uv0) + vlocal.y * (uv2 - uv0)
-                            }).collect()
+                            TabVertices::Quad([p[0].pos, p[2].pos, p[1].pos, p[0].pos, p[3].pos, p[2].pos])
                         };
-
-                        let mat = face_b.material();
-                        let (root_alpha, tip_alpha) = match tab_style {
-                            TabStyle::Textured => (0.0, 0.0),
-                            TabStyle::HalfTextured => (0.0, 1.0),
-                            TabStyle::White => (1.0, 1.0),
-                            TabStyle::None => (0.0, 0.0),
-                        };
-                        let root_color = Rgba::new(1.0, 1.0, 1.0, root_alpha);
-                        let tip_color = Rgba::new(1.0, 1.0, 1.0, tip_alpha);
-                        if just_one_tri {
-                            args.vertices_tab.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color });
-                            args.vertices_tab.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color });
-                            args.vertices_tab.push(MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: root_color });
-                        } else {
-                            let pp = [
-                                MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color },
-                                MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color },
-                                MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: tip_color },
-                                MVertex2DColor { pos: p[3].pos, uv: uvs[3], mat, color: root_color },
-                            ];
-                            args.vertices_tab.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
+                        // Undo the mx_b transformation becase the shadow will be drawn over another
+                        // face, the right matrix will be applied afterwards.
+                        for sp in tab_vs.iter_mut() {
+                            *sp = mx_b_inv.transform_point(Point2::from_vec(*sp)).to_vec();
                         }
-                        if let Some(tabs) = &mut tab_cache {
-                            let mut tab_vs = if just_one_tri {
-                                TabVertices::Tri([p[0].pos, p[1].pos, p[2].pos])
-                            } else {
-                                TabVertices::Quad([p[0].pos, p[2].pos, p[1].pos, p[0].pos, p[3].pos, p[2].pos])
-                            };
-                            for sp in tab_vs.iter_mut() {
-                                *sp = mx_b_inv.transform_point(Point2::from_vec(*sp)).to_vec();
-                            }
-                            tabs.push((i_face_b, tab_vs));
-                        }
+                        tabs.push((i_face_b, tab_vs));
                     }
                 }
             }
@@ -1147,7 +1132,7 @@ impl PapercraftContext {
                         let v2 = plane.project(&v3, scale);
                         fmx.transform_point(Point2::from_vec(v2)).to_vec()
                     });
-                    if hit_face.is_none() && util_3d::point_in_triangle(click, tri[0], tri[1], tri[2]) {
+                    if hit_face.is_none() && util_3d::point_in_triangle(click, tri) {
                         hit_face = Some(i_face);
                     }
                     match mode {

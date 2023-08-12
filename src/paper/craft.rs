@@ -2,9 +2,10 @@ use std::ops::ControlFlow;
 use std::cell::RefCell;
 
 use fxhash::{FxHashMap, FxHashSet};
-use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad};
+use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad, Deg};
 use slotmap::{SlotMap, new_key_type};
 use serde::{Serialize, Deserialize};
+use crate::util_3d;
 
 
 use super::*;
@@ -177,10 +178,18 @@ pub struct Papercraft {
     memo: Memoization,
 }
 
+#[derive(Copy, Clone, Default)]
+pub struct TabGeom {
+    pub tan_0: f32,
+    pub tan_1: f32,
+    pub width: f32,
+    pub triangular: bool,
+}
+
 #[derive(Default)]
 struct Memoization {
-    flat_face_tab_limit: RefCell<FxHashMap<(FaceIndex, EdgeIndex), (Rad<f32>, Rad<f32>, f32)>>,
-    face_to_face_edge_matrix_unscaled: RefCell<FxHashMap<(EdgeIndex, FaceIndex, FaceIndex), Matrix3>>,
+    flat_face_tab_dimensions: RefCell<FxHashMap<(FaceIndex, EdgeIndex), TabGeom>>,
+    face_to_face_edge_matrix: RefCell<FxHashMap<(EdgeIndex, FaceIndex, FaceIndex), Matrix3>>,
 }
 
 impl Papercraft {
@@ -214,6 +223,8 @@ impl Papercraft {
 
         // Apply the new options
         std::mem::swap(&mut self.options, &mut options);
+        // Invalidate the memoized values that may depend on any option
+        self.memo = Memoization::default();
 
         // Apply the new positions
         for (i_island, mut po) in page_pos {
@@ -249,7 +260,7 @@ impl Papercraft {
             }
         );
 
-        let (a, b) = crate::util_3d::bounding_box_2d(vx);
+        let (a, b) = util_3d::bounding_box_2d(vx);
         let m = self.options.tab_width;
         let mm = Vector2::new(m, m);
         (a - mm, b + mm)
@@ -469,9 +480,9 @@ impl Papercraft {
         );
         res
     }
-    fn get_flat_faces_with_matrix_unscaled(&self, i_face: FaceIndex) -> FxHashMap<FaceIndex, Matrix3> {
+    fn get_flat_faces_with_matrix(&self, i_face: FaceIndex) -> FxHashMap<FaceIndex, Matrix3> {
         let mut res = FxHashMap::default();
-        traverse_faces_ex(&self.model, i_face, Matrix3::one(), FlatTraverseFaceWithMatrixUnscaled(self),
+        traverse_faces_ex(&self.model, i_face, Matrix3::one(), FlatTraverseFaceWithMatrix(self),
             |i_next_face, _, mx| {
                 res.insert(i_next_face, *mx);
                 ControlFlow::Continue(())
@@ -480,16 +491,8 @@ impl Papercraft {
         res
     }
     pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
-        let mut m = self.face_to_face_edge_matrix_unscaled(edge, face_a, face_b);
-        //Scale only the translation part
-        let scale = self.options.scale;
-        let tr_col = &mut m[2];
-        tr_col.x *= scale;
-        tr_col.y *= scale;
-        m
-    }
-    pub fn face_to_face_edge_matrix_unscaled(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
-        let mut memo = self.memo.face_to_face_edge_matrix_unscaled.borrow_mut();
+        // Try to use a memoized value
+        let mut memo = self.memo.face_to_face_edge_matrix.borrow_mut();
         use std::collections::hash_map::Entry::*;
 
         let i_edge = self.model.edge_index(edge);
@@ -508,31 +511,33 @@ impl Papercraft {
         let v1 = self.model[edge.v1()].pos();
         let plane_a = self.model.face_plane(face_a);
         let plane_b = self.model.face_plane(face_b);
-        let a0 = plane_a.project(&v0, 1.0);
-        let b0 = plane_b.project(&v0, 1.0);
-        let a1 = plane_a.project(&v1, 1.0);
-        let b1 = plane_b.project(&v1, 1.0);
+        let scale = self.options.scale;
+        let a0 = plane_a.project(&v0, scale);
+        let b0 = plane_b.project(&v0, scale);
+        let a1 = plane_a.project(&v1, scale);
+        let b1 = plane_b.project(&v1, scale);
         let mabt0 = Matrix3::from_translation(-b0);
         let mabr = Matrix3::from(Matrix2::from_angle((b1 - b0).angle(a1 - a0)));
         let mabt1 = Matrix3::from_translation(a0);
         mabt1 * mabr * mabt0
     }
-    // Returns the max. angles of the tab sides and the max. width
-    pub fn flat_face_tab_limit(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> (Rad<f32>, Rad<f32>, f32) {
-        // Try to use a memoized value, it is ok because the flat-face structure is immutable
-        // Beware, the width is memoized unscaled
-        let mut memo = self.memo.flat_face_tab_limit.borrow_mut();
+    // Returns the max. angles of the tab sides, actually their cotangent, and the max. width.
+    // Ideally it should return all the tab metrics
+    pub fn flat_face_tab_dimensions(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> TabGeom {
+        // Try to use a memoized value
+        let mut memo = self.memo.flat_face_tab_dimensions.borrow_mut();
         use std::collections::hash_map::Entry::*;
-        let (a0, a1, width) = match memo.entry((i_face_b, i_edge)) {
+        let res = match memo.entry((i_face_b, i_edge)) {
             Occupied(o) => *o.get(),
             Vacant(v) => {
-                let value = self.flat_face_tab_limit_internal(i_face_b, i_edge);
+                let value = self.flat_face_tab_dimensions_internal(i_face_b, i_edge);
                 *v.insert(value)
             }
         };
-        (a0, a1, width)
+        res
     }
-    fn flat_face_tab_limit_internal(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> (Rad<f32>, Rad<f32>, f32) {
+    fn flat_face_tab_dimensions_internal(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> TabGeom {
+        #[derive(Debug)]
         struct EData {
             i_edge: EdgeIndex,
             i_v0: VertexIndex,
@@ -540,7 +545,9 @@ impl Papercraft {
             p0: Vector2,
             p1: Vector2,
         }
-        let flat_face = self.get_flat_faces_with_matrix_unscaled(i_face_b);
+        // Compute the flat-face_b contour
+        let scale = self.options.scale;
+        let flat_face = self.get_flat_faces_with_matrix(i_face_b);
         let flat_contour: Vec<EData> = flat_face
             .iter()
             .flat_map(|(f, _m)| {
@@ -552,9 +559,9 @@ impl Papercraft {
                           }
                           let plane = self.model.face_plane(face);
 
-                          let p0 = plane.project(&self.model()[i_v0].pos(), 1.0);
+                          let p0 = plane.project(&self.model()[i_v0].pos(), scale);
                           let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
-                          let p1 = plane.project(&self.model()[i_v1].pos(), 1.0);
+                          let p1 = plane.project(&self.model()[i_v1].pos(), scale);
                           let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
                           Some(EData { i_edge, i_v0, i_v1, p0, p1 })
                       })
@@ -576,7 +583,7 @@ impl Papercraft {
             .find(|d| the_edge.i_v1 == d.i_v0)
             .unwrap();
 
-        // Compute angles
+        // ** Compute max tab angles **
         let e0 = d0.p1 - d0.p0;
         let e1 = d1.p0 - d0.p1;
         let e2 = d1.p1 - d1.p0;
@@ -585,8 +592,155 @@ impl Papercraft {
         let a0 = Rad::turn_div_2() - a0;
         let a1 = Rad::turn_div_2() - a1;
 
-        // Compute width (TODO)
-        (a0, a1, 0.0)
+        let tab_angle = Rad::from(Deg(self.options().tab_angle));
+        let a0 = Rad(a0.0.min(tab_angle.0));
+        let a1 = Rad(a1.0.min(tab_angle.0));
+
+        // ** Compute max tab width **
+        //
+        // Maximum width is computed with a tab angle of 90°, that is not exact, but the difference
+        // should be quite small and always to the safe side.
+        // We look in the flat_contour of the face B for the nearest point to the selected edge, that falls inside
+        // an imaginary tab of 90° angle and infinite width.
+        // This nearest point must be either a vertex or the intersection of an edge with the sides of the tab.
+
+        let base = (d0.p1, d1.p0);
+
+        // Normalize the perpendicular to make easier to compute the distance later, then it is just the offset returned by util_3d.
+        let n = Vector2::new(e1.y, -e1.x).normalize();
+
+        // (a0,a1) are the biggest angles that fit, and usually smaller angles will result in
+        // smaller width too, but in some edge cases a smaller angle will result in a larger width,
+        // and the user will probably prefer the biggest tab area, so we try with some extra angles and see
+        // what happens
+
+        let compute_width = |a0: Rad<f32>, a1: Rad<f32>| -> f32 {
+            let mut minimum_width = self.options.tab_width;
+            let (tab_sin_0, tab_cos_0) = a0.sin_cos();
+            let normal_0 = Vector2::new(n.x * tab_sin_0 - n.y * tab_cos_0, n.x * tab_cos_0 + n.y * tab_sin_0);
+            //90° is the original normal so switch the sin/cos in these rotations
+            let (tab_sin_1, tab_cos_1) = a1.sin_cos();
+            let normal_1 = Vector2::new(n.x * tab_sin_1 + n.y * tab_cos_1, -n.x * tab_cos_1 + n.y * tab_sin_1);
+
+            let side_0 = (base.0, base.0 + normal_0);
+            let side_1 = (base.1, base.1 + normal_1);
+
+            // Collisions are checked with a [0..1] f32 interval, but we extend it by a little bit to
+            // make for precision losses.
+            const EPSILON: f32 = 1e-4;
+            const ZERO: f32 = -EPSILON;
+            const ONE: f32 = 1.0 + EPSILON;
+
+            for other in &flat_contour {
+                // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
+                // tab to avoid crossing those.
+                if other.i_edge == i_edge || other.i_edge == d0.i_edge || other.i_edge == d1.i_edge {
+                    continue;
+                }
+
+                // Check the intersections with the edges of the imaginary tab:
+                for (tab_sin, side) in [(tab_sin_0, side_0), (tab_sin_1, side_1)] {
+                    let (_, o1, o2) = util_3d::line_line_intersection((other.p0, other.p1), side);
+                    if ZERO <= o1 && o1 <= ONE && ZERO <= o2 {
+                        minimum_width = minimum_width.min(o2 * tab_sin);
+                    }
+                }
+
+                // Check the vertices of the other edge.
+                // We can skip the vertices shared with the adjacent edges to the base
+                // And since the contour is contiguous every edge appears twice, one as p0 and another as p1,
+                // so we can check just one of them per edge
+                if other.i_v0 != d1.i_v1
+                    && util_3d::point_line_side(other.p0, side_0)
+                        && !util_3d::point_line_side(other.p0, side_1)
+                        && !util_3d::point_line_side(other.p0, base)
+                        {
+                            let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
+                            if ZERO <= seg_0_off && seg_0_off <= ONE {
+                                minimum_width = minimum_width.min(seg_0_dist);
+                            }
+                        }
+            }
+            minimum_width
+        };
+        let base_len = e1.magnitude();
+        let tab_area = |a0: Rad<f32>, a1: Rad<f32>, width: f32| -> f32 {
+            if a0.0 <= 0.0 || a1.0 <= 0.0 {
+                return 0.0;
+            }
+            let tan_0 = a0.cot();
+            let tan_1 = a1.cot();
+            let base2 = base_len - (tan_0 + tan_1) * width;
+            if base2 > 0.0 {
+                // trapezium
+                width * (base_len + base2) / 2.0
+            } else {
+                // triangle
+                let tri_width = base_len / (tan_0 + tan_1);
+                tri_width * base_len / 2.0
+            }
+        };
+
+        let mut a0 = a0;
+        let mut a1 = a1;
+        let mut width = compute_width(a0, a1);
+        let mut area = tab_area(a0, a1, width);
+        let (mut doing0, mut doing1) = (true, true);
+        let step = Rad::from(Deg(5.0));
+        while doing0 || doing1 {
+            if doing0 {
+                let a0x = a0 - step;
+                if a0x > Rad(0.0) {
+                    let w = compute_width(a0x, a1);
+                    let a = tab_area(a0x, a1, w);
+                    if a > area {
+                        width = w;
+                        area = a;
+                        a0 = a0x;
+                        doing1 = true;
+                    } else {
+                        doing0 = false;
+                    }
+                } else {
+                    doing0 = false;
+                }
+            }
+            if doing1 {
+                let a1x = a1 - step;
+                if a1x > Rad(0.0) {
+                    let w = compute_width(a0, a1x);
+                    let a = tab_area(a0, a1x, w);
+                    if a > area {
+                        width = w;
+                        area = a;
+                        a1 = a1x;
+                        doing0 = true;
+                    } else {
+                        doing1 = false;
+                    }
+                } else {
+                    doing1 = false;
+                }
+            }
+        }
+        if a0.0 <= 0.0 || a1.0 <= 0.0 {
+            // Invalid tab
+            TabGeom::default()
+        } else {
+            let tan_0 = a0.cot();
+            let tan_1 = a1.cot();
+            let base2 = base_len - (tan_0 + tan_1) * width;
+            let triangular = base2 <= 0.0;
+            if triangular {
+                width = base_len / (tan_0 + tan_1);
+            }
+            TabGeom {
+                tan_0,
+                tan_1,
+                width,
+                triangular,
+            }
+        }
     }
 
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
@@ -808,10 +962,10 @@ impl TraverseFacePolicy for FlatTraverseFace<'_> {
     }
 }
 
-struct FlatTraverseFaceWithMatrixUnscaled<'a>(&'a Papercraft);
+struct FlatTraverseFaceWithMatrix<'a>(&'a Papercraft);
 
 
-impl TraverseFacePolicy for FlatTraverseFaceWithMatrixUnscaled<'_> {
+impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
     type State = Matrix3;
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
@@ -824,7 +978,7 @@ impl TraverseFacePolicy for FlatTraverseFaceWithMatrixUnscaled<'_> {
 
     fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
         let next_face = &self.0.model[i_next_face];
-        let medge = self.0.face_to_face_edge_matrix_unscaled(edge, face, next_face);
+        let medge = self.0.face_to_face_edge_matrix(edge, face, next_face);
         st * medge
     }
 }

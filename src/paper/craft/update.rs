@@ -62,6 +62,8 @@ fn compute_island_map(new: &Papercraft, old: &Papercraft, new_map: &IslandFaceMa
 impl Papercraft {
     pub fn update_from_obj(&mut self, old_obj: &Papercraft) {
         self.options = old_obj.options.clone();
+        // Options are changed, discard memo
+        self.memo = Memoization::default();
 
         // Check which edges are nearest, checking the distance between their vertices
         let eno_map = compute_edge_map(self, old_obj);

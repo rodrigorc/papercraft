@@ -946,6 +946,9 @@ impl GlobalContext {
                 self.build_read_only_options_inner_dialog(ui, &options);
                 self.options_opened = Some(options);
             }
+        } else {
+            // In case the window is rolled
+            self.options_opened = Some(options);
         }
         // If the window was closed with the X
         if !options_opened {

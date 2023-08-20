@@ -981,6 +981,7 @@ impl GlobalContext {
             if ui.collapsing_header("Model", imgui::TreeNodeFlags::empty()) {
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
                 ui.input_float("Scale", &mut options.scale).display_format("%g").build();
+                options.scale = options.scale.max(0.0);
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
                 ui.checkbox("Textured", &mut options.texture);
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
@@ -1012,10 +1013,13 @@ impl GlobalContext {
                     ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Width", &mut options.tab_width).display_format("%g").build();
+                    options.tab_width = options.tab_width.max(0.0);
 
                     ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
-                    ui.input_float("Angle", &mut options.tab_angle).display_format("%g").build();
+                    ui.input_float("Angle", &mut options.tab_angle)
+                        .display_format("%g").build();
+                    options.tab_angle = options.tab_angle.clamp(0.0, 180.0);
                 }
                 if let Some(_t) = ui.tree_node("Folds") {
                     static FOLD_STYLES: &[FoldStyle] = &[
@@ -1044,12 +1048,15 @@ impl GlobalContext {
                     ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Length", &mut options.fold_line_len).display_format("%g").build();
+                    options.fold_line_len = options.fold_line_len.max(0.0);
                     ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Line width", &mut options.fold_line_width).display_format("%g").build();
+                    options.fold_line_width = options.fold_line_width.max(0.0);
 
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Hidden fold angle", &mut options.hidden_line_angle).display_format("%g").build();
+                    options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
                 }
                 if let Some(_t) = ui.tree_node("Information") {
                     self.build_read_only_options_inner_dialog(ui, &options);
@@ -1079,14 +1086,16 @@ impl GlobalContext {
             if ui.collapsing_header("Paper size", imgui::TreeNodeFlags::empty()) {
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
                 ui.input_float("Width", &mut options.page_size.0).display_format("%g").build();
+                options.page_size.0 = options.page_size.0.max(1.0);
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
                 ui.input_float("Height", &mut options.page_size.1).display_format("%g").build();
+                options.page_size.1 = options.page_size.1.max(1.0);
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
                 let mut resolution = options.resolution as f32;
                 ui.input_float("DPI", &mut resolution).display_format("%g").build();
-                options.resolution = resolution as u32;
+                options.resolution = (resolution as u32).max(1);
 
                 struct PaperSize {
                     name: &'static str,

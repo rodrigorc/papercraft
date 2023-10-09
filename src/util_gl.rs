@@ -1,4 +1,5 @@
-use crate::glr::{self, Rgba};
+use easy_imgui_window::easy_imgui_renderer::{uniform, attrib};
+use crate::glr::{self, Rgba, UniformField};
 use crate::util_3d::*;
 use crate::paper::MaterialIndex;
 use anyhow::{Result, anyhow};
@@ -6,7 +7,7 @@ use anyhow::{Result, anyhow};
 //////////////////////////////////////
 // Uniforms and vertices
 
-crate::uniform! {
+uniform! {
     pub struct Uniforms3D {
         pub lights: [Vector3; 2],
         pub m: Matrix4,
@@ -28,16 +29,7 @@ crate::uniform! {
     }
 }
 
-unsafe impl<T> glr::AttribField for T
-    where T: TransparentType,
-          T::Inner: glr::AttribField,
-{
-    fn detail() -> (usize, gl::types::GLenum) {
-        T::Inner::detail()
-    }
-}
-
-crate::attrib! {
+attrib! {
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MVertex3D {
@@ -93,7 +85,7 @@ pub const MSTATUS_UNSEL: MStatus3D = MStatus3D { color: Rgba::new(0.0, 0.0, 0.0,
 pub const MSTATUS_SEL: MStatus3D = MStatus3D { color: Rgba::new(0.0, 0.0, 1.0, 0.5), top: 1 };
 pub const MSTATUS_HI: MStatus3D = MStatus3D { color: Rgba::new(1.0, 0.0, 0.0, 0.75), top: 1 };
 
-pub fn program_from_source(shaders: &str) -> Result<glr::Program> {
+pub fn program_from_source(gl: &glr::GlContext, shaders: &str) -> Result<glr::Program> {
     let split = shaders.find("###").ok_or_else(|| anyhow!("shader marker not found"))?;
     let vertex = &shaders[.. split];
     let frag = &shaders[split ..];
@@ -110,6 +102,6 @@ pub fn program_from_source(shaders: &str) -> Result<glr::Program> {
         None
     };
 
-    let prg = glr::Program::from_source(vertex, frag, geom)?;
+    let prg = glr::Program::from_source(gl, vertex, frag, geom)?;
     Ok(prg)
 }

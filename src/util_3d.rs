@@ -10,10 +10,6 @@ pub type Matrix2 = cgmath::Matrix2<f32>;
 pub type Matrix3 = cgmath::Matrix3<f32>;
 pub type Matrix4 = cgmath::Matrix4<f32>;
 
-pub trait TransparentType {
-    type Inner;
-}
-
 #[derive(Debug)]
 pub struct Plane {
     origin: Vector3,

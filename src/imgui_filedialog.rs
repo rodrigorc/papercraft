@@ -2,29 +2,23 @@
 
 use std::ffi::CString;
 use bitflags::bitflags;
+use easy_imgui_window::easy_imgui as imgui;
 
 mod fd {
     #![allow(non_upper_case_globals)]
     #![allow(non_camel_case_types)]
     #![allow(non_snake_case)]
     #![allow(clippy::all)]
-    include!(concat!(env!("OUT_DIR"), "/imgui_filedialog_bindings.rs"));
 
-    impl From<super::Vector2> for ImVec2 {
-        fn from(v: super::Vector2) -> ImVec2 {
-            ImVec2 {
-                x: v.x,
-                y: v.y,
-            }
-        }
-    }
+    // Opaque pointer, bindgen cannot build it
+    pub type ImGuiFileDialog = std::ffi::c_void;
+    use easy_imgui_sys::*;
+    include!(concat!(env!("OUT_DIR"), "/imgui_filedialog_bindings.rs"));
 }
 
 pub struct FileDialog {
     ptr: *mut fd::ImGuiFileDialog,
 }
-
-type Vector2 = mint::Vector2<f32>;
 
 bitflags! {
     pub struct Flags: fd::ImGuiFileDialogFlags_ {
@@ -41,6 +35,11 @@ bitflags! {
         const MODAL = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_Modal;
         const SHOW_READ_ONLY_CHECK = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_ShowReadOnlyCheck;
         const DEFAULT = fd::ImGuiFileDialogFlags__ImGuiFileDialogFlags_Default;
+    }
+    pub struct ResultMode: fd::IGFD_ResultMode_ {
+        const AddIfNoFileExt = fd::IGFD_ResultMode__IGFD_ResultMode_AddIfNoFileExt;
+        const OverwriteFileExt = fd::IGFD_ResultMode__IGFD_ResultMode_OverwriteFileExt;
+        const KeepInputFile = fd::IGFD_ResultMode__IGFD_ResultMode_KeepInputFile;
     }
 }
 
@@ -117,15 +116,15 @@ impl FileDialog {
             fd::IGFD_IsOpened(self.ptr)
         }
     }
-    pub fn display<'a>(&'a mut self, key: &str, flags: imgui::WindowFlags, min_size: impl Into<Vector2>, max_size: impl Into<Vector2>) -> Option<DisplayToken<'a>> {
+    pub fn display<'a>(&'a mut self, key: &str, flags: imgui::WindowFlags, min_size: imgui::Vector2, max_size: imgui::Vector2) -> Option<DisplayToken<'a>> {
         let key = CString::new(key).unwrap();
         let ok = unsafe {
             fd::IGFD_DisplayDialog(
                 self.ptr,
                 key.as_ptr(),
                 flags.bits() as _,
-                min_size.into().into(),
-                max_size.into().into(),
+                imgui::v2_to_im(min_size),
+                imgui::v2_to_im(max_size),
             )
         };
         if ok {
@@ -176,15 +175,15 @@ impl DisplayToken<'_> {
             fd::IGFD_IsReadonly(self.fd.ptr)
         }
     }
-    pub fn file_path_name(&self) -> Option<String> {
+    pub fn file_path_name(&self, mode: ResultMode) -> Option<String> {
         unsafe {
-            let sz = fd::IGFD_GetFilePathName(self.fd.ptr);
+            let sz = fd::IGFD_GetFilePathName(self.fd.ptr, mode.bits() as i32);
             opt_str_from_ptr(sz)
         }
     }
-    pub fn current_file_name(&self) -> Option<String> {
+    pub fn current_file_name(&self, mode: ResultMode) -> Option<String> {
         unsafe {
-            let sz = fd::IGFD_GetCurrentFileName(self.fd.ptr);
+            let sz = fd::IGFD_GetCurrentFileName(self.fd.ptr, mode.bits() as i32);
             opt_str_from_ptr(sz)
         }
     }
@@ -200,9 +199,9 @@ impl DisplayToken<'_> {
             opt_str_from_ptr(sz)
         }
     }
-    pub fn selection(&self) -> Selection {
+    pub fn selection(&self, mode: ResultMode) -> Selection {
         let sel = unsafe {
-            fd::IGFD_GetSelection(self.fd.ptr)
+            fd::IGFD_GetSelection(self.fd.ptr, mode.bits() as i32)
         };
         Selection {
             sel,

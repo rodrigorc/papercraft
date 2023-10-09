@@ -2,6 +2,10 @@ use std::collections::HashMap;
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
+use easy_imgui_window::easy_imgui_renderer::{
+    glr::GlContext,
+    glow::{self, HasContext},
+};
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{
     prelude::*,
@@ -215,13 +219,13 @@ fn default_transformations(obj: Matrix4, sz_scene: Vector2, sz_paper: Vector2, o
     (trans_scene, trans_paper)
 }
 
-unsafe fn set_texture_filter(tex_filter: bool) {
+unsafe fn set_texture_filter(gl: &GlContext, tex_filter: bool) {
     if tex_filter {
-        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
-        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
     } else {
-        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-        gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
     }
 }
 
@@ -374,7 +378,7 @@ impl PapercraftContext {
         let old_options = self.set_options(options);
         self.push_undo_action(vec![UndoAction::DocConfig { options: old_options, island_pos }]);
     }
-    pub fn from_papercraft(papercraft: Papercraft) -> PapercraftContext {
+    pub fn from_papercraft(papercraft: Papercraft, gl: &GlContext) -> anyhow::Result<PapercraftContext> {
         // Compute the bounding box, then move to the center and scale to a standard size
         let (v_min, v_max) = util_3d::bounding_box_3d(
             papercraft.model()
@@ -390,9 +394,9 @@ impl PapercraftContext {
         let sz_dummy = Vector2::new(1.0, 1.0);
         let (trans_scene, trans_paper) = default_transformations(obj, sz_dummy, sz_dummy, papercraft.options());
         let show_textures = papercraft.options().texture;
-        let gl_objs = GLObjects::new(&papercraft);
+        let gl_objs = GLObjects::new(&papercraft, &gl)?;
 
-        PapercraftContext {
+        Ok(PapercraftContext {
             papercraft,
             undo_stack: Vec::new(),
             modified: false,
@@ -413,7 +417,7 @@ impl PapercraftContext {
                 xray_selection: true,
                 highlight_overlaps: false,
             }
-        }
+        })
     }
 
     pub fn pre_render(&mut self, rebuild: RebuildFlags) {
@@ -439,9 +443,9 @@ impl PapercraftContext {
         self.ui.show_textures = options.texture;
         if let Some(tex) = &self.gl_objs.textures {
             unsafe {
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
-                set_texture_filter(options.tex_filter);
+                tex.gl().active_texture(glow::TEXTURE0);
+                tex.gl().bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
+                set_texture_filter(tex.gl(), options.tex_filter);
             }
         }
         self.papercraft.set_options(options)
@@ -1683,7 +1687,7 @@ impl PapercraftContext {
 }
 
 impl GLObjects {
-    fn new(papercraft: &Papercraft) -> GLObjects {
+    fn new(papercraft: &Papercraft, gl: &GlContext) -> anyhow::Result<GLObjects> {
         let model = papercraft.model();
         let images = model
             .textures()
@@ -1704,14 +1708,14 @@ impl GLObjects {
             Some((width, height)) => {
                 let mut blank = None;
                 unsafe {
-                    let textures = glr::Texture::generate();
-                    gl::BindTexture(gl::TEXTURE_2D_ARRAY, textures.id());
-                    gl::TexImage3D(gl::TEXTURE_2D_ARRAY, 0, gl::RGBA8 as i32,
+                    let textures = glr::Texture::generate(gl)?;
+                    gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(textures.id()));
+                    gl.tex_image_3d(glow::TEXTURE_2D_ARRAY, 0, glow::RGBA8 as i32,
                                    width as i32, height as i32, images.len() as i32, 0,
-                                   gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
-                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
-                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
-                    set_texture_filter(papercraft.options().tex_filter);
+                                   glow::RGB, glow::UNSIGNED_BYTE, None);
+                    gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
+                    gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_WRAP_T, glow::REPEAT as i32);
+                    set_texture_filter(gl, papercraft.options().tex_filter);
 
                     for (layer, image) in images.iter().enumerate() {
                         if let Some(image) = image {
@@ -1725,28 +1729,27 @@ impl GLObjects {
                             };
                             let bytes = image.as_bytes();
                             let (format, type_) = match image {
-                                DynamicImage::ImageLuma8(_) => (gl::RED, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageLumaA8(_) => (gl::RG, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageRgb8(_) => (gl::RGB, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageRgba8(_) => (gl::RGBA, gl::UNSIGNED_BYTE),
-                                DynamicImage::ImageLuma16(_) => (gl::RED, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageLumaA16(_) => (gl::RG, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageRgb16(_) => (gl::RGB, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageRgba16(_) => (gl::RGBA, gl::UNSIGNED_SHORT),
-                                DynamicImage::ImageRgb32F(_) => (gl::RGB, gl::FLOAT),
-                                DynamicImage::ImageRgba32F(_) => (gl::RGBA, gl::FLOAT),
-                                _ => (gl::RED, gl::UNSIGNED_BYTE), //probably wrong but will not read out of bounds
+                                DynamicImage::ImageLuma8(_) => (glow::RED, glow::UNSIGNED_BYTE),
+                                DynamicImage::ImageLumaA8(_) => (glow::RG, glow::UNSIGNED_BYTE),
+                                DynamicImage::ImageRgb8(_) => (glow::RGB, glow::UNSIGNED_BYTE),
+                                DynamicImage::ImageRgba8(_) => (glow::RGBA, glow::UNSIGNED_BYTE),
+                                DynamicImage::ImageLuma16(_) => (glow::RED, glow::UNSIGNED_SHORT),
+                                DynamicImage::ImageLumaA16(_) => (glow::RG, glow::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgb16(_) => (glow::RGB, glow::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgba16(_) => (glow::RGBA, glow::UNSIGNED_SHORT),
+                                DynamicImage::ImageRgb32F(_) => (glow::RGB, glow::FLOAT),
+                                DynamicImage::ImageRgba32F(_) => (glow::RGBA, glow::FLOAT),
+                                _ => (glow::RED, glow::UNSIGNED_BYTE), //probably wrong but will not read out of bounds
                             };
-                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, format, type_, bytes.as_ptr() as *const _);
+                            gl.tex_sub_image_3d(glow::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, format, type_, glow::PixelUnpackData::Slice(bytes));
                         } else {
                             let blank = blank.get_or_insert_with(|| {
-                                let c = (0x80u8, 0x80u8, 0x80u8);
-                                vec![c; width as usize * height as usize]
+                                vec![0x80u8; 3 * width as usize * height as usize]
                             });
-                            gl::TexSubImage3D(gl::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, gl::RGB, gl::UNSIGNED_BYTE, blank.as_ptr() as *const _);
+                            gl.tex_sub_image_3d(glow::TEXTURE_2D_ARRAY, 0, 0, 0, layer as i32, width as i32, height as i32, 1, glow::RGB, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(blank));
                         }
                     }
-                    gl::GenerateMipmap(gl::TEXTURE_2D_ARRAY);
+                    gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
                     Some(textures)
                 }
             }
@@ -1775,25 +1778,25 @@ impl GLObjects {
             }
         }
 
-        let vertices = glr::DynamicVertexArray::from(vertices);
-        let vertices_sel = glr::DynamicVertexArray::from(vec![MSTATUS_UNSEL; 3 * model.num_faces()]);
-        let vertices_edge_joint = glr::DynamicVertexArray::new();
-        let vertices_edge_cut = glr::DynamicVertexArray::new();
-        let vertices_edge_sel = glr::DynamicVertexArray::new();
+        let vertices = glr::DynamicVertexArray::from_data(gl, vertices)?;
+        let vertices_sel = glr::DynamicVertexArray::from_data(gl, vec![MSTATUS_UNSEL; 3 * model.num_faces()])?;
+        let vertices_edge_joint = glr::DynamicVertexArray::new(gl)?;
+        let vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
+        let vertices_edge_sel = glr::DynamicVertexArray::new(gl)?;
 
-        let paper_vertices = glr::DynamicVertexArray::new();
-        let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * model.num_faces()]);
-        let paper_vertices_edge_cut = glr::DynamicVertexArray::new();
-        let paper_vertices_edge_crease = glr::DynamicVertexArray::new();
-        let paper_vertices_flap = glr::DynamicVertexArray::new();
-        let paper_vertices_flap_edge = glr::DynamicVertexArray::new();
-        let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-        let paper_vertices_shadow_flap = glr::DynamicVertexArray::new();
+        let paper_vertices = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_sel = glr::DynamicVertexArray::from_data(gl, vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * model.num_faces()])?;
+        let paper_vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_edge_crease = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_flap = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_flap_edge = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_edge_sel = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_shadow_flap = glr::DynamicVertexArray::new(gl)?;
 
-        let paper_vertices_page = glr::DynamicVertexArray::new();
-        let paper_vertices_margin = glr::DynamicVertexArray::new();
+        let paper_vertices_page = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_margin = glr::DynamicVertexArray::new(gl)?;
 
-        GLObjects {
+        Ok(GLObjects {
             textures,
             vertices,
             vertices_sel,
@@ -1814,7 +1817,7 @@ impl GLObjects {
 
             paper_vertices_page,
             paper_vertices_margin,
-        }
+        })
     }
 }
 

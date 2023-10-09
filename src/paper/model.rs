@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 
 use crate::paper::import::Importer;
-use crate::util_3d::{self, Vector2, Vector3, TransparentType};
+use crate::util_3d::{self, Vector2, Vector3};
 
 use super::{EdgeStatus, Island, PaperOptions};
 
@@ -133,8 +133,10 @@ macro_rules! index_type {
             }
         }
 
-        impl TransparentType for $name {
-            type Inner = $inner;
+        unsafe impl crate::glr::AttribField for $name {
+            fn detail() -> (usize, u32) {
+                <$inner>::detail()
+            }
         }
     }
 }

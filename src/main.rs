@@ -1,44 +1,59 @@
-#![allow(clippy::collapsible_if)]
+//#![allow(clippy::collapsible_if)]
 
-use std::{num::NonZeroU32, ffi::CString, time::{Instant, Duration}, rc::{Rc, Weak}, cell::RefCell, path::{Path, PathBuf}};
+use std::{time::{Instant, Duration}, path::{Path, PathBuf}, rc::Rc, cell::RefCell};
 use std::io::{Read, Write};
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
     Deg, Rad,
 };
-use glow::HasContext;
-use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
-use glutin_winit::DisplayBuilder;
-use image::DynamicImage;
-use imgui::{ClipboardBackend, MouseButton};
-use clipboard::ClipboardProvider;
-use imgui_winit_support::WinitPlatform;
-use raw_window_handle::HasRawWindowHandle;
-use winit::{event, event_loop::EventLoopBuilder, window::{WindowBuilder, Window}};
-use imgui_glow_renderer::TextureMap;
+use lazy_static::lazy_static;
+use image::{DynamicImage, GenericImage, GenericImageView, EncodableLayout};
+use easy_imgui_window::{MainWindow, MainWindowWithRenderer,
+    easy_imgui::{self as imgui, Color, MouseButton, Vector2, vec2},
+    easy_imgui_renderer::{
+        glr::{self, GlContext, Rgba, BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer},
+        glow::{self, HasContext},
+    },
+    winit::{self, event_loop::EventLoopBuilder},
+};
 
+type Ui = imgui::Ui<GlobalContext>;
+
+static MULTISAMPLES: &[i32] = &[16, 8, 4, 2];
+
+fn to_cgv2(v: imgui::Vector2) -> cgmath::Vector2<f32> {
+    cgmath::Vector2::new(v.x, v.y)
+}
 
 mod imgui_filedialog;
 mod paper;
-mod glr;
 mod util_3d;
 mod util_gl;
 
 mod ui;
 use ui::*;
 
-static LOGO_PNG: &[u8] = include_bytes!("papercraft.png");
-static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
-static ICONS_PNG: &[u8] = include_bytes!("icons.png");
+lazy_static! {
+    static ref LOGO_IMG: image::RgbaImage = load_image_from_memory(include_bytes!("papercraft.png"), true).unwrap();
+    static ref ICONS_IMG: image::RgbaImage = load_image_from_memory(include_bytes!("icons.png"), true).unwrap();
+    static ref KARLA_TTF: Vec<u8> = {
+        let mut ttf = Vec::new();
+        flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
+        ttf
+    };
+    static ref COPYRIGHT_TTF: Vec<u8> = {
+        let mut ttf = Vec::new();
+        flate2::read::ZlibDecoder::new(include_bytes!("copyright.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
+        ttf
+    };
+}
 const FONT_SIZE: f32 = 3.0;
 
 use paper::{Papercraft, FlapStyle, FoldStyle, EdgeIdPosition, PaperOptions, IslandKey, import::import_model_file};
-use glr::Rgba;
-use util_3d::{Matrix3, Vector2, Vector3};
+use util_3d::{Matrix3, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
 
-use glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
 use clap::Parser;
 
@@ -59,124 +74,29 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
-    let event_loop = EventLoopBuilder::new().build();
+    let event_loop = EventLoopBuilder::new().build().unwrap();
+    let window = MainWindow::new(&event_loop, "Papercraft").unwrap();
 
-    // We render to FBOs so we do not need depth, stencil buffers or anything fancy.
-    let window_builder = WindowBuilder::new();
-    let template = ConfigTemplateBuilder::new()
-        .prefer_hardware_accelerated(Some(true))
-        .with_depth_size(0)
-        .with_stencil_size(0)
-    ;
+    let icon = winit::window::Icon::from_rgba(LOGO_IMG.as_bytes().to_owned(), LOGO_IMG.width(), LOGO_IMG.height()).unwrap();
+    window.window().set_window_icon(Some(icon));
+    window.window().set_ime_allowed(true);
+    let mut window = MainWindowWithRenderer::new(window);
 
-    let display_builder = DisplayBuilder::new()
-        .with_window_builder(Some(window_builder));
-
-    let (window, gl_config) = display_builder
-        .build(&event_loop, template, |configs| {
-            configs
-                .reduce(|cfg1, cfg2| {
-                    let t = |c: &Config| (c.num_samples(), c.depth_size(), c.stencil_size());
-                    if t(&cfg2) < t(&cfg1) {
-                        cfg2
-                    } else {
-                        cfg1
-                    }
-                })
-                .unwrap()
-        })
-        .unwrap();
-    //dbg!(gl_config.num_samples(), gl_config.depth_size(), gl_config.stencil_size());
-    let window = window.unwrap();
-    window.set_title("Papercraft");
-    let icon = load_icon_from_memory(LOGO_PNG).unwrap();
-    window.set_window_icon(Some(icon));
-    window.set_ime_allowed(true);
-    let raw_window_handle = Some(window.raw_window_handle());
-    let gl_display = gl_config.display();
-    let context_attributes = ContextAttributesBuilder::new()
-        .build(raw_window_handle);
-    let fallback_context_attributes = ContextAttributesBuilder::new()
-        .with_context_api(ContextApi::Gles(None))
-        .build(raw_window_handle);
-
-    let mut not_current_gl_context = Some(unsafe {
-        gl_display
-            .create_context(&gl_config, &context_attributes)
-            .unwrap_or_else(|_| {
-                gl_display
-                    .create_context(&gl_config, &fallback_context_attributes)
-                    .expect("failed to create context")
-            })
-    });
-    let gl_window = GlWindow::new(window, &gl_config);
-    let gl_context = not_current_gl_context
-        .take()
-        .unwrap()
-        .make_current(&gl_window.surface)
-        .unwrap();
-    // Enable v-sync to avoid consuming too much CPU
-    let _ = gl_window.surface.set_swap_interval(&gl_context, glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
-
-    let mut imgui_context = imgui::Context::create();
-    imgui_context.set_ini_filename(None);
-
-    let mut winit_platform = WinitPlatform::init(&mut imgui_context);
-    winit_platform.attach_window(
-        imgui_context.io_mut(),
-        &gl_window.window,
-        imgui_winit_support::HiDpiMode::Default,
-    );
-
-    imgui_context.set_clipboard_backend(MyClipboard::new());
-
-    let mut ttf = Vec::new();
-    flate2::read::ZlibDecoder::new(KARLA_TTF_Z).read_to_end(&mut ttf).unwrap();
-
-    let hidpi_factor = winit_platform.hidpi_factor() as f32;
-    let fonts = imgui_context.fonts();
-    let _font_default = fonts.add_font(&[
-            imgui::FontSource::TtfData {
-                data: &ttf,
-                size_pixels: (18.0 * hidpi_factor).floor(),
-                config: None
-            },
-        ]);
-    let font_big = fonts.add_font(&[
-            imgui::FontSource::TtfData {
-                data: &ttf,
-                size_pixels: (28.0 * hidpi_factor).floor(),
-                config: None
-            },
-        ]);
-    let font_small = fonts.add_font(&[
-            imgui::FontSource::TtfData {
-                data: &ttf,
-                size_pixels: (12.0 * hidpi_factor).floor(),
-                config: None
-            },
-            imgui::FontSource::DefaultFontData { config: None }, // For the © in the about window :/
-        ]);
-    imgui_context.io_mut().font_global_scale = 1.0 / hidpi_factor;
-    imgui_context.io_mut().font_allow_user_scaling = true;
-
-    let style = imgui_context.style_mut();
-    //style.scale_all_sizes(hidpi_factor);
+    let renderer = window.renderer();
+    renderer.set_background_color(Some(Color::BLACK));
+    let gl = renderer.gl_context().clone();
+    let imgui = renderer.imgui();
+    let mut imgui = unsafe { imgui.set_current() };
+    imgui.set_allow_user_scaling(true);
+    imgui.nav_enable_keyboard();
     if cli.light {
-        style.use_light_colors();
+        let mut style = imgui.style();
+        style.set_colors_light();
     }
 
-    let gl = unsafe {
-        let dsp = gl_context.display();
-        gl::load_with(|s| dsp.get_proc_address(&CString::new(s).unwrap()));
-        glow::Context::from_loader_function(|s| dsp.get_proc_address(&CString::new(s).unwrap()).cast())
-    };
-    let mut ig_renderer = imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_context)
-        .expect("failed to create renderer");
-
     // Initialize papercraft status
-    let mut data = PapercraftContext::from_papercraft(Papercraft::empty());
-    let mut cmd_file_action = match cli {
+    let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
+    let cmd_file_action = match cli {
         Cli { name: Some(name), read_only: false, .. }  => {
             Some((FileAction::ImportModel, name))
         }
@@ -194,275 +114,114 @@ fn main() {
         String::new()
     };
 
-    let (icons_tex, _) = load_texture_from_memory(ICONS_PNG, true).unwrap();
-    let icons_tex = ig_renderer.texture_map_mut().register(icons_tex).unwrap();
-
-    let (logo_tex, logo_size) = load_texture_from_memory(LOGO_PNG, true).unwrap();
-    let logo_tex = ig_renderer.texture_map_mut().register(logo_tex).unwrap();
-
-    let gl_fixs = build_gl_fixs().unwrap();
-    let ctx = Rc::new_cyclic(|this| {
-        RefCell::new(GlobalContext {
-            this: this.clone(),
-            gl_fixs,
-            _font_default, font_big, font_small,
-            icons_tex, logo_tex, logo_size,
-            data,
-            file_name: None,
-            rebuild: RebuildFlags::all(),
-            splitter_pos: 1.0,
-            sz_full: Vector2::new(2.0, 1.0),
-            sz_scene: Vector2::new(1.0, 1.0),
-            sz_paper: Vector2::new(1.0, 1.0),
-            scene_ui_status: Canvas3dStatus::default(),
-            paper_ui_status: Canvas3dStatus::default(),
-            options_opened: None,
-            about_visible: false,
-            option_button_height: 0.0,
-            file_dialog: None,
-            file_action: None,
-            last_path,
-            last_export: String::new(),
-            error_message: None,
-            confirmable_action: None,
-            popup_time_start: Instant::now(),
-        })
-    });
-    imgui_context.io_mut().config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
-
-    install_crash_backup(event_loop.create_proxy(), ctx.as_ptr());
-
-    // Main loop, if it panics or somewhat crashes, try to save a backup
-    let ctx0 = Rc::clone(&ctx);
-    let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        let mut old_title = String::new();
-        let mut last_frame = Instant::now();
-        // The main loop will keep on rendering for 500 ms or 10 frames after the last input,
-        // whatever is longer. The frames are needed in case a file operation takes a lot of time,
-        // we want at least a render just after that.
-        let mut last_input_time = Instant::now();
-        let mut last_input_frame: u32 = 0;
-        let mut quit_requested = BoolWithConfirm::None;
-
-        event_loop.run(move |event, _, control_flow| {
-            match event {
-                event::Event::NewEvents(_) => {
-                    let now = Instant::now();
-                    imgui_context
-                        .io_mut()
-                        .update_delta_time(now.duration_since(last_frame));
-                    last_frame = now;
-                }
-                event::Event::MainEventsCleared => {
-                    winit_platform
-                        .prepare_frame(imgui_context.io_mut(), &gl_window.window)
-                        .unwrap();
-                    gl_window.window.request_redraw();
-                }
-                event::Event::RedrawEventsCleared => {
-                    let now = Instant::now();
-                    // If the mouse is down, redraw all the time, maybe the user is dragging.
-                    let mouse = unsafe { imgui_sys::igIsAnyMouseDown() };
-                    last_input_frame += 1;
-                    if mouse || now.duration_since(last_input_time) < Duration::from_millis(1000) || last_input_frame < 60 {
-                        *control_flow = winit::event_loop::ControlFlow::Poll;
-                    } else {
-                        *control_flow = winit::event_loop::ControlFlow::Wait;
-                    }
-                }
-                event::Event::RedrawRequested(_) => {
-                    // The renderer assumes you'll be clearing the buffer yourself
-                    let gl = ig_renderer.gl_context();
-                    unsafe {
-                        gl.clear_color(0.0, 0.0, 0.0, 1.0);
-                        gl.clear(glow::COLOR_BUFFER_BIT);
-                    };
-
-                    {
-                        let ui = imgui_context.frame();
-                        //ui.show_demo_window(&mut true);
-
-                        let _s1 = ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0]));
-                        let _s2 = ui.push_style_var(imgui::StyleVar::WindowRounding(0.0));
-
-                        if let Some(_w) = ui.window("Papercraft")
-                            .position([0.0, 0.0], imgui::Condition::Always)
-                            .size(ui.io().display_size, imgui::Condition::Always)
-                            .flags(
-                                imgui::WindowFlags::NO_DECORATION |
-                                imgui::WindowFlags::NO_RESIZE |
-                                imgui::WindowFlags::MENU_BAR |
-                                imgui::WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS |
-                                imgui::WindowFlags::NO_NAV
-                                )
-                            .begin()
-                        {
-                            drop((_s2, _s1));
-                            let ctx = &mut *ctx.borrow_mut();
-
-                            if let Some(cmd_file_action) = cmd_file_action.take() {
-                                ctx.popup_time_start = Instant::now();
-                                ctx.file_action = Some(cmd_file_action);
-                                ui.open_popup("###Wait");
-                            }
-
-                            let menu_actions = ctx.build_ui(ui);
-                            ctx.run_menu_actions(ui, &menu_actions);
-                            ctx.run_mouse_actions(ui);
-
-                            if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER) {
-                                ctx.data.pre_render(ctx.rebuild);
-                                let vp = glr::PushViewport::new();
-                                if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
-                                    let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_scene);
-                                    vp.viewport(0, 0, ctx.sz_scene.x as i32, ctx.sz_scene.y as i32);
-                                    ctx.render_scene();
-                                }
-                                if ctx.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
-                                    let _draw_fb_binder = BinderDrawFramebuffer::bind(&ctx.gl_fixs.fbo_paper);
-                                    vp.viewport(0, 0, ctx.sz_paper.x as i32, ctx.sz_paper.y as i32);
-                                    ctx.render_paper();
-                                }
-                                ctx.rebuild = RebuildFlags::empty();
-                            }
-                            let new_title = ctx.title(true);
-                            if new_title != old_title {
-                                gl_window.window.set_title(&new_title);
-                                old_title = new_title;
-                            }
-
-                            match (quit_requested, menu_actions.quit) {
-                                (_, BoolWithConfirm::Confirmed) | (BoolWithConfirm::Confirmed, _) => {
-                                    *control_flow = winit::event_loop::ControlFlow::Exit;
-                                }
-                                (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested) => {
-                                    quit_requested = BoolWithConfirm::None;
-                                    ctx.open_confirmation_dialog(ui,
-                                        "Quit?",
-                                        "The model has not been save, continue anyway?",
-                                        |a| a.quit = BoolWithConfirm::Confirmed
-                                    );
-                                }
-                                (BoolWithConfirm::None, BoolWithConfirm::None) => {}
-                            }
-
-                        }
-
-                        winit_platform.prepare_render(ui, &gl_window.window);
-                    }
-
-                    let draw_data = imgui_context.render();
-
-                    // This is the only extra render step to add
-                    ig_renderer
-                        .render(draw_data)
-                        .expect("error rendering imgui");
-                    gl_window.surface.swap_buffers(&gl_context).unwrap();
-                }
-                event::Event::WindowEvent {
-                    event: event::WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    last_input_time = Instant::now();
-                    last_input_frame = 0;
-                    quit_requested = ctx.borrow().check_modified();
-                }
-                event::Event::UserEvent(()) => {
-                    //Fatal signal: it is about to be aborted, just stop whatever it is doing and
-                    //let the crash handler do its job.
-                    loop { std::thread::park(); }
-                }
-                event::Event::DeviceEvent { .. } => {
-                    // Do not reset last_input_time to avoid to wake up the loop needlessly
-                    winit_platform.handle_event(imgui_context.io_mut(), &gl_window.window, &event);
-                }
-                event::Event::WindowEvent {
-                    event: event::WindowEvent::Resized(size),
-                    ..
-                } => {
-                    if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
-                        gl_window.surface.resize(&gl_context, w, h);
-                    }
-                    last_input_time = Instant::now();
-                    last_input_frame = 0;
-                    winit_platform.handle_event(imgui_context.io_mut(), &gl_window.window, &event);
-                }
-                event => {
-                    last_input_time = Instant::now();
-                    last_input_frame = 0;
-                    winit_platform.handle_event(imgui_context.io_mut(), &gl_window.window, &event);
-                }
-            }
-        });
+    let gl_fixs = build_gl_fixs(&gl).unwrap();
+    let ctx = Rc::new(RefCell::new(GlobalContext {
+        gl,
+        gl_fixs,
+        font_default: imgui::FontId::default(),
+        font_big: imgui::FontId::default(),
+        font_small: imgui::FontId::default(),
+        icons_rect: [imgui::CustomRectIndex::default(); 3],
+        logo_rect: imgui::CustomRectIndex::default(),
+        data,
+        file_name: None,
+        rebuild: RebuildFlags::all(),
+        splitter_pos: 1.0,
+        sz_full: vec2(2.0, 1.0),
+        sz_scene: vec2(1.0, 1.0),
+        sz_paper: vec2(1.0, 1.0),
+        scene_ui_status: Canvas3dStatus::default(),
+        paper_ui_status: Canvas3dStatus::default(),
+        options_opened: None,
+        about_visible: false,
+        option_button_height: 0.0,
+        file_dialog: None,
+        file_action: None,
+        last_path,
+        last_export: String::new(),
+        error_message: None,
+        confirmable_action: None,
+        popup_time_start: Instant::now(),
+        cmd_file_action,
+        quit_requested: BoolWithConfirm::None,
+        title: String::new(),
     }));
-    if let Err(e) = maybe_fatal {
-        ctx0.borrow().save_backup_on_panic();
-        std::panic::resume_unwind(e);
-    }
+    unsafe { install_crash_backup(event_loop.create_proxy(), &ctx); }
+
+    event_loop.run(move |event, w| {
+        // Main loop, if it panics or somewhat crashes, try to save a backup
+        let mut ctx = ctx.borrow_mut();
+
+        let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Default message handling
+            let loop_res = window.do_event(&mut *ctx, &event, w);
+
+            if let Some(new_title) = ctx.updated_title() {
+                window.main_window().window().set_title(&new_title);
+            }
+
+            // manually handle a few messages
+            if let winit::event::Event::UserEvent(()) = &event {
+                //Fatal signal: it is about to be aborted, just stop whatever it is doing and
+                //let the crash handler do its job.
+                loop { std::thread::park(); }
+            }
+            if loop_res.is_break() &&
+                ctx.quit_requested == BoolWithConfirm::None
+            {
+                let quit = ctx.check_modified();
+                ctx.quit_requested = quit;
+            }
+            if ctx.quit_requested == BoolWithConfirm::Confirmed {
+                w.exit();
+            }
+        }));
+        if let Err(e) = maybe_fatal {
+            ctx.save_backup_on_panic();
+            std::panic::resume_unwind(e);
+        }
+    }).unwrap();
 }
 
+fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
+    let prg_scene_solid = util_gl::program_from_source(gl, include_str!("shaders/scene_solid.glsl")).with_context(|| "scene_solid")?;
+    let prg_scene_line = util_gl::program_from_source(gl, include_str!("shaders/scene_line.glsl")).with_context(|| "scene_line")?;
+    let prg_paper_solid = util_gl::program_from_source(gl, include_str!("shaders/paper_solid.glsl")).with_context(|| "paper_solid")?;
+    let prg_paper_line = util_gl::program_from_source(gl, include_str!("shaders/paper_line.glsl")).with_context(|| "paper_line")?;
+    let prg_quad = util_gl::program_from_source(gl, include_str!("shaders/quad.glsl")).with_context(|| "quad")?;
 
-pub struct GlWindow {
-    // The surface must be dropped before the window.
-    pub surface: Surface<WindowSurface>,
-    pub window: Window,
-}
+    let vao = glr::VertexArray::generate(gl)?;
 
-impl GlWindow {
-    pub fn new(window: Window, config: &Config) -> Self {
-        let (width, height): (u32, u32) = window.inner_size().into();
-        let raw_window_handle = window.raw_window_handle();
-        let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
-            raw_window_handle,
-            NonZeroU32::new(width).unwrap(),
-            NonZeroU32::new(height).unwrap(),
-        );
-
-        let surface = unsafe { config.display().create_window_surface(config, &attrs).unwrap() };
-
-        Self { window, surface }
-    }
-}
-
-fn build_gl_fixs() -> Result<GLFixedObjects> {
-    let prg_scene_solid = util_gl::program_from_source(include_str!("shaders/scene_solid.glsl")).with_context(|| "scene_solid")?;
-    let prg_scene_line = util_gl::program_from_source(include_str!("shaders/scene_line.glsl")).with_context(|| "scene_line")?;
-    let prg_paper_solid = util_gl::program_from_source(include_str!("shaders/paper_solid.glsl")).with_context(|| "paper_solid")?;
-    let prg_paper_line = util_gl::program_from_source(include_str!("shaders/paper_line.glsl")).with_context(|| "paper_line")?;
-    let prg_quad = util_gl::program_from_source(include_str!("shaders/quad.glsl")).with_context(|| "quad")?;
-
-    let vao = glr::VertexArray::generate();
-
-    let fbo_scene = glr::Framebuffer::generate();
-    let rbo_scene_color = glr::Renderbuffer::generate();
-    let rbo_scene_depth = glr::Renderbuffer::generate();
+    let fbo_scene = glr::Framebuffer::generate(gl)?;
+    let rbo_scene_color = glr::Renderbuffer::generate(gl)?;
+    let rbo_scene_depth = glr::Renderbuffer::generate(gl)?;
 
     unsafe {
         let fb_binder = BinderDrawFramebuffer::bind(&fbo_scene);
 
         let rb_binder = BinderRenderbuffer::bind(&rbo_scene_color);
-        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, 1, 1);
-        gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo_scene_color.id());
+        gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
+        gl.framebuffer_renderbuffer(fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo_scene_color.id()));
 
         rb_binder.rebind(&rbo_scene_depth);
-        gl::RenderbufferStorage(rb_binder.target(), gl::DEPTH_COMPONENT, 1, 1);
-        gl::FramebufferRenderbuffer(fb_binder.target(), gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, rbo_scene_depth.id());
+        gl.renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, 1, 1);
+        gl.framebuffer_renderbuffer(fb_binder.target(), glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rbo_scene_depth.id()));
     }
 
-    let fbo_paper = glr::Framebuffer::generate();
-    let rbo_paper_color = glr::Renderbuffer::generate();
-    let rbo_paper_stencil = glr::Renderbuffer::generate();
+    let fbo_paper = glr::Framebuffer::generate(gl)?;
+    let rbo_paper_color = glr::Renderbuffer::generate(gl)?;
+    let rbo_paper_stencil = glr::Renderbuffer::generate(gl)?;
 
     unsafe {
         let fb_binder = BinderDrawFramebuffer::bind(&fbo_paper);
 
         let rb_binder = BinderRenderbuffer::bind(&rbo_paper_color);
-        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, 1,1);
-        gl::FramebufferRenderbuffer(fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo_paper_color.id());
+        gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1,1);
+        gl.framebuffer_renderbuffer(fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo_paper_color.id()));
 
         rb_binder.rebind(&rbo_paper_stencil);
-        gl::RenderbufferStorage(rb_binder.target(), gl::STENCIL_INDEX, 1, 1);
-        gl::FramebufferRenderbuffer(fb_binder.target(), gl::STENCIL_ATTACHMENT, gl::RENDERBUFFER, rbo_paper_stencil.id());
+        gl.renderbuffer_storage(rb_binder.target(), glow::STENCIL_INDEX, 1, 1);
+        gl.framebuffer_renderbuffer(fb_binder.target(), glow::STENCIL_ATTACHMENT, glow::RENDERBUFFER, Some(rbo_paper_stencil.id()));
     }
 
 
@@ -535,14 +294,13 @@ struct ConfirmableAction {
 }
 
 struct GlobalContext {
-    this: Weak<RefCell<GlobalContext>>,
+    gl: GlContext,
     gl_fixs: GLFixedObjects,
-    _font_default: imgui::FontId,
+    font_default: imgui::FontId,
     font_big: imgui::FontId,
     font_small: imgui::FontId,
-    icons_tex: imgui::TextureId,
-    logo_tex: imgui::TextureId,
-    logo_size: Vector2,
+    icons_rect: [imgui::CustomRectIndex; 3],
+    logo_rect: imgui::CustomRectIndex,
     data: PapercraftContext,
     file_name: Option<PathBuf>,
     rebuild: RebuildFlags,
@@ -562,6 +320,9 @@ struct GlobalContext {
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
     popup_time_start: Instant,
+    cmd_file_action: Option<(FileAction, PathBuf)>,
+    quit_requested: BoolWithConfirm,
+    title: String,
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -590,55 +351,54 @@ impl GlobalContext {
     fn modifiable(&self) -> bool {
         self.data.ui.mode != MouseMode::ReadOnly
     }
-    fn build_modal_error_message(&mut self, ui: &imgui::Ui) {
-        if let Some(_pop) = ui.modal_popup_config("Error")
-            .resizable(false)
-            .always_auto_resize(true)
-            .opened(&mut true)
-            .begin_popup()
-        {
-            ui.text(self.error_message.as_deref().unwrap_or_default());
+    fn build_modal_error_message(&mut self, ui: &Ui) {
+        ui.popup_modal_config("Error")
+            .close_button(true)
+            .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
+            .with(|| {
+                let font_sz = ui.get_font_size();
 
-            ui.separator();
-
-            if ui.button_with_size("OK", [ui.current_font_size() * 5.5, 0.0])
-                || ui.is_key_pressed(imgui::Key::Enter)
-                || ui.is_key_pressed(imgui::Key::KeypadEnter)
-            {
-                if !ui.is_window_appearing() {
-                    ui.close_current_popup();
-                    self.error_message = None;
-                }
-            }
-        }
-    }
-    fn build_confirm_message(&mut self, ui: &imgui::Ui, menu_actions: &mut MenuActions) {
-        let mut closed = None;
-        if let Some(action) = self.confirmable_action.take() {
-            if let Some(_pop) = ui.modal_popup_config(&format!("{}###Confirm", action.title))
-                .resizable(false)
-                .always_auto_resize(true)
-                .opened(&mut true)
-                .begin_popup()
-            {
-                ui.text(&action.message);
+                ui.text(self.error_message.as_deref().unwrap_or_default());
 
                 ui.separator();
 
-                if ui.button_with_size("Cancel", [ui.current_font_size() * 5.5, 0.0]) {
-                    if !ui.is_window_appearing() {
-                        ui.close_current_popup();
-                        closed = Some(false);
+                if ui.button_config("OK").size(vec2(font_sz * 5.5, 0.0)).build()
+                    || ui.is_key_pressed(imgui::Key::Enter)
+                        || ui.is_key_pressed(imgui::Key::KeypadEnter)
+                        {
+                            if !ui.is_window_appearing() {
+                                ui.close_current_popup();
+                                self.error_message = None;
+                            }
+                        }
+            });
+    }
+    fn build_confirm_message(&mut self, ui: &Ui, menu_actions: &mut MenuActions) {
+        let mut closed = None;
+        if let Some(action) = self.confirmable_action.take() {
+            let font_sz = ui.get_font_size();
+            ui.popup_modal_config(format!("{}###Confirm", action.title))
+                .close_button(true)
+                .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
+                .with(|| {
+                    ui.text(&action.message);
+
+                    ui.separator();
+
+                    if ui.button_config("Cancel").size(vec2(font_sz * 5.5, 0.0)).build() {
+                        if !ui.is_window_appearing() {
+                            ui.close_current_popup();
+                            closed = Some(false);
+                        }
                     }
-                }
-                ui.same_line();
-                if ui.button_with_size("Continue", [ui.current_font_size() * 5.5, 0.0]) {
-                    if !ui.is_window_appearing() {
-                        ui.close_current_popup();
-                        closed = Some(true);
+                    ui.same_line();
+                    if ui.button_config("Continue").size(vec2(font_sz * 5.5, 0.0)).build() {
+                        if !ui.is_window_appearing() {
+                            ui.close_current_popup();
+                            closed = Some(true);
+                        }
                     }
-                }
-            }
+                });
             if let Some(cont) = closed {
                 if cont {
                     (action.action)(menu_actions);
@@ -648,72 +408,73 @@ impl GlobalContext {
             }
         }
     }
-    fn build_about(&mut self, ui: &imgui::Ui) {
+
+    fn build_about(&mut self, ui: &Ui) {
         if !self.about_visible {
             return;
         }
-        if let Some(_options) = ui.window("About...###about")
-            .movable(true)
-            .resizable(false)
-            .always_auto_resize(true)
-            .opened(&mut self.about_visible)
-            .begin()
-        {
-            let sz_full = Vector2::from(ui.content_region_avail());
-            let f = ui.current_font_size();
-            let logo_height = f * 8.0;
-            let logo_width = self.logo_size.x * logo_height / self.logo_size.y;
-            advance_cursor_pixels(ui, (sz_full.x - logo_width) / 2.0, 0.0);
-            imgui::Image::new(self.logo_tex, [logo_width, logo_height])
-                .build(ui);
-            let _s = ui.push_font(self.font_big);
-            center_text(ui, "Papercraft", sz_full.x);
-            drop(_s);
-            advance_cursor(ui, 0.0, 1.0);
-            center_text(ui, &format!("Version {}", env!("CARGO_PKG_VERSION")), sz_full.x);
-            advance_cursor(ui, 0.0, 1.0);
-            center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
-            advance_cursor(ui, 0.0, 0.5);
-            center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
-            advance_cursor(ui, 0.0, 0.5);
-            let _s = ui.push_font(self.font_small);
-            center_text(ui, "© Copyright 2022 - Rodrigo Rivas Costa", sz_full.x);
-            center_text(ui, "This program comes with absolutely no warranty.", sz_full.x);
-            center_url(
-                ui,
-                "See the GNU General Public License, version 3 or later for details.", "gpl3",
-                Some("https://www.gnu.org/licenses/gpl-3.0.html"),
-                sz_full.x
-            );
-            drop(_s);
+        ui.window_config("About...###about")
+            .open(&mut self.about_visible)
+            .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
+            .with(|| {
+                let sz_full = ui.get_content_region_avail();
+                let f = ui.get_font_size();
+                let logo_height = f * 8.0;
+                let logo_rect = ui.font_atlas().get_custom_rect(self.logo_rect);
+                let logo_scale = logo_height / logo_rect.Height as f32;
+                let logo_width = logo_rect.Width as f32 * logo_scale;
+                advance_cursor_pixels(ui, (sz_full.x - logo_width) / 2.0, 0.0);
+                //ui.do_image(self.logo_tex, [logo_width, logo_height])
+                ui.image_with_custom_rect_config(self.logo_rect, logo_scale)
+                    .build();
+                ui.with_push(self.font_big,
+                    || {
+                         center_text(ui, "Papercraft", sz_full.x);
+                     });
 
-            //TODO: list third party SW
-        }
+                advance_cursor(ui, 0.0, 1.0);
+                center_text(ui, &format!("Version {}", env!("CARGO_PKG_VERSION")), sz_full.x);
+                advance_cursor(ui, 0.0, 1.0);
+                center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
+                advance_cursor(ui, 0.0, 0.5);
+                center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
+                advance_cursor(ui, 0.0, 0.5);
+                ui.with_push(self.font_small,
+                    || {
+                         center_text(ui, "© Copyright 2022 - Rodrigo Rivas Costa", sz_full.x);
+                         center_text(ui, "This program comes with absolutely no warranty.", sz_full.x);
+                         center_url(
+                             ui,
+                             "See the GNU General Public License, version 3 or later for details.", "gpl3",
+                             Some("https://www.gnu.org/licenses/gpl-3.0.html"),
+                             sz_full.x
+                             );
+                     });
+                //TODO: list third party SW
+            });
     }
     // Returns true if the action has just been done successfully
-    fn build_modal_wait_message_and_run_file_action(&mut self, ui: &imgui::Ui) -> bool {
+    fn build_modal_wait_message_and_run_file_action(&mut self, ui: &Ui) -> bool {
         let mut ok = false;
         if let Some(file_action) = self.file_action.take() {
             let (action, file) = &file_action;
             let title = action.title();
             let mut res = None;
             // Build the modal itself
-            unsafe {
-                imgui_sys::igSetNextWindowSize([150.0, 0.0].into(), imgui::Condition::Once as _);
-            }
-            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###Wait"))
-                .resizable(false)
-                .begin_popup()
-            {
-                ui.text("Please, wait...");
+            ui.set_next_window_size(vec2(150.0, 0.0), imgui::Cond::Once);
+            ui.popup_modal_config(format!("{title}###Wait"))
+                .flags(imgui::WindowFlags::NoResize)
+                .with(|| {
+                    ui.text("Please, wait...");
 
-                // Give time to the fading modal, should be enough
-                let run = self.popup_time_start.elapsed() > Duration::from_millis(250);
-                if run {
-                    res = Some(self.run_file_action(*action, file));
-                    ui.close_current_popup();
-                }
-            }
+                    // Give time to the fading modal, should be enough
+                    let run = self.popup_time_start.elapsed() > Duration::from_millis(250);
+                    if run {
+                        res = Some(self.run_file_action(*action, file));
+                        ui.close_current_popup();
+                    }
+                });
+
             match res {
                 None => {
                     // keep the action pending, for now.
@@ -731,171 +492,169 @@ impl GlobalContext {
         ok
     }
 
-    fn build_ui(&mut self, ui: &imgui::Ui) -> MenuActions {
+    fn build_ui(&mut self, ui: &Ui) -> MenuActions {
         let mut menu_actions = self.build_menu_and_file_dialog(ui);
+        let font_sz = ui.get_font_size();
 
         // Toolbar is not needed in read-only mode
         if self.modifiable() {
-            let pad: f32 = ui.current_font_size() / 4.0;
+            let pad: f32 = font_sz / 4.0;
 
-            let _s = (
-                ui.push_style_var(imgui::StyleVar::WindowPadding([pad, pad])),
-                ui.push_style_var(imgui::StyleVar::ItemSpacing([0.0, 0.0])),
+            // Toolbar
+            ui.with_push(
+                (
+                    (imgui::StyleVar::WindowPadding, imgui::StyleValue::Vec2(vec2(pad, pad))),
+                    (imgui::StyleVar::ItemSpacing, imgui::StyleValue::Vec2(vec2(0.0, 0.0))),
+                ),
+                || {
+                    ui.child_config("toolbar")
+                        .child_flags(imgui::ChildFlags::AlwaysUseWindowPadding | imgui::ChildFlags::AutoResizeY)
+                        .window_flags(imgui::WindowFlags::NoScrollbar)
+                        .with(|| {
+                            ui.with_push((imgui::StyleVar::ItemSpacing, imgui::StyleValue::Vec2(vec2(font_sz / 8.0, 0.0))),
+                                || {
+                                    let color_active = ui.style().color(imgui::ColorId::ButtonActive);
+                                    if ui.image_button_with_custom_rect_config("Face", self.icons_rect[0], 1.0)
+                                        .bg_col(if self.data.ui.mode == MouseMode::Face { color_active } else { imgui::Color::TRANSPARENT })
+                                        .build()
+                                    {
+                                        self.set_mouse_mode(MouseMode::Face);
+                                    }
+                                    ui.same_line();
+                                    if ui.image_button_with_custom_rect_config("Edge", self.icons_rect[1], 1.0)
+                                        .bg_col(if self.data.ui.mode == MouseMode::Edge { color_active } else { imgui::Color::TRANSPARENT })
+                                        .build()
+                                    {
+                                        self.set_mouse_mode(MouseMode::Edge);
+                                    }
+                                    ui.same_line();
+                                    if ui.image_button_with_custom_rect_config("Tab", self.icons_rect[2], 1.0)
+                                        .bg_col(if self.data.ui.mode == MouseMode::Flap { color_active } else { imgui::Color::TRANSPARENT })
+                                        .build()
+                                    {
+                                        self.set_mouse_mode(MouseMode::Flap);
+                                    }
+                                });
+                        }
+                    );
+                }
             );
-            let btn_sz = ui.current_font_size() * 3.0;
-            if let Some(_toolbar) = ui.child_window("toolbar")
-                .size([0.0, btn_sz + 3.5 * pad]) //There should be a better way...
-                .always_use_window_padding(true)
-                .border(false)
-                .begin()
-            {
-                let _s3 = ui.push_style_var(imgui::StyleVar::ItemSpacing([ui.current_font_size() / 8.0, 0.0]));
-                //The texture image is 128x128 pixels, but each image is 48x48
-                let n = 48.0 / 128.0;
-                let color_active = ui.style_color(imgui::StyleColor::ButtonActive);
-                let color_trans = [0.0, 0.0, 0.0, 0.0];
-
-                if ui.image_button_config("Face", self.icons_tex, [btn_sz, btn_sz])
-                    .uv0([0.0, 0.0])
-                    .uv1([n, n])
-                    .background_col(if self.data.ui.mode == MouseMode::Face { color_active } else { color_trans })
-                    .build()
-                {
-                    self.set_mouse_mode(MouseMode::Face);
-                }
-                ui.same_line();
-                if ui.image_button_config("Edge", self.icons_tex, [btn_sz, btn_sz])
-                    .uv0([n, 0.0])
-                    .uv1([2.0*n, n])
-                    .background_col(if self.data.ui.mode == MouseMode::Edge { color_active } else { color_trans })
-                    .build()
-                {
-                    self.set_mouse_mode(MouseMode::Edge);
-                }
-                ui.same_line();
-                if ui.image_button_config("Flap", self.icons_tex, [btn_sz, btn_sz])
-                    .uv0([0.0, n])
-                    .uv1([n, 2.0*n])
-                    .background_col(if self.data.ui.mode == MouseMode::Flap { color_active } else { color_trans })
-                    .build()
-                {
-                    self.set_mouse_mode(MouseMode::Flap);
-                }
-            }
         }
 
-        let _s = (
-            ui.push_style_var(imgui::StyleVar::ItemSpacing([2.0, 2.0])),
-            ui.push_style_var(imgui::StyleVar::WindowPadding([0.0, 0.0])),
-            ui.push_style_color(imgui::StyleColor::ButtonActive, ui.style_color(imgui::StyleColor::ButtonHovered)),
-            ui.push_style_color(imgui::StyleColor::Button, ui.style_color(imgui::StyleColor::ButtonHovered)),
+        let color_hovered = ui.style().color(imgui::ColorId::ButtonHovered);
+        ui.with_push(
+            (
+                (imgui::StyleVar::ItemSpacing, imgui::StyleValue::Vec2(vec2(2.0, 2.0))),
+                (imgui::StyleVar::WindowPadding, imgui::StyleValue::Vec2(vec2(0.0, 0.0))),
+                (imgui::ColorId::ButtonActive, color_hovered),
+                (imgui::ColorId::Button, color_hovered),
+            ),
+            || {
+                let sz = vec2(0.0, -ui.get_frame_height());
+                ui.child_config("main_area")
+                    .size(sz)
+                    .with(|| {
+                        let sz_full = ui.get_content_region_avail();
+                        if self.sz_full != sz_full {
+                            if self.sz_full.x > 1.0 {
+                                self.splitter_pos = self.splitter_pos * sz_full.x / self.sz_full.x;
+                            }
+                            self.sz_full = sz_full;
+                        }
+
+                        let scale = ui.display_scale();
+
+                        self.build_scene(ui, self.splitter_pos);
+                        let sz_scene = scale * ui.get_item_rect_size();
+
+                        ui.same_line();
+
+                        ui.button_config("##vsplitter")
+                            .size(vec2(font_sz / 2.0, -1.0))
+                            .build();
+                        if ui.is_item_active() {
+                            self.splitter_pos += ui.io().MouseDelta.x;
+                        }
+                        self.splitter_pos = self.splitter_pos.clamp(50.0, (sz_full.x - 50.0).max(50.0));
+                        if ui.is_item_hovered() || ui.is_item_active() {
+                            ui.set_mouse_cursor(imgui::MouseCursor::ResizeEW);
+                        }
+
+                        ui.same_line();
+
+                        self.build_paper(ui);
+                        let sz_paper = scale * Vector2::from(ui.get_item_rect_size());
+
+                        // Resize FBOs
+                        if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
+                            self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                            self.sz_scene = sz_scene;
+
+                            self.data.ui.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
+                            self.data.ui.trans_scene.persp_inv = self.data.ui.trans_scene.persp.invert().unwrap();
+
+                            let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
+
+                            unsafe {
+                                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
+
+                                'no_aa: {
+                                    for samples in MULTISAMPLES {
+                                        self.gl.get_error(); //clear error
+                                        rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
+                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::RGBA8, x, y);
+                                        rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
+                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::DEPTH_COMPONENT, x, y);
+
+                                        if self.gl.get_error() != 0 || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
+                                            continue;
+                                        }
+                                        break 'no_aa;
+                                    }
+
+                                    rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
+                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
+                                    rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
+                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, x, y);
+                                }
+                            }
+                        }
+
+                        if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
+                            self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                            self.sz_paper = sz_paper;
+
+                            let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
+                            self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
+
+                            unsafe {
+                                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
+
+                                'no_aa: {
+                                    for samples in MULTISAMPLES {
+                                        self.gl.get_error(); //clear error
+                                        rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
+                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::RGBA8, x, y);
+                                        rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
+                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::STENCIL_INDEX, x, y);
+
+                                        if self.gl.get_error() != 0 || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
+                                            continue;
+                                        }
+                                        break 'no_aa;
+                                    }
+
+                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
+                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
+                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
+                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::STENCIL_INDEX, x, y);
+                                }
+                            }
+                        }
+
+                    });
+            }
         );
-
-        if let Some(_main_area) = ui.child_window("main_area")
-            .size([0.0, -ui.frame_height()])
-            .begin()
-        {
-            let sz_full = Vector2::from(ui.content_region_avail());
-
-            if self.sz_full != sz_full {
-                if self.sz_full.x > 1.0 {
-                    self.splitter_pos = self.splitter_pos * sz_full.x / self.sz_full.x;
-                }
-                self.sz_full = sz_full;
-            }
-
-            let scale = Vector2::from(ui.io().display_framebuffer_scale);
-
-            self.build_scene(ui, self.splitter_pos);
-            let sz_scene = scale_size(scale, Vector2::from(ui.item_rect_size()));
-
-            ui.same_line();
-
-            ui.button_with_size("##vsplitter", [ui.current_font_size() / 2.0, -1.0]);
-            if ui.is_item_active() {
-                self.splitter_pos += ui.io().mouse_delta[0];
-            }
-            self.splitter_pos = self.splitter_pos.clamp(50.0, (sz_full.x - 50.0).max(50.0));
-            if ui.is_item_hovered() || ui.is_item_active() {
-                ui.set_mouse_cursor(Some(imgui::MouseCursor::ResizeEW));
-            }
-
-            ui.same_line();
-
-            self.build_paper(ui);
-
-            let sz_paper = scale_size(scale, Vector2::from(ui.item_rect_size()));
-
-            // Resize FBOs
-            if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
-                self.add_rebuild(RebuildFlags::SCENE_REDRAW);
-                self.sz_scene = sz_scene;
-
-                self.data.ui.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
-                self.data.ui.trans_scene.persp_inv = self.data.ui.trans_scene.persp.invert().unwrap();
-
-                let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
-
-                unsafe {
-                    let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
-
-                    'no_aa: {
-                        for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
-                            gl::GetError(); //clear error
-                            rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
-                            rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::DEPTH_COMPONENT, x, y);
-
-                            if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
-                                continue;
-                            }
-                            break 'no_aa;
-                        }
-
-                        rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
-                        rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                        gl::RenderbufferStorage(rb_binder.target(), gl::DEPTH_COMPONENT, x, y);
-                    }
-                }
-            }
-
-            if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
-                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
-                self.sz_paper = sz_paper;
-
-                let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
-                self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
-
-                unsafe {
-                    let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
-
-                    'no_aa: {
-                        for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
-                            gl::GetError(); //clear error
-                            rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, x, y);
-                            rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                            gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::STENCIL_INDEX, x, y);
-
-                            if gl::GetError() != 0 || gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
-                                continue;
-                            }
-                            break 'no_aa;
-                        }
-
-                        rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                        gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, x, y);
-                        rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                        gl::RenderbufferStorage(rb_binder.target(), gl::STENCIL_INDEX, x, y);
-                    }
-                }
-            }
-
-        }
-        drop(_s);
-
         advance_cursor(ui, 0.25, 0.0);
 
         let status_text = match self.data.ui.mode {
@@ -915,44 +674,42 @@ impl GlobalContext {
         menu_actions
     }
 
-
-    fn build_options_dialog(&mut self, ui: &imgui::Ui) {
+    fn build_options_dialog(&mut self, ui: &Ui) {
         let options = match self.options_opened.take() {
             Some(o) => o,
             None => return,
         };
         let modifiable = self.modifiable();
         let mut options_opened = true;
-        if let Some(_options) = ui.window("Document properties###options")
-            .size(if modifiable {[650.0, 400.0]} else {[300.0, 100.0]}, imgui::Condition::Once)
-            .resizable(true)
-            .scroll_bar(false)
-            .movable(true)
-            .opened(&mut options_opened)
-            .begin()
-        {
-            if modifiable {
-                let (keep_opened, apply) = self.build_full_options_inner_dialog(ui, options);
-                self.options_opened = keep_opened;
-                if let Some(apply_options) = apply {
-                    self.data.set_papercraft_options(apply_options);
-                    self.add_rebuild(RebuildFlags::all());
+        ui.set_next_window_size(if modifiable {vec2(650.0, 400.0)} else {vec2(300.0, 100.0)}, imgui::Cond::Once);
+        ui.window_config("Document properties###options")
+            .open(&mut options_opened)
+            .flags(imgui::WindowFlags::NoScrollbar)
+            .with_always(|opened| {
+                if opened {
+                    if modifiable {
+                        let (keep_opened, apply) = self.build_full_options_inner_dialog(ui, options);
+                        self.options_opened = keep_opened;
+                        if let Some(apply_options) = apply {
+                            self.data.set_papercraft_options(apply_options);
+                            self.add_rebuild(RebuildFlags::all());
+                        }
+                    } else {
+                        self.build_read_only_options_inner_dialog(ui, &options);
+                        self.options_opened = Some(options);
+                    }
+                } else {
+                    self.options_opened = Some(options);
                 }
-            } else {
-                self.build_read_only_options_inner_dialog(ui, &options);
-                self.options_opened = Some(options);
-            }
-        } else {
-            // In case the window is rolled
-            self.options_opened = Some(options);
-        }
+            });
+
         // If the window was closed with the X
         if !options_opened {
             self.options_opened = None;
         }
     }
 
-    fn build_read_only_options_inner_dialog(&self, ui: &imgui::Ui, options: &PaperOptions) {
+    fn build_read_only_options_inner_dialog(&self, ui: &Ui, options: &PaperOptions) {
         let n_pieces = self.data.papercraft().num_islands();
         let n_flaps = self.data.papercraft().model().edges()
             .filter(|(e, _)| matches!(self.data.papercraft().edge_status(*e), paper::EdgeStatus::Cut(_)))
@@ -964,248 +721,278 @@ impl GlobalContext {
             );
         let model_size = (bbox.1 - bbox.0) * options.scale;
         let Vector3 { x, y, z } = model_size;
-        ui.text(format!("Number of pieces: {n_pieces}\nNumber of flaps: {n_flaps}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
+        ui.text(&format!("Number of pieces: {n_pieces}\nNumber of flaps: {n_flaps}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
     }
 
-    fn build_full_options_inner_dialog(&mut self, ui: &imgui::Ui, mut options: PaperOptions) -> (Option<PaperOptions>, Option<PaperOptions>) {
-        let size = Vector2::from(ui.content_region_avail());
-        if let Some(_ops) = ui.child_window("options")
-            .size([size.x, -self.option_button_height])
-            .horizontal_scrollbar(true)
-            .begin()
-        {
-            if let Some(_tok) = ui.tree_node_config("Model").framed(true).push() {
-                ui.set_next_item_width(ui.current_font_size() * 5.5);
-                ui.input_float("Scale", &mut options.scale).display_format("%g").build();
-                options.scale = options.scale.max(0.0);
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
-                ui.enabled(self.data.papercraft().model().has_textures(), || {
-                    ui.checkbox("Textured", &mut options.texture);
-                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
-                    ui.checkbox("Texture filter", &mut options.tex_filter);
-                });
-
-                if let Some(_t) = ui.tree_node_config("Flaps")
-                    //.flags(imgui::TreeNodeFlags::DEFAULT_OPEN)
-                    .push()
-                {
-                    static FLAP_STYLES: &[FlapStyle] = &[
-                        FlapStyle::Textured,
-                        FlapStyle::HalfTextured,
-                        FlapStyle::White,
-                        FlapStyle::None,
-                    ];
-                    fn fmt_flap_style(s: FlapStyle) -> &'static str {
-                        match s {
-                            FlapStyle::Textured => "Textured",
-                            FlapStyle::HalfTextured => "Half textured",
-                            FlapStyle::White => "White",
-                            FlapStyle::None => "None",
-                        }
-                    }
-                    let mut i_flap_style = FLAP_STYLES.iter().position(|s| *s == options.flap_style).unwrap_or(0);
-                    ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    if ui.combo("Style", &mut i_flap_style, FLAP_STYLES, |s| fmt_flap_style(*s).into()) {
-                        options.flap_style = FLAP_STYLES[i_flap_style];
-                    }
-                    ui.same_line_with_spacing(ui.current_font_size() * 12.0, ui.current_font_size() * 1.5);
-                    ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    ui.slider_config("Shadow", 0.0, 1.0)
-                        .display_format("%.2f")
-                        .build(&mut options.shadow_flap_alpha);
-
-                    ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    ui.input_float("Width", &mut options.flap_width).display_format("%g").build();
-                    options.flap_width = options.flap_width.max(0.0);
-
-                    ui.same_line_with_spacing(ui.current_font_size() * 12.0, ui.current_font_size() * 1.5);
-                    ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    ui.input_float("Angle", &mut options.flap_angle)
-                        .display_format("%g").build();
-                    options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
-                }
-                if let Some(_t) = ui.tree_node("Folds") {
-                    static FOLD_STYLES: &[FoldStyle] = &[
-                        FoldStyle::Full,
-                        FoldStyle::FullAndOut,
-                        FoldStyle::Out,
-                        FoldStyle::In,
-                        FoldStyle::InAndOut,
-                        FoldStyle::None,
-                    ];
-                    fn fmt_fold_style(s: FoldStyle) -> &'static str {
-                        match s {
-                            FoldStyle::Full => "Full line",
-                            FoldStyle::FullAndOut => "Full & out segment",
-                            FoldStyle::Out => "Out segment",
-                            FoldStyle::In => "In segment",
-                            FoldStyle::InAndOut => "Out & in segment",
-                            FoldStyle::None => "None",
-                        }
-                    }
-                    let mut i_fold_style = FOLD_STYLES.iter().position(|s| *s == options.fold_style).unwrap_or(0);
-                    ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    if ui.combo("Style", &mut i_fold_style, FOLD_STYLES, |s| fmt_fold_style(*s).into()) {
-                        options.fold_style = FOLD_STYLES[i_fold_style];
-                    }
-                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                    ui.set_next_item_width(ui.current_font_size() * 5.5);
-                    ui.enabled(!matches!(options.fold_style, FoldStyle::None | FoldStyle::Full) , || {
-                        ui.input_float("Length", &mut options.fold_line_len).display_format("%g").build();
-                        options.fold_line_len = options.fold_line_len.max(0.0);
-                    });
-                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                    ui.set_next_item_width(ui.current_font_size() * 5.5);
-                    ui.enabled(!matches!(options.fold_style, FoldStyle::None) , || {
-                        ui.input_float("Line width", &mut options.fold_line_width).display_format("%g").build();
-                        options.fold_line_width = options.fold_line_width.max(0.0);
+    fn build_full_options_inner_dialog(&mut self, ui: &Ui, mut options: PaperOptions) -> (Option<PaperOptions>, Option<PaperOptions>) {
+        let size = Vector2::from(ui.get_content_region_avail());
+        let font_sz = ui.get_font_size();
+        ui.child_config("options")
+            .size(vec2(size.x, -self.option_button_height))
+            .window_flags(imgui::WindowFlags::HorizontalScrollbar)
+            .with(|| {
+                ui.tree_node_config("Model").flags(imgui::TreeNodeFlags::Framed).with(|| {
+                    ui.set_next_item_width(font_sz * 5.5);
+                    ui.input_float_config("Scale", &mut options.scale)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                    options.scale = options.scale.max(0.0);
+                    ui.same_line_ex(0.0, font_sz * 3.0);
+                    ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
+                        ui.checkbox("Textured", &mut options.texture);
+                        ui.same_line_ex(0.0, font_sz * 3.0);
+                        ui.checkbox("Texture filter", &mut options.tex_filter);
                     });
 
-                    ui.set_next_item_width(ui.current_font_size() * 5.5);
-                    ui.input_float("Hidden fold angle", &mut options.hidden_line_angle).display_format("%g").build();
-                    options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
-                }
-                if let Some(_t) = ui.tree_node("Information") {
-                    self.build_read_only_options_inner_dialog(ui, &options);
-                }
-            }
-            if let Some(_tok) = ui.tree_node_config("Page layout").framed(true).push() {
-                ui.set_next_item_width(ui.current_font_size() * 5.5);
+                    ui.tree_node_config("Flaps").with(|| {
+                        static FLAP_STYLES: &[FlapStyle] = &[
+                            FlapStyle::Textured,
+                            FlapStyle::HalfTextured,
+                            FlapStyle::White,
+                            FlapStyle::None,
+                        ];
+                        fn fmt_flap_style(s: FlapStyle) -> &'static str {
+                            match s {
+                                FlapStyle::Textured => "Textured",
+                                FlapStyle::HalfTextured => "Half textured",
+                                FlapStyle::White => "White",
+                                FlapStyle::None => "None",
+                            }
+                        }
 
-                let mut i = options.pages as _;
-                ui.input_int("Pages", &mut i).build();
-                options.pages = i.clamp(1, 1000) as _;
+                        ui.set_next_item_width(font_sz * 8.0);
+                        ui.combo("Style", FLAP_STYLES.iter().copied(), fmt_flap_style, &mut options.flap_style);
 
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                ui.set_next_item_width(ui.current_font_size() * 5.5);
+                        ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 8.0);
+                        ui.slider_float_config("Shadow", &mut options.shadow_flap_alpha)
+                            .range(0.0, 1.0)
+                            .display_format(imgui::FloatFormat::F(2))
+                            .build();
 
-                let mut i = options.page_cols as _;
-                ui.input_int("Columns", &mut i).build();
-                options.page_cols = i.clamp(1, options.pages as _) as _;
+                        ui.set_next_item_width(font_sz * 8.0);
+                        ui.input_float_config("Width", &mut options.flap_width)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.flap_width = options.flap_width.max(0.0);
 
-                ui.set_next_item_width(ui.current_font_size() * 11.0);
-                ui.checkbox("Print Papercraft signature", &mut options.show_self_promotion);
+                        ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 8.0);
+                        ui.input_float_config("Angle", &mut options.flap_angle)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
+                    });
+                    ui.tree_node_config("Folds").with(|| {
+                        static FOLD_STYLES: &[FoldStyle] = &[
+                            FoldStyle::Full,
+                            FoldStyle::FullAndOut,
+                            FoldStyle::Out,
+                            FoldStyle::In,
+                            FoldStyle::InAndOut,
+                            FoldStyle::None,
+                        ];
+                        fn fmt_fold_style(s: FoldStyle) -> &'static str {
+                            match s {
+                                FoldStyle::Full => "Full line",
+                                FoldStyle::FullAndOut => "Full & out segment",
+                                FoldStyle::Out => "Out segment",
+                                FoldStyle::In => "In segment",
+                                FoldStyle::InAndOut => "Out & in segment",
+                                FoldStyle::None => "None",
+                            }
+                        }
 
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
-                ui.set_next_item_width(ui.current_font_size() * 11.0);
-                ui.checkbox("Print page number", &mut options.show_page_number);
+                        ui.set_next_item_width(font_sz * 8.0);
+                        ui.combo("Style", FOLD_STYLES.iter().copied(), fmt_fold_style, &mut options.fold_style);
 
-                static EDGE_ID_POSITIONS: &[EdgeIdPosition] = &[
-                    EdgeIdPosition::None,
-                    EdgeIdPosition::Outside,
-                    EdgeIdPosition::Inside,
-                ];
-                fn fmt_edge_id_position(s: EdgeIdPosition) -> &'static str {
-                    match s {
-                        EdgeIdPosition::None => "None",
-                        EdgeIdPosition::Outside => "Outside",
-                        EdgeIdPosition::Inside => "Inside",
-                    }
-                }
-                let mut i_edge_id_pos = EDGE_ID_POSITIONS.iter().position(|s| *s == options.edge_id_position).unwrap_or(0);
-                ui.set_next_item_width(ui.current_font_size() * 6.0);
-                if ui.combo("Edge id position", &mut i_edge_id_pos, EDGE_ID_POSITIONS, |s| fmt_edge_id_position(*s).into()) {
-                    options.edge_id_position = EDGE_ID_POSITIONS[i_edge_id_pos];
-                }
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.with_disabled(matches!(options.fold_style, FoldStyle::None | FoldStyle::Full), || {
+                            ui.input_float_config("Length", &mut options.fold_line_len)
+                                .display_format(imgui::FloatFormat::G)
+                                .build();
+                            options.fold_line_len = options.fold_line_len.max(0.0);
+                        });
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
+                            ui.input_float_config("Line width", &mut options.fold_line_width)
+                                .display_format(imgui::FloatFormat::G)
+                                .build();
+                            options.fold_line_width = options.fold_line_width.max(0.0);
+                        });
 
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-
-                ui.set_next_item_width(ui.current_font_size() * 3.0);
-                ui.enabled(options.edge_id_position != EdgeIdPosition::None, || {
-                    ui.input_float("Edge id font size (pt)", &mut options.edge_id_font_size).display_format("%g").build();
-                    options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.input_float_config("Hidden fold angle", &mut options.hidden_line_angle)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
+                    });
+                    ui.tree_node_config("Information").with(|| {
+                        self.build_read_only_options_inner_dialog(ui, &options);
+                    });
                 });
+                ui.tree_node_config("Page layout").flags(imgui::TreeNodeFlags::Framed).with(|| {
+                    ui.set_next_item_width(font_sz * 5.5);
 
-            }
-            if let Some(_tok) = ui.tree_node_config("Paper size").framed(true).push() {
-                ui.set_next_item_width(ui.current_font_size() * 5.5);
-                ui.input_float("Width", &mut options.page_size.0).display_format("%g").build();
-                options.page_size.0 = options.page_size.0.max(1.0);
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                ui.set_next_item_width(ui.current_font_size() * 5.5);
-                ui.input_float("Height", &mut options.page_size.1).display_format("%g").build();
-                options.page_size.1 = options.page_size.1.max(1.0);
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                ui.set_next_item_width(ui.current_font_size() * 5.5);
-                let mut resolution = options.resolution as f32;
-                ui.input_float("DPI", &mut resolution).display_format("%g").build();
-                options.resolution = (resolution as u32).max(1);
+                    let mut i = options.pages as _;
+                    ui.input_int_config("Pages", &mut i).build();
+                    options.pages = i.clamp(1, 1000) as _;
 
-                struct PaperSize {
-                    name: &'static str,
-                    size: Vector2,
-                }
-                static PAPER_SIZES: &[PaperSize] = &[
-                    PaperSize {
-                        name: "A4",
-                        size: Vector2::new(210.0, 297.0),
+                    ui.same_line_ex(0.0, font_sz * 1.5);
+                    ui.set_next_item_width(font_sz * 5.5);
 
-                    },
-                    PaperSize {
-                        name: "A3",
-                        size: Vector2::new(297.0, 420.0),
-                    },
-                    PaperSize {
-                        name: "Letter",
-                        size: Vector2::new(215.9, 279.4),
-                    },
-                    PaperSize {
-                        name: "Legal",
-                        size: Vector2::new(215.9, 355.6),
-                    },
-                ];
+                    let mut i = options.page_cols as _;
+                    ui.input_int_config("Columns", &mut i).build();
+                    options.page_cols = i.clamp(1, options.pages as _) as _;
 
-                let paper_size = Vector2::from(options.page_size);
-                let mut i_paper_size = PAPER_SIZES.iter().position(|s| s.size == paper_size || s.size == Vector2::new(paper_size.y, paper_size.x)).unwrap_or(usize::MAX);
-                ui.set_next_item_width(ui.current_font_size() * 8.0);
-                if ui.combo("##", &mut i_paper_size, PAPER_SIZES, |t| t.name.into()) {
+                    ui.set_next_item_width(font_sz * 11.0);
+                    ui.checkbox("Print Papercraft signature", &mut options.show_self_promotion);
+
+                    ui.same_line_ex(0.0, font_sz * 3.0);
+                    ui.set_next_item_width(font_sz * 11.0);
+                    ui.checkbox("Print page number", &mut options.show_page_number);
+
+                    static EDGE_ID_POSITIONS: &[EdgeIdPosition] = &[
+                        EdgeIdPosition::None,
+                        EdgeIdPosition::Outside,
+                        EdgeIdPosition::Inside,
+                    ];
+                    fn fmt_edge_id_position(s: EdgeIdPosition) -> &'static str {
+                        match s {
+                            EdgeIdPosition::None => "None",
+                            EdgeIdPosition::Outside => "Outside",
+                            EdgeIdPosition::Inside => "Inside",
+                        }
+                    }
+                    ui.set_next_item_width(font_sz * 6.0);
+                    ui.combo("Edge id position", EDGE_ID_POSITIONS.iter().copied(), fmt_edge_id_position, &mut options.edge_id_position);
+
+                    ui.same_line_ex(0.0, font_sz * 1.5);
+
+                    ui.set_next_item_width(font_sz * 3.0);
+                    ui.with_disabled(options.edge_id_position == EdgeIdPosition::None, || {
+                        ui.input_float_config("Edge id font size (pt)", &mut options.edge_id_font_size)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
+                    });
+                });
+                ui.tree_node_config("Paper size").flags(imgui::TreeNodeFlags::Framed).with(|| {
+                    ui.set_next_item_width(font_sz * 5.5);
+                    ui.input_float_config("Width", &mut options.page_size.0)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                    options.page_size.0 = options.page_size.0.max(1.0);
+                    ui.same_line_ex(0.0, font_sz * 1.5);
+                    ui.set_next_item_width(font_sz * 5.5);
+                    ui.input_float_config("Height", &mut options.page_size.1)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                    options.page_size.1 = options.page_size.1.max(1.0);
+                    ui.same_line_ex(0.0, font_sz * 1.5);
+                    ui.set_next_item_width(font_sz * 5.5);
+                    let mut resolution = options.resolution as f32;
+                    ui.input_float_config("DPI", &mut resolution)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                    options.resolution = (resolution as u32).max(1);
+
+                    struct PaperSize {
+                        name: &'static str,
+                        size: Vector2,
+                    }
+
+                    static PAPER_SIZES: &[PaperSize] = &[
+                        PaperSize {
+                            name: "A4",
+                            size: vec2(210.0, 297.0),
+                        },
+                        PaperSize {
+                            name: "A3",
+                            size: vec2(297.0, 420.0),
+                        },
+                        PaperSize {
+                            name: "Letter",
+                            size: vec2(215.9, 279.4),
+                        },
+                        PaperSize {
+                            name: "Legal",
+                            size: vec2(215.9, 355.6),
+                        },
+                    ];
+
                     let portrait = options.page_size.1 >= options.page_size.0;
-                    options.page_size = PAPER_SIZES[i_paper_size].size.into();
-                    if !portrait {
+                    let paper_size = vec2(options.page_size.0, options.page_size.1);
+                    let paper_size = PAPER_SIZES.iter().find(|s| s.size == paper_size || s.size == vec2(paper_size.y, paper_size.x));
+                    ui.set_next_item_width(font_sz * 8.0);
+                    ui.combo_config("##Paper")
+                        .preview_value_opt(paper_size.map(|p| p.name))
+                        .with(|| {
+                            for op in PAPER_SIZES {
+                                if ui.selectable_config(op.name)
+                                    .selected(paper_size.map(|p| std::ptr::eq(p, op)).unwrap_or(false))
+                                    .build()
+                                {
+                                    options.page_size = (op.size.x, op.size.y);
+                                    if !portrait {
+                                        std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
+                                    }
+                                }
+                            }
+                        });
+                    let mut new_portrait = portrait;
+                    if ui.radio_button_config("Portrait", portrait).build() {
+                        new_portrait = true;
+                    }
+                    if ui.radio_button_config("Landscape", !portrait).build() { new_portrait = false;
+                    }
+                    if portrait != new_portrait {
                         std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
                     }
-                }
-                let mut portrait = options.page_size.1 >= options.page_size.0;
-                let old_portrait = portrait;
-                ui.radio_button("Portrait", &mut portrait, true);
-                ui.radio_button("Landscape", &mut portrait, false);
-                if portrait != old_portrait {
-                    std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
-                }
-            }
-            if let Some(_tok) = ui.tree_node_config("Margins").framed(true).push() {
-                ui.set_next_item_width(ui.current_font_size() * 4.0);
-                ui.input_float("Top", &mut options.margin.0).display_format("%g").build();
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                ui.set_next_item_width(ui.current_font_size() * 4.0);
-                ui.input_float("Left", &mut options.margin.1).display_format("%g").build();
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                ui.set_next_item_width(ui.current_font_size() * 4.0);
-                ui.input_float("Right", &mut options.margin.2).display_format("%g").build();
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
-                ui.set_next_item_width(ui.current_font_size() * 4.0);
-                ui.input_float("Bottom", &mut options.margin.3).display_format("%g").build();
-            }
-        }
+                });
+                ui.tree_node_config("Margins").flags(imgui::TreeNodeFlags::Framed).with(|| {
+                    ui.set_next_item_width(font_sz * 4.0);
+                    ui.input_float_config("Top", &mut options.margin.0)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                    ui.same_line_ex(0.0, font_sz * 1.5);
+                    ui.set_next_item_width(font_sz * 4.0);
+                    ui.input_float_config("Left", &mut options.margin.1)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                    ui.same_line_ex(0.0, font_sz * 1.5);
+                    ui.set_next_item_width(font_sz * 4.0);
+                    ui.input_float_config("Right", &mut options.margin.2)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                    ui.same_line_ex(0.0, font_sz * 1.5);
+                    ui.set_next_item_width(font_sz * 4.0);
+                    ui.input_float_config("Bottom", &mut options.margin.3)
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
+                });
+            });
 
         let mut options_opened = Some(options);
         let mut apply_options = None;
 
-        let pos1 = Vector2::from(ui.cursor_screen_pos());
+        let pos1 = Vector2::from(ui.get_cursor_screen_pos());
         ui.separator();
-        if ui.button_with_size("OK", [100.0, 0.0]) {
+        if ui.button_config("OK").size(vec2(100.0, 0.0)).build() {
             apply_options = options_opened.take();
         }
         ui.same_line();
-        if ui.button_with_size("Cancel", [100.0, 0.0]) {
+        if ui.button_config("Cancel").size(vec2(100.0, 0.0)).build() {
             options_opened = None;
         }
         ui.same_line();
-        if ui.button_with_size("Apply", [100.0, 0.0]) {
+        if ui.button_config("Apply").size(vec2(100.0, 0.0)).build() {
             apply_options = options_opened.clone();
         }
         // Compute the height of the buttons to avoid having an external scrollbar
-        let pos2 = Vector2::from(ui.cursor_screen_pos());
+        let pos2 = Vector2::from(ui.get_cursor_screen_pos());
         self.option_button_height = pos2.y - pos1.y;
 
         (options_opened, apply_options)
@@ -1218,40 +1005,40 @@ impl GlobalContext {
             BoolWithConfirm::Confirmed
         }
     }
-    fn build_menu_and_file_dialog(&mut self, ui: &imgui::Ui) -> MenuActions {
+    fn build_menu_and_file_dialog(&mut self, ui: &Ui) -> MenuActions {
         let mut menu_actions = MenuActions::default();
 
-        ui.menu_bar(|| {
-            ui.menu("File", || {
+        ui.with_menu_bar(|| {
+            ui.menu_config("File").with(|| {
                 if ui.menu_item_config("Open...")
                     .shortcut("Ctrl+O")
                     .build()
                 {
                     menu_actions.open = self.check_modified();
                 }
-                ui.enabled(!self.data.papercraft().model().is_empty(), || {
+                ui.with_disabled(self.data.papercraft().model().is_empty(), || {
                     if ui.menu_item_config("Save")
                         .shortcut("Ctrl+S")
                         .build()
                     {
                         menu_actions.save = true;
                     }
-                    if ui.menu_item("Save as...") {
+                    if ui.menu_item_config("Save as...").build() {
                         menu_actions.save_as = true;
                     }
                 });
                 if self.modifiable() {
-                    if ui.menu_item("Import model...") {
+                    if ui.menu_item_config("Import model...").build() {
                         menu_actions.import_model = self.check_modified();
                     }
-                    if ui.menu_item("Update with new model...") {
+                    if ui.menu_item_config("Update with new model...").build() {
                         menu_actions.update_model = self.check_modified();
                     }
                 }
-                if ui.menu_item("Export OBJ...") {
+                if ui.menu_item_config("Export OBJ...").build() {
                     menu_actions.export_obj = true;
                 }
-                if ui.menu_item("Generate Printable...") {
+                if ui.menu_item_config("Generate Printable...").build() {
                     menu_actions.generate_printable = true;
                 }
                 ui.separator();
@@ -1262,7 +1049,7 @@ impl GlobalContext {
                     menu_actions.quit = self.check_modified();
                 }
             });
-            ui.menu("Edit", || {
+            ui.menu_config("Edit").with(|| {
                 if self.modifiable() {
                     if ui.menu_item_config("Undo")
                         .shortcut("Ctrl+Z")
@@ -1271,12 +1058,12 @@ impl GlobalContext {
                     {
                         menu_actions.undo = true;
                     }
-
                     ui.separator();
                 }
 
                 if ui.menu_item_config("Document properties")
-                    .build_with_ref(&mut self.options_opened.is_some())
+                    .selected(self.options_opened.is_some())
+                    .build()
                 {
                     self.options_opened = match self.options_opened {
                         Some(_) => None,
@@ -1289,81 +1076,92 @@ impl GlobalContext {
 
                     if ui.menu_item_config("Face/Island")
                         .shortcut("F5")
-                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Face))
+                        .selected(self.data.ui.mode == MouseMode::Face)
+                        .build()
                     {
                         self.set_mouse_mode(MouseMode::Face);
                     }
                     if ui.menu_item_config("Split/Join edge")
                         .shortcut("F6")
-                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Edge))
+                        .selected(self.data.ui.mode == MouseMode::Edge)
+                        .build()
                     {
                         self.set_mouse_mode(MouseMode::Edge);
                     }
                     if ui.menu_item_config("Flaps")
                         .shortcut("F7")
-                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Flap))
+                        .selected(self.data.ui.mode == MouseMode::Flap)
+                        .build()
                     {
                         self.set_mouse_mode(MouseMode::Flap);
                     }
-                }
 
-                ui.separator();
+                    ui.separator();
 
-                if self.modifiable() {
-                    if ui.menu_item("Repack pieces") {
+                    if ui.menu_item_config("Repack pieces").build() {
                         let undo = self.data.pack_islands();
                         self.data.push_undo_action(undo);
                         self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
                     }
                 }
             });
-            ui.menu("View", || {
+            ui.menu_config("View").with(|| {
                 if ui.menu_item_config("Textures")
-                    .enabled(self.data.papercraft().options().texture)
                     .shortcut("T")
-                    .build_with_ref(&mut self.data.ui.show_textures)
+                    .enabled(self.data.papercraft().options().texture)
+                    .selected(self.data.ui.show_textures)
+                    .build()
                 {
+                    self.data.ui.show_textures ^= true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
                 if ui.menu_item_config("3D lines")
                     .shortcut("D")
-                    .build_with_ref(&mut self.data.ui.show_3d_lines)
+                    .selected(self.data.ui.show_3d_lines)
+                    .build()
                 {
+                    self.data.ui.show_3d_lines ^= true;
                     self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 }
                 if ui.menu_item_config("Flaps")
                     .shortcut("B")
-                    .build_with_ref(&mut self.data.ui.show_flaps)
+                    .selected(self.data.ui.show_flaps)
+                    .build()
                 {
+                    self.data.ui.show_flaps ^= true;
                     self.add_rebuild(RebuildFlags::PAPER);
                 }
                 if ui.menu_item_config("X-ray selection")
                     .shortcut("X")
-                    .build_with_ref(&mut self.data.ui.xray_selection)
+                    .selected(self.data.ui.xray_selection)
+                    .build()
                 {
+                    self.data.ui.xray_selection ^= true;
                     self.add_rebuild(RebuildFlags::SELECTION);
                 }
                 if ui.menu_item_config("Highlight overlaps")
                     .shortcut("H")
-                    .build_with_ref(&mut self.data.ui.highlight_overlaps)
+                    .selected(self.data.ui.highlight_overlaps)
+                    .build()
                 {
+                    self.data.ui.highlight_overlaps ^= true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 }
-                if ui.menu_item("Reset views") {
+                if ui.menu_item_config("Reset views").build() {
                     menu_actions.reset_views = true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
             });
-            ui.menu("Help", || {
-                ui.menu_item_config("About...")
-                    .build_with_ref(&mut self.about_visible);
+            ui.menu_config("Help").with(|| {
+                if ui.menu_item_config("About...")
+                    .selected(self.about_visible)
+                    .build()
+                {
+                    self.about_visible ^= true;
+                }
             });
         });
-
-        let is_popup_open = unsafe {
-            imgui_sys::igIsPopupOpen(std::ptr::null(), imgui_sys::ImGuiPopupFlags_AnyPopup as i32)
-        };
-        if !is_popup_open {
+        if !ui.is_popup_open_ex(None, imgui::PopupFlags::AnyPopup) {
             if self.modifiable() {
                 if ui.is_key_pressed(imgui::Key::F5) {
                     self.set_mouse_mode(MouseMode::Face);
@@ -1374,17 +1172,18 @@ impl GlobalContext {
                 if ui.is_key_pressed(imgui::Key::F7) {
                     self.set_mouse_mode(MouseMode::Flap);
                 }
-                if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::Z) {
+                if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::Z) {
+
                     menu_actions.undo = true;
                 }
             }
-            if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::Q) {
+            if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::Q) {
                 menu_actions.quit = self.check_modified();
             }
-            if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::O) {
+            if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::O) {
                 menu_actions.open = self.check_modified();
             }
-            if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::S) {
+            if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::S) {
                 menu_actions.save = true;
             }
             if ui.is_key_pressed(imgui::Key::X) {
@@ -1408,91 +1207,79 @@ impl GlobalContext {
                 self.add_rebuild(RebuildFlags::PAPER);
             }
         }
-
         menu_actions
     }
 
-    fn build_scene(&mut self, ui: &imgui::Ui, width: f32) {
-        if let Some(_scene) = ui.child_window("scene")
-            .size([width, 0.0])
-            .border(true)
-            .begin()
-        {
-            let scale = Vector2::from(ui.io().display_framebuffer_scale);
-            let pos = scale_size(scale, Vector2::from(ui.cursor_screen_pos()));
-            let dsp_size = scale_size(scale, Vector2::from(ui.io().display_size));
+    fn build_scene(&mut self, ui: &Ui, width: f32) {
+        let w = ui.child_config("scene")
+            .size(vec2(width, 0.0))
+            .child_flags(imgui::ChildFlags::Border)
+            .with(|| {
+                let scale = ui.display_scale();
+                let pos = scale * ui.get_cursor_screen_pos();
+                let dsp_size = scale * ui.display_size();
 
-            canvas3d(ui, &mut self.scene_ui_status);
+                canvas3d(ui, &mut self.scene_ui_status);
 
-            let draws = ui.get_window_draw_list();
-            draws.add_callback({
-                let this = self.this.clone();
-                move || {
-                    let this = this.upgrade().unwrap();
-                    let this = this.borrow();
+                ui.window_draw_list().add_callback({
+                    move |this| {
+                        unsafe {
+                            // blit the FBO to the real FB
+                            let x = pos.x as i32;
+                            let y = (dsp_size.y - pos.y) as i32;
+                            let width = this.sz_scene.x as i32;
+                            let height = this.sz_scene.y as i32;
 
-                    unsafe {
-                        // blit the FBO to the real FB
-                        let x = pos.x as i32;
-                        let y = (dsp_size.y - pos.y) as i32;
-                        let width = this.sz_scene.x as i32;
-                        let height = this.sz_scene.y as i32;
-
-                        let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
-                        gl::BlitFramebuffer(
-                            0, 0, width, height,
-                            x, y - height, x + width, y,
-                            gl::COLOR_BUFFER_BIT, gl::NEAREST
-                        );
+                            let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
+                            this.gl.blit_framebuffer(
+                                0, 0, width, height,
+                                x, y - height, x + width, y,
+                                glow::COLOR_BUFFER_BIT, glow::NEAREST
+                                );
+                        }
                     }
-                }
-            }).build();
-        } else {
+                });
+            });
+        if w.is_none() {
             self.scene_ui_status = Canvas3dStatus::default();
         }
     }
 
-    fn build_paper(&mut self, ui: &imgui::Ui) {
-        if let Some(_paper) = ui.child_window("paper")
-            .size([-1.0, -1.0])
-            .border(true)
-            .begin()
-        {
-            let scale = Vector2::from(ui.io().display_framebuffer_scale);
-            let pos = scale_size(scale, Vector2::from(ui.cursor_screen_pos()));
-            let dsp_size = scale_size(scale, Vector2::from(ui.io().display_size));
+    fn build_paper(&mut self, ui: &Ui) {
+        let r = ui.child_config("paper")
+            .child_flags(imgui::ChildFlags::Border)
+            .with(|| {
+                let scale = ui.display_scale();
+                let pos = scale * ui.get_cursor_screen_pos();
+                let dsp_size = scale * ui.display_size();
 
-            canvas3d(ui, &mut self.paper_ui_status);
+                canvas3d(ui, &mut self.paper_ui_status);
 
-            let draws = ui.get_window_draw_list();
-            draws.add_callback({
-                let this = self.this.clone();
-                move || {
-                    let this = this.upgrade().unwrap();
-                    let this = this.borrow();
+                ui.window_draw_list().add_callback({
+                    move |this| {
+                        unsafe {
+                            // blit the FBO to the real FB
+                            let x = pos.x as i32;
+                            let y = (dsp_size.y - pos.y) as i32;
+                            let width = this.sz_paper.x as i32;
+                            let height = this.sz_paper.y as i32;
 
-                    unsafe {
-                        // blit the FBO to the real FB
-                        let x = pos.x as i32;
-                        let y = (dsp_size.y - pos.y) as i32;
-                        let width = this.sz_paper.x as i32;
-                        let height = this.sz_paper.y as i32;
-
-                        let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
-                        gl::BlitFramebuffer(
-                            0, 0, width, height,
-                            x, y - height, x + width, y,
-                            gl::COLOR_BUFFER_BIT, gl::NEAREST
-                        );
+                            let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
+                            this.gl.blit_framebuffer(
+                                0, 0, width, height,
+                                x, y - height, x + width, y,
+                                glow::COLOR_BUFFER_BIT, glow::NEAREST
+                                );
+                        }
                     }
-                }
-            }).build();
-        } else {
+                });
+            });
+        if r.is_none() {
             self.paper_ui_status = Canvas3dStatus::default();
         }
     }
 
-    fn open_confirmation_dialog(&mut self, ui: &imgui::Ui, title: &str, message: &str, f: impl Fn(&mut MenuActions) + 'static) {
+    fn open_confirmation_dialog(&mut self, ui: &Ui, title: &str, message: &str, f: impl Fn(&mut MenuActions) + 'static) {
         self.confirmable_action = Some(ConfirmableAction {
             title: title.to_owned(),
             message: message.to_owned(),
@@ -1501,9 +1288,9 @@ impl GlobalContext {
         ui.open_popup("###Confirm");
     }
 
-    fn run_menu_actions(&mut self, ui: &imgui::Ui, menu_actions: &MenuActions) {
+    fn run_menu_actions(&mut self, ui: &Ui, menu_actions: &MenuActions) {
         if menu_actions.reset_views {
-            self.data.reset_views(self.sz_scene, self.sz_paper);
+            self.data.reset_views(to_cgv2(self.sz_scene), to_cgv2(self.sz_paper));
         }
         if menu_actions.undo {
             match self.data.undo_action() {
@@ -1644,78 +1431,69 @@ impl GlobalContext {
             ui.open_popup("###file_dialog_modal");
         }
         if let Some((mut fd, title, action)) = self.file_dialog.take() {
-            let dsp_size = Vector2::from(ui.io().display_size);
-            let min_size: [f32; 2] = (dsp_size * 0.75).into();
-            let max_size: [f32; 2] = dsp_size.into();
-            unsafe {
-                imgui_sys::igSetNextWindowSizeConstraints(
-                    min_size.into(),
-                    max_size.into(),
-                    None,
-                    std::ptr::null_mut(),
-                );
-            };
-            if let Some(_pop) = ui.modal_popup_config(&format!("{title}###file_dialog_modal"))
-                .opened(&mut true)
-                .begin_popup()
-            {
-                let mut finish_file_dialog = false;
-                let size = ui.content_region_avail();
-                if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
-                    if fd2.ok() {
-                        if let Some(file) = fd2.file_path_name() {
-                            let action = if action == FileAction::OpenCraft && fd2.readonly() {
-                                FileAction::OpenCraftReadOnly
-                            } else {
-                                action
-                            };
-                            self.file_action = Some((action, file.into()));
-                            open_wait = true;
-                            if let Some(path) = fd2.current_path() {
-                                self.last_path = path;
+            let dsp_size = ui.display_size();
+            let min_size = 0.75 * dsp_size;
+            let max_size = dsp_size;
+            ui.set_next_window_size_constraints(min_size, max_size);
+            ui.popup_modal_config(format!("{title}###file_dialog_modal"))
+                .close_button(true)
+                .with(|| {
+                    let mut finish_file_dialog = false;
+                    let size = ui.get_content_region_avail();
+                    if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
+                        if fd2.ok() {
+                            if let Some(file) = fd2.file_path_name(imgui_filedialog::ResultMode::AddIfNoFileExt) {
+                                let action = if action == FileAction::OpenCraft && fd2.readonly() {
+                                    FileAction::OpenCraftReadOnly
+                                } else {
+                                    action
+                                };
+                                self.file_action = Some((action, file.into()));
+                                open_wait = true;
+                                if let Some(path) = fd2.current_path() {
+                                    self.last_path = path;
+                                }
                             }
                         }
+                        finish_file_dialog = true;
                     }
-                    finish_file_dialog = true;
-                }
-                if ui.is_key_pressed(imgui::Key::Escape) {
-                    finish_file_dialog = true;
-                }
-                if finish_file_dialog {
-                    ui.close_current_popup();
-                } else {
-                    self.file_dialog = Some((fd, title, action));
-                }
-            }
+                    if ui.is_key_pressed(imgui::Key::Escape) {
+                        finish_file_dialog = true;
+                    }
+                    if finish_file_dialog {
+                        ui.close_current_popup();
+                    } else {
+                        self.file_dialog = Some((fd, title, action));
+                    }
+                });
         }
-
         if open_wait {
             self.popup_time_start = Instant::now();
             ui.open_popup("###Wait");
         }
     }
 
-    fn run_mouse_actions(&mut self, ui: &imgui::Ui) {
+    fn run_mouse_actions(&mut self, ui: &Ui) {
 
-        let shift_pressed = ui.io().key_shift;
-        let control_pressed = ui.io().key_ctrl;
-        let alt_pressed = ui.io().key_alt;
+        let shift_down = ui.is_key_down(imgui::Key::ModShift);
+        let control_down = ui.is_key_down(imgui::Key::ModCtrl);
+        let alt_down = ui.is_key_down(imgui::Key::ModAlt);
 
         let mouse_pos = self.scene_ui_status.mouse_pos;
         if self.scene_ui_status.action != Canvas3dAction::None {
             'zoom: {
-                let dz = match ui.io().mouse_wheel {
+                let dz = match ui.io().MouseWheel {
                     x if x < 0.0 => 1.0 / 1.1,
                     x if x > 0.0 => 1.1,
                     _ => break 'zoom,
                 };
-                let flags = self.data.scene_zoom(self.sz_scene, mouse_pos, dz);
+                let flags = self.data.scene_zoom(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), dz);
                 self.add_rebuild(flags);
             }
         }
         let flags = match &self.scene_ui_status.action {
             Canvas3dAction::Hovering => {
-                self.data.scene_hover_event(self.sz_scene, mouse_pos, alt_pressed)
+                self.data.scene_hover_event(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), alt_down)
             }
             Canvas3dAction::Pressed(MouseButton::Left) |
             Canvas3dAction::Dragging(MouseButton::Left) => {
@@ -1729,7 +1507,7 @@ impl GlobalContext {
                 self.data.scene_button1_dblclick_event(self.sz_scene, mouse_pos)
             }
             Canvas3dAction::Released(MouseButton::Left) => {
-                self.data.scene_button1_release_event(self.sz_scene, mouse_pos, shift_pressed, control_pressed)
+                self.data.scene_button1_release_event(self.sz_scene, mouse_pos, shift_down, control_down)
             }
             _ => RebuildFlags::empty(),
         };
@@ -1738,7 +1516,7 @@ impl GlobalContext {
         let mouse_pos = self.paper_ui_status.mouse_pos;
         if self.paper_ui_status.action != Canvas3dAction::None {
             'zoom: {
-                let dz = match ui.io().mouse_wheel {
+                let dz = match ui.io().MouseWheel {
                     x if x < 0.0 => 1.0 / 1.1,
                     x if x > 0.0 => 1.1,
                     _ => break 'zoom,
@@ -1749,21 +1527,21 @@ impl GlobalContext {
         }
         let flags = match &self.paper_ui_status.action {
             Canvas3dAction::Hovering => {
-                self.data.paper_hover_event(self.sz_paper, mouse_pos, alt_pressed)
+                self.data.paper_hover_event(self.sz_paper, mouse_pos, alt_down)
             }
             Canvas3dAction::Clicked(MouseButton::Left) |
             Canvas3dAction::DoubleClicked(MouseButton::Left) => {
-                self.data.paper_button1_click_event(self.sz_paper, mouse_pos, shift_pressed, control_pressed, self.modifiable())
+                self.data.paper_button1_click_event(self.sz_paper, mouse_pos, shift_down, control_down, self.modifiable())
             }
             Canvas3dAction::Pressed(MouseButton::Right) |
             Canvas3dAction::Dragging(MouseButton::Right) => {
                 self.data.paper_button2_event(self.sz_paper, mouse_pos)
             }
             Canvas3dAction::Pressed(MouseButton::Left) => {
-                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_pressed)
+                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
             }
             Canvas3dAction::Dragging(MouseButton::Left) => {
-                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_pressed)
+                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
             }
             _ => RebuildFlags::empty(),
         };
@@ -1785,46 +1563,46 @@ impl GlobalContext {
             texturize: 0,
         };
         unsafe {
-            gl::ClearColor(0.2, 0.2, 0.4, 1.0);
-            gl::ClearDepth(1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-            gl::Enable(gl::BLEND);
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LEQUAL);
-            gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+            self.gl.clear_color(0.2, 0.2, 0.4, 1.0);
+            self.gl.clear_depth_f32(1.0);
+            self.gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            self.gl.enable(glow::BLEND);
+            self.gl.enable(glow::DEPTH_TEST);
+            self.gl.depth_func(glow::LEQUAL);
+            self.gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
 
-            gl::BindVertexArray(gl_fixs.vao.id());
+            self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
             if let (Some(tex), true) = (&self.data.gl_objs().textures, self.data.ui.show_textures) {
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
                 u.texturize = 1;
             }
 
-            gl::PolygonOffset(1.0, 1.0);
-            gl::Enable(gl::POLYGON_OFFSET_FILL);
+            self.gl.polygon_offset(1.0, 1.0);
+            self.gl.enable(glow::POLYGON_OFFSET_FILL);
 
-            gl_fixs.prg_scene_solid.draw(&u, (&self.data.gl_objs().vertices, &self.data.gl_objs().vertices_sel), gl::TRIANGLES);
+            gl_fixs.prg_scene_solid.draw(&u, (&self.data.gl_objs().vertices, &self.data.gl_objs().vertices_sel), glow::TRIANGLES);
 
             if self.data.ui.show_3d_lines {
                 //Joined edges
-                gl::LineWidth(1.0);
-                gl::Disable(gl::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_joint, gl::LINES);
+                self.gl.line_width(1.0);
+                self.gl.disable(glow::LINE_SMOOTH);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_joint, glow::LINES);
 
                 //Cut edges
-                gl::LineWidth(3.0);
-                gl::Enable(gl::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_cut, gl::LINES);
+                self.gl.line_width(3.0);
+                self.gl.enable(glow::LINE_SMOOTH);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_cut, glow::LINES);
             }
 
             //Selected edge
             if self.data.has_selected_edge() {
-                gl::LineWidth(5.0);
-                gl::Enable(gl::LINE_SMOOTH);
+                self.gl.line_width(5.0);
+                self.gl.enable(glow::LINE_SMOOTH);
                 if self.data.ui.xray_selection {
                     u.line_top = 1;
                 }
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_sel, gl::LINES);
+                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_sel, glow::LINES);
             }
         }
     }
@@ -1841,102 +1619,102 @@ impl GlobalContext {
         };
 
         unsafe {
-            gl::ClearColor(0.7, 0.7, 0.7, 1.0);
-            gl::ClearStencil(1);
-            gl::StencilMask(0xff);
-            gl::StencilFunc(gl::ALWAYS, 0, 0);
-            gl::Disable(gl::STENCIL_TEST);
+            self.gl.clear_color(0.7, 0.7, 0.7, 1.0);
+            self.gl.clear_stencil(1);
+            self.gl.stencil_mask(0xff);
+            self.gl.stencil_func(glow::ALWAYS, 0, 0);
+            self.gl.disable(glow::STENCIL_TEST);
 
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
+            self.gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
-            gl::Enable(gl::BLEND);
-            gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+            self.gl.enable(glow::BLEND);
+            self.gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
 
-            gl::BindVertexArray(gl_fixs.vao.id());
+            self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
             if let (Some(tex), true) = (&self.data.gl_objs().textures, self.data.ui.show_textures) {
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
                 u.texturize = 1;
             }
 
             // The paper
-            gl::Enable(gl::STENCIL_TEST);
-            gl::StencilOp(gl::KEEP, gl::KEEP, gl::ZERO);
+            self.gl.enable(glow::STENCIL_TEST);
+            self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::ZERO);
 
-            gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_page, gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_page, glow::TRIANGLES);
 
-            gl::Disable(gl::STENCIL_TEST);
+            self.gl.disable(glow::STENCIL_TEST);
 
             u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
 
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_margin, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_margin, glow::LINES);
 
             u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
 
             // Line Flaps
             if self.data.ui.show_flaps {
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, glow::LINES);
             }
 
-            gl::Enable(gl::STENCIL_TEST);
-            gl::StencilOp(gl::KEEP, gl::KEEP, gl::INCR);
+            self.gl.enable(glow::STENCIL_TEST);
+            self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::INCR);
 
 
             // Solid Flaps
             if self.data.ui.show_flaps {
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, glow::TRIANGLES);
             }
-            gl::Disable(gl::STENCIL_TEST);
+            self.gl.disable(glow::STENCIL_TEST);
 
             // Borders
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, glow::LINES);
 
-            gl::Enable(gl::STENCIL_TEST);
+            self.gl.enable(glow::STENCIL_TEST);
 
             // Textured faces
-            gl_fixs.prg_paper_solid.draw(&u, (&self.data.gl_objs().paper_vertices, &self.data.gl_objs().paper_vertices_sel) , gl::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(&u, (&self.data.gl_objs().paper_vertices, &self.data.gl_objs().paper_vertices_sel) , glow::TRIANGLES);
 
-            gl::Disable(gl::STENCIL_TEST);
+            self.gl.disable(glow::STENCIL_TEST);
 
             // Shadow Flaps
             u.texturize = 0;
             if self.data.ui.show_flaps {
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, glow::TRIANGLES);
                 u.notex_color = Rgba::new(0.75, 0.75, 0.75, 1.0);
             }
 
             // Creases
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, glow::LINES);
 
             // Selected edge
             if self.data.has_selected_edge() {
                 u.line_color = color_edge(self.data.ui.mode);
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_sel, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_sel, glow::LINES);
             }
 
             // Draw the highlight overlap if "1 < STENCIL"
-            gl::Enable(gl::STENCIL_TEST);
-            gl::StencilOp(gl::KEEP, gl::KEEP, gl::KEEP);
+            self.gl.enable(glow::STENCIL_TEST);
+            self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
 
             if self.data.ui.highlight_overlaps {
                 // Draw the overlapped highlight if "1 < STENCIL"
                 let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.9) };
-                gl::StencilFunc(gl::LESS, 1, 0xff);
-                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
+                self.gl.stencil_func(glow::LESS, 1, 0xff);
+                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
 
                 // Draw the highlight dim if "1 >= STENCIL"
                 let uq = UniformQuad { color: Rgba::new(1.0, 1.0, 1.0, 0.9) };
-                gl::StencilFunc(gl::GEQUAL, 1, 0xff);
-                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
+                self.gl.stencil_func(glow::GEQUAL, 1, 0xff);
+                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
             } else {
                 // If highlight is disabled wraw the overlaps anyway, but dimmer, or else it would be invisible
                 let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.5) };
-                gl::StencilFunc(gl::LESS, 1, 0xff);
-                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), gl::TRIANGLES);
+                self.gl.stencil_func(glow::LESS, 1, 0xff);
+                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
             }
 
-            gl::Disable(gl::STENCIL_TEST);
+            self.gl.disable(glow::STENCIL_TEST);
         }
     }
     fn add_rebuild(&mut self, flags: RebuildFlags) {
@@ -1966,6 +1744,15 @@ impl GlobalContext {
                     format!("{unsaved} - {app_name}")
                 }
             }
+        }
+    }
+    fn updated_title(&mut self) -> Option<&str> {
+        let new_title = self.title(true);
+        if new_title == self.title {
+            None
+        } else {
+            self.title = new_title;
+            Some(&self.title)
         }
     }
     fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
@@ -2013,7 +1800,7 @@ impl GlobalContext {
         let fs = std::io::BufReader::new(fs);
         let papercraft = Papercraft::load(fs)
             .with_context(|| format!("Error loading file {}", file_name.display()))?;
-        self.data = PapercraftContext::from_papercraft(papercraft);
+        self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
         self.rebuild = RebuildFlags::all();
         Ok(())
@@ -2028,7 +1815,7 @@ impl GlobalContext {
     }
     fn import_model(&mut self, file_name: &Path) -> anyhow::Result<bool> {
         let (papercraft, is_native) = import_model_file(file_name)?;
-        self.data = PapercraftContext::from_papercraft(papercraft);
+        self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
         self.rebuild = RebuildFlags::all();
         Ok(is_native)
@@ -2039,7 +1826,7 @@ impl GlobalContext {
 
         // Preserve the main user visible settings
         let prev_ui = self.data.ui.clone();
-        self.data = PapercraftContext::from_papercraft(new_papercraft);
+        self.data = PapercraftContext::from_papercraft(new_papercraft, &self.gl)?;
         self.rebuild = RebuildFlags::all();
         self.data.ui = prev_ui;
         self.data.modified = true;
@@ -2052,7 +1839,6 @@ impl GlobalContext {
     }
 
     fn generate_printable(&self, file_name: &Path) -> anyhow::Result<()> {
-        dbg!(file_name);
         let res = match file_name.extension().map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase()).as_deref() {
             Some("pdf") => self.generate_pdf(file_name),
             Some("svg") => self.generate_svg(file_name),
@@ -2279,41 +2065,41 @@ impl GlobalContext {
         let stride = pixbuf.stride();
 
         unsafe {
-            gl::PixelStorei(gl::PACK_ROW_LENGTH, stride / 4);
+            self.gl.pixel_store_i32(glow::PACK_ROW_LENGTH, stride / 4);
 
-            let fbo = glr::Framebuffer::generate();
-            let rbo = glr::Renderbuffer::generate();
+            let fbo = glr::Framebuffer::generate(&self.gl)?;
+            let rbo = glr::Renderbuffer::generate(&self.gl)?;
 
             let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
             let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
             let rb_binder = BinderRenderbuffer::bind(&rbo);
-            gl::FramebufferRenderbuffer(draw_fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo.id());
+            self.gl.framebuffer_renderbuffer(draw_fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo.id()));
 
             let rbo_fbo_no_aa = 'check_aa: {
                 // multisample buffers cannot be read directly, it has to be copied to a regular one.
-                for samples in glr::available_multisamples(rb_binder.target(), gl::RGBA8) {
+                for samples in MULTISAMPLES {
                     // check if these many samples are usable
-                    gl::RenderbufferStorageMultisample(rb_binder.target(), samples, gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
-                    if gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+                    self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                    if self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
                         continue;
                     }
 
                     // If using AA create another FBO/RBO to blit the antialiased image before reading
-                    let rbo2 = glr::Renderbuffer::generate();
+                    let rbo2 = glr::Renderbuffer::generate(&self.gl)?;
                     rb_binder.rebind(&rbo2);
-                    gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                    self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, page_size_pixels.x, page_size_pixels.y);
 
-                    let fbo2 = glr::Framebuffer::generate();
+                    let fbo2 = glr::Framebuffer::generate(&self.gl)?;
                     read_fb_binder.rebind(&fbo2);
-                    gl::FramebufferRenderbuffer(read_fb_binder.target(), gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, rbo2.id());
+                    self.gl.framebuffer_renderbuffer(read_fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo2.id()));
 
                     break 'check_aa Some((rbo2, fbo2));
                 }
                 println!("No multisample!");
-                gl::RenderbufferStorage(rb_binder.target(), gl::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, page_size_pixels.x, page_size_pixels.y);
                 None
             };
-            let _vp = glr::PushViewport::push(0, 0, page_size_pixels.x, page_size_pixels.y);
+            let _vp = glr::PushViewport::push(&self.gl, 0, 0, page_size_pixels.x, page_size_pixels.y);
 
             // Cairo surfaces are alpha-premultiplied:
             // * The framebuffer will be premultiplied, but the input fragments are not.
@@ -2321,18 +2107,18 @@ impl GlobalContext {
             // * In the screen DST_ALPHA does not matter, because the framebuffer is not
             //   transparent, but here we have to set it to the proper value: use separate blend
             //   functions or we'll get the alpha squared.
-            gl::ClearColor(0.0, 0.0, 0.0, 0.0);
-            gl::Enable(gl::BLEND);
-            gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+            self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            self.gl.enable(glow::BLEND);
+            self.gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
 
             let gl_fixs = &self.gl_fixs;
 
             let mut texturize = 0;
 
-            gl::BindVertexArray(gl_fixs.vao.id());
+            self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
             if let (Some(tex), true) = (&self.data.gl_objs().textures, options.texture) {
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(gl::TEXTURE_2D_ARRAY, tex.id());
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
                 texturize = 1;
             }
 
@@ -2353,7 +2139,7 @@ impl GlobalContext {
 
             for page in 0..page_count {
                 // Start render
-                gl::Clear(gl::COLOR_BUFFER_BIT);
+                self.gl.clear(glow::COLOR_BUFFER_BIT);
                 let page_pos = options.page_position(page);
                 let mt = Matrix3::from_translation(-page_pos);
                 let mut u = Uniforms2D {
@@ -2366,48 +2152,48 @@ impl GlobalContext {
                 };
                 // Line Flaps
                 if flap_style != FlapStyle::None {
-                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, gl::LINES);
+                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, glow::LINES);
                 }
 
                 // Solid Flaps
                 if flap_style != FlapStyle::None && flap_style != FlapStyle::White {
-                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, gl::TRIANGLES);
+                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, glow::TRIANGLES);
                 }
 
                 // Borders
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, glow::LINES);
 
                 // Textured faces
-                gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices, gl::TRIANGLES);
+                self.gl.vertex_attrib_4_f32(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices, glow::TRIANGLES);
 
                 // Shadow Flaps
                 u.texturize = 0;
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, glow::TRIANGLES);
                 u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
 
                 // Creases
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, glow::LINES);
                 // End render
 
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
                     read_fb_binder.rebind(&fbo);
                     draw_fb_binder.rebind(fbo_no_aa);
-                    gl::BlitFramebuffer(
+                    self.gl.blit_framebuffer(
                         0, 0, page_size_pixels.x, page_size_pixels.y,
                         0, 0, page_size_pixels.x, page_size_pixels.y,
-                        gl::COLOR_BUFFER_BIT, gl::NEAREST
+                        glow::COLOR_BUFFER_BIT, glow::NEAREST
                     );
                     read_fb_binder.rebind(fbo_no_aa);
                     draw_fb_binder.rebind(&fbo);
                 }
 
-                gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
+                self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
 
                 {
                     let mut data = pixbuf.data()?;
-                    gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::BGRA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
+                    self.gl.read_pixels(0, 0, page_size_pixels.x, page_size_pixels.y, glow::BGRA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(data.as_mut()));
                 }
 
                 let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
@@ -2500,7 +2286,7 @@ impl GlobalContext {
 
                 do_page_fn(page, &pixbuf, &texts, &lines_by_island)?;
             }
-            gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
+            self.gl.pixel_store_i32(glow::PACK_ROW_LENGTH, 0);
         }
         Ok(())
     }
@@ -2513,6 +2299,8 @@ impl GlobalContext {
         eprintln!("Papercraft panicked! Saving backup at \"{}\"", dir.display());
         if let Err(e) = self.save_as_craft(&dir) {
             eprintln!("backup failed with {e:?}");
+        } else {
+            eprintln!("backup complete");
         }
     }
 }
@@ -2543,15 +2331,15 @@ enum Canvas3dAction {
     DoubleClicked(MouseButton),
 }
 
-fn canvas3d(ui: &imgui::Ui, st: &mut Canvas3dStatus) {
-    ui.invisible_button(
-        "canvas3d",
-        ui.content_region_avail(),
-    );
+fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
+    let sz = ui.get_content_region_avail();
+    ui.invisible_button_config("canvas3d")
+        .size(sz)
+        .build();
     let hovered = ui.is_item_hovered();
-    let pos = Vector2::from(ui.item_rect_min());
-    let scale = Vector2::from(ui.io().display_framebuffer_scale);
-    let mouse_pos = scale_size(scale, Vector2::from(ui.io().mouse_pos) - pos);
+    let pos = ui.get_item_rect_min();
+    let scale = ui.display_scale();
+    let mouse_pos = scale * (ui.get_mouse_pos() - pos);
 
     let action = match &st.action {
         Canvas3dAction::Dragging(bt) => {
@@ -2620,80 +2408,51 @@ fn premultiply_image(img: DynamicImage) -> image::RgbaImage {
     img
 }
 
-fn load_texture_from_memory(data: &[u8], premultiply: bool) -> Result<(glow::NativeTexture, Vector2)> {
-    let data = std::io::Cursor::new(data);
-    let image = image::io::Reader::with_format(data, image::ImageFormat::Png)
-        .decode()?;
+fn load_image_from_memory(data: &[u8], premultiply: bool) -> Result<image::RgbaImage> {
+    let image = image::load_from_memory_with_format(data, image::ImageFormat::Png)?;
     let image = if premultiply {
         premultiply_image(image)
     } else {
         image.into_rgba8()
     };
-    unsafe {
-        let tex = glr::Texture::generate();
-        gl::BindTexture(gl::TEXTURE_2D, tex.id());
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::SRGB8_ALPHA8 as i32,
-            image.width() as i32, image.height() as i32, 0,
-            gl::RGBA, gl::UNSIGNED_BYTE, image.as_ptr() as _);
-        gl::GenerateMipmap(gl::TEXTURE_2D);
-        let ntex = glow::NativeTexture(NonZeroU32::new(tex.into_id()).unwrap());
-        gl::BindTexture(gl::TEXTURE_2D, 0);
-        Ok((ntex, Vector2::new(image.width() as f32, image.height() as f32)))
-    }
+    Ok(image)
 }
 
-fn load_icon_from_memory(data: &[u8]) -> Result<winit::window::Icon> {
-    let data = std::io::Cursor::new(data);
-    let image = image::io::Reader::with_format(data, image::ImageFormat::Png)
-        .decode()?;
-    let image = image.into_rgba8();
-    let w = image.width();
-    let h = image.height();
-    let icon = winit::window::Icon::from_rgba(image.into_vec(), w, h)?;
-    Ok(icon)
-}
-
-fn scale_size(s: Vector2, v: Vector2) -> Vector2 {
-    Vector2::new(s.x * v.x, s.y * v.y)
-}
-
-fn advance_cursor(ui: &imgui::Ui, x: f32, y: f32) {
-    let f = ui.current_font_size();
+fn advance_cursor(ui: &Ui, x: f32, y: f32) {
+    let f = ui.get_font_size();
     advance_cursor_pixels(ui, f * x, f * y);
 }
-fn advance_cursor_pixels(ui: &imgui::Ui, x: f32, y: f32) {
-    let mut pos: [f32; 2] = ui.cursor_screen_pos();
-    pos[0] += x;
-    pos[1] += y;
+fn advance_cursor_pixels(ui: &Ui, x: f32, y: f32) {
+    let mut pos = ui.get_cursor_screen_pos();
+    pos.x += x;
+    pos.y += y;
     ui.set_cursor_screen_pos(pos);
 }
-fn center_text(ui: &imgui::Ui, s: &str, w: f32) {
+fn center_text(ui: &Ui, s: &str, w: f32) {
     let ss = ui.calc_text_size(s);
-    let mut pos: [f32; 2] = ui.cursor_screen_pos();
-    pos[0] += (w - ss[0]) / 2.0;
+    let mut pos = ui.get_cursor_screen_pos();
+    pos.x += (w - ss.x) / 2.0;
     ui.set_cursor_screen_pos(pos);
     ui.text(s);
 }
-fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
+
+fn center_url(ui: &Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     let ss = ui.calc_text_size(s);
-    let mut pos: [f32; 2] = ui.cursor_screen_pos();
+    let mut pos = ui.get_cursor_screen_pos();
     let pos0 = pos;
-    pos[0] += (w - ss[0]) / 2.0;
+    pos.x += (w - ss.x) / 2.0;
     ui.set_cursor_screen_pos(pos);
-    let color = ui.style_color(imgui::StyleColor::ButtonActive);
-    let _s = ui.push_style_color(imgui::StyleColor::Text, color);
-    ui.text(s);
-    ui.set_cursor_screen_pos(pos0);
-    if ui.invisible_button(id, ss) {
-        let _ = opener::open_browser(cmd.unwrap_or(s));
-    }
-    if ui.is_item_hovered() {
-        ui.set_mouse_cursor(Some(imgui::MouseCursor::Hand));
-    }
+    let color = ui.style().color(imgui::ColorId::ButtonActive);
+    ui.with_push((imgui::ColorId::Text, color), || {
+        ui.text(s);
+        ui.set_cursor_screen_pos(pos0);
+        if ui.invisible_button_config(id).size(ss).build() {
+            let _ = opener::open_browser(cmd.unwrap_or(s));
+        }
+        if ui.is_item_hovered() {
+            ui.set_mouse_cursor(imgui::MouseCursor::Hand);
+        }
+    });
 }
 
 pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
@@ -2786,39 +2545,15 @@ impl PrintableText {
     }
 }
 
-struct MyClipboard {
-    ctx: Option<clipboard::ClipboardContext>,
-}
-
-impl MyClipboard {
-    fn new() -> MyClipboard {
-        MyClipboard {
-            ctx: clipboard::ClipboardProvider::new().ok(),
-        }
-    }
-}
-
-impl ClipboardBackend for MyClipboard {
-    fn get(&mut self) -> Option<String> {
-        self.ctx.as_mut().and_then(|ctx| ctx.get_contents().ok())
-    }
-
-    fn set(&mut self, value: &str) {
-        if let Some(ctx) = self.ctx.as_mut() {
-            let _ = ctx.set_contents(value.to_owned());
-        }
-    }
-}
-
-
 #[cfg(target_os="linux")]
 #[inline(never)]
-fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>, ptr: *mut GlobalContext) {
+unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>, ctx: &Rc<RefCell<GlobalContext>>) {
     // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
     // the user's data, what's the worst that could happen?
-    struct PtrWrapper(*mut GlobalContext);
-    unsafe impl Send for PtrWrapper {}
-    let ctx = PtrWrapper(ptr);
+    // The `ctx` is not Send because of the Rc, the RefCell and the GlContext inside, but we won't touch any of these...
+    struct SendWrapper<T>(T);
+    unsafe impl<T> Send for SendWrapper<T> {}
+    let ctx = SendWrapper(Rc::clone(ctx));
     use signal_hook::consts::signal::*;
     use signal_hook::iterator::Signals;
     std::thread::spawn(move || {
@@ -2831,12 +2566,105 @@ fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>, ptr: 
             eprintln!("Double signal, aborting!");
             std::process::abort();
         });
+        // the RefCell is probably borrowed, use it anyway :-/
         let ctx = ctx;
-        let ctx = unsafe { &*ctx.0 };
+        let ctx = unsafe { &*ctx.0.as_ptr() };
         ctx.save_backup_on_panic();
         std::process::abort();
     });
 }
 
 #[cfg(not(target_os="linux"))]
-fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<()>, _ptr: *mut GlobalContext) { }
+unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<()>, _ctx: &Rc<RefCell<GlobalContext>>) { }
+
+impl imgui::UiBuilder for GlobalContext {
+    fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {
+        self.font_default = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 18.0));
+        self.font_big = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 28.0));
+        self.font_small = atlas.add_font_collection([
+            imgui::FontInfo::new(&*KARLA_TTF, 12.0),
+            imgui::FontInfo::new(&*COPYRIGHT_TTF, 12.0),
+        ]);
+
+        self.logo_rect = atlas.add_custom_rect_regular(
+            [LOGO_IMG.width(), LOGO_IMG.height()],
+            |_, img| { img.copy_from(&*LOGO_IMG, 0, 0).unwrap(); }
+        );
+
+        // Each image is 48x48
+        const W: u32 = 48;
+        const H: u32 = 48;
+        self.icons_rect[0] = atlas.add_custom_rect_regular(
+            [W, H],
+            |_, img| { img.copy_from(&*ICONS_IMG.view(0, 0, W, H), 0, 0).unwrap(); }
+        );
+        self.icons_rect[1] = atlas.add_custom_rect_regular(
+            [W, H],
+            |_, img| { img.copy_from(&*ICONS_IMG.view(W, 0, W, H), 0, 0).unwrap(); }
+        );
+        self.icons_rect[2] = atlas.add_custom_rect_regular(
+            [W, H],
+            |_, img| { img.copy_from(&*ICONS_IMG.view(0, H, W, H), 0, 0).unwrap(); }
+        );
+    }
+    fn do_ui(&mut self, ui: &Ui) {
+        //ui.show_demo_window(None);
+        ui.set_next_window_pos(vec2(0.0, 0.0), imgui::Cond::Always, vec2(0.0, 0.0));
+        let vw = ui.get_main_viewport();
+        let sz = vw.size(); //&ui.get_content_region_avail();
+        ui.set_next_window_size(sz, imgui::Cond::Always);
+        ui.window_config("Papercraft")
+            .flags(
+                imgui::WindowFlags::NoDecoration |
+                imgui::WindowFlags::NoResize |
+                imgui::WindowFlags::MenuBar |
+                imgui::WindowFlags::NoBringToFrontOnFocus |
+                imgui::WindowFlags::NoNav
+            )
+            .push_for_begin((
+                (imgui::StyleVar::WindowPadding, imgui::StyleValue::Vec2([0.0, 0.0].into())),
+                (imgui::StyleVar::WindowRounding, imgui::StyleValue::F32(0.0)),
+            ))
+            .with(|| {
+                if let Some(cmd_file_action) = self.cmd_file_action.take() {
+                    self.popup_time_start = Instant::now();
+                    self.file_action = Some(cmd_file_action);
+                    ui.open_popup("###Wait");
+                }
+
+                let menu_actions = self.build_ui(ui);
+                self.run_menu_actions(ui, &menu_actions);
+                self.run_mouse_actions(ui);
+
+                if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER) {
+                    self.data.pre_render(self.rebuild);
+                    let vp = glr::PushViewport::new(&self.gl);
+                    if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
+                        let _draw_fb_binder = BinderDrawFramebuffer::bind(&self.gl_fixs.fbo_scene);
+                        vp.viewport(0, 0, self.sz_scene.x as i32, self.sz_scene.y as i32);
+                        self.render_scene();
+                    }
+                    if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
+                        let _draw_fb_binder = BinderDrawFramebuffer::bind(&self.gl_fixs.fbo_paper);
+                        vp.viewport(0, 0, self.sz_paper.x as i32, self.sz_paper.y as i32);
+                        self.render_paper();
+                    }
+                    self.rebuild = RebuildFlags::empty();
+                }
+
+                match (menu_actions.quit, self.quit_requested) {
+                    (BoolWithConfirm::Confirmed, _) | (_, BoolWithConfirm::Confirmed) => self.quit_requested = BoolWithConfirm::Confirmed,
+                    (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested)=> {
+                        self.quit_requested = BoolWithConfirm::None;
+                        self.open_confirmation_dialog(ui,
+                            "Quit?",
+                            "The model has not been save, continue anyway?",
+                            |a| a.quit = BoolWithConfirm::Confirmed
+                        );
+                    }
+                    _ => (),
+                }
+            });
+    }
+}
+

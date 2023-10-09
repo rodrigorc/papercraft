@@ -18,14 +18,12 @@ bindgen = "0.69"
 
 [dependencies]
 cairo-rs = { version = "0.18", features = ["pdf", "png", "v1_16"] }
-gl_loader = "0.1"
-cgmath = "0.18"
+cgmath = { version = "0.18", features = ["mint"] }
 anyhow = "1"
 base64 = "0.21"
 slotmap = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-gl ="0.14"
 smallvec = "1"
 zip = "0.6"
 memoffset = "0.9"
@@ -35,43 +33,10 @@ image = { version = "0.24", default_features = false, features = ["png", "jpeg",
 clap = { version = "4", features = ["derive", "cargo"] }
 flate2 = "1"
 fxhash = "0.2"
-glutin = "0.30"
-glutin-winit = "0.3"
-raw-window-handle = "0.5"
 signal-hook = "0.3"
 opener = "0.6"
-clipboard = "0.5"
-winit = { version = "0.28", features = ["x11"] }
-glow = "0.12"
 maybe-owned = { version = "0.3", features = ["serde"] }
+lazy_static = "1"
 
-[dependencies.imgui]
-version = "*"
-features = ["freetype"]
-
-[dependencies.imgui-sys]
-version = "*"
-
-[dependencies.imgui-winit-support]
-version = "*"
-
-[dependencies.imgui-glow-renderer]
-version = "*"
-
-[patch.crates-io.imgui]
-git = "https://github.com/rodrigorc/imgui-rs"
-rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
-#path = "thirdparty/imgui-rs/imgui"
-[patch.crates-io.imgui-sys]
-git = "https://github.com/rodrigorc/imgui-rs"
-rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
-#path = "thirdparty/imgui-rs/imgui-sys"
-[patch.crates-io.imgui-winit-support]
-git = "https://github.com/rodrigorc/imgui-rs"
-rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
-#path = "thirdparty/imgui-rs/imgui-winit-support"
-[patch.crates-io.imgui-glow-renderer]
-git = "https://github.com/rodrigorc/imgui-rs"
-rev = "00aa2fcfdcc149db2ee61fc8470e023eb5f38c47"
-#path = "thirdparty/imgui-rs/imgui-glow-renderer"
-
+easy-imgui-sys = "*"
+easy-imgui-window = { version = "*", features = ["freetype"] }

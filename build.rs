@@ -46,6 +46,9 @@ fn build_resource() -> Result<()> {
 }
 
 fn build_imgui_filedialog() -> Result<()> {
+    for x in env::vars() {
+        dbg!(x);
+    }
     let dep_imgui_path =
         env::var("DEP_IMGUI_THIRD_PARTY")
             .expect("DEP_IMGUI_THIRD_PARTY not defined");
@@ -53,20 +56,33 @@ fn build_imgui_filedialog() -> Result<()> {
     let igfd_path = "thirdparty/ImGuiFileDialog";
 
     bindgen::Builder::default()
+        .clang_args(["-x", "c++"])
         .clang_arg(format!("-I{dep_imgui_path}"))
         .clang_arg(format!("-I{igfd_path}"))
-        .allowlist_function("IGFD_.*")
-        .allowlist_function("free") // standard libc free to release strings
-        .allowlist_type("IGFD_.*")
-        .allowlist_type("ImGuiFileDialog.*")
         .header("ImGuiFileDialogWrapper.h")
+        .allowlist_recursively(false)
+        .allowlist_function("free") // standard libc free to release strings
+        //.allowlist_type("IGFD_.*")
+        //.allowlist_function("ImGuiFileDialog.*")
+        //.allowlist_file("thirdparty/ImGuiFileDialog/ImGuiFileDialog.h")
+        //.blocklist_function(".*")
+        //.blocklist_type(".*")
+        .allowlist_function("IGFD_.*")
+        .blocklist_function(".*Pane.*")
+        .blocklist_type("ImGuiFileDialog")
+        .allowlist_type("IGFD_Selection_Pair")
+        .allowlist_type("IGFD_Selection")
+        .allowlist_type("ImGuiFileDialogFlags.*")
+        .allowlist_type("IGFD_FileStyleFlags")
+        .allowlist_type("IGFD_ResultMode.*")
         .generate()
         .expect("Error ImGuiFileDialog building bindings")
         .write_to_file(out_path.join("imgui_filedialog_bindings.rs"))
         .expect("Error ImGuiFileDialog writing bindings");
 
     cc::Build::new()
-        .include(Path::new(&dep_imgui_path).join("imgui"))
+        .cpp(true)
+        .include(dep_imgui_path)
         .include(igfd_path)
         .define("USE_EXPLORATION_BY_KEYS", None)
         .define("IGFD_KEY_UP", "ImGuiKey_UpArrow")
@@ -87,7 +103,7 @@ fn build_imgui_filedialog() -> Result<()> {
         .define("fileSizeGigaBytes", r#""GiB""#)
         .warnings(false)
         .file(Path::new(igfd_path).join("ImGuiFileDialog.cpp"))
-        .compile("libimguifd.a");
+        .compile("imguifd");
 
     println!("cargo:rerun-if-changed=ImGuiFileDialogWrapper.h");
     for entry in std::fs::read_dir(igfd_path)? {

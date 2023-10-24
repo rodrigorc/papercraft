@@ -61,7 +61,7 @@ With this tool you can create the pieces to be cut as big as you want.
 
 ### Tab mode
 
-In this mode, if you click an open edge the tab will switch to the other side.
+In this mode, if you click an open edge the tab will switch to the other side. Press the Shift key while clicking to hide the tab.
 
 #### Face mode
 

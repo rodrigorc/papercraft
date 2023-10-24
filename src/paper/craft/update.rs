@@ -106,8 +106,15 @@ impl Papercraft {
                     // This  should not be needed, because when a model is imported all edges are cut by default, but just in case
                     self.edge_cut(i_edge, None);
                     if let EdgeStatus::Cut(new_c) = self.edge_status(i_edge) {
-                        if !crossed && c != new_c || crossed && c == new_c {
-                            self.edge_toggle_tab(i_edge);
+                        match c {
+                            TabSide::None => {
+                                self.edge_toggle_tab(i_edge, EdgeToggleTabAction::Hide);
+                            }
+                            c => {
+                                if !crossed && c != new_c || crossed && c == new_c {
+                                    self.edge_toggle_tab(i_edge, EdgeToggleTabAction::Toggle);
+                                }
+                            }
                         }
                     }
                 }

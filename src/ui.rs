@@ -10,7 +10,7 @@ use cgmath::{
 };
 use image::DynamicImage;
 
-use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, TabGeom};
+use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, TabGeom, TabSide, EdgeToggleTabAction};
 use crate::util_3d::{self, Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use crate::util_gl::{MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 use crate::glr::{self, Rgba};
@@ -69,7 +69,7 @@ pub fn color_edge(mode: MouseMode) -> Rgba {
 #[derive(Debug)]
 pub enum UndoAction {
     IslandMove { i_root: FaceIndex, prev_rot: Rad<f32>, prev_loc: Vector2 },
-    TabToggle { i_edge: EdgeIndex },
+    TabToggle { i_edge: EdgeIndex, tab_side: TabSide },
     EdgeCut { i_edge: EdgeIndex },
     EdgeJoin { join_result: JoinResult },
     DocConfig { options: PaperOptions, island_pos: FxHashMap<FaceIndex, (Rad<f32>, Vector2)> },
@@ -422,8 +422,8 @@ impl PapercraftContext {
                     continue;
                 }
                 EdgeStatus::Cut(c) => {
-                    // cut edges are always drawn, the tab on c == face_sign
-                    tab_style != TabStyle::None && c == edge.face_sign(i_face)
+                    // cut edges are drawn, depending on the value of c and the face_sign
+                    tab_style != TabStyle::None && c.tab_visible(edge.face_sign(i_face))
                 }
                 EdgeStatus::Joined => {
                     // joined edges are drawn from one side only, no matter which one
@@ -1243,25 +1243,44 @@ impl PapercraftContext {
         self.ui.trans_paper.mx[2][1] = -center.y * self.ui.trans_paper.mx[1][1];
         RebuildFlags::SCENE_REDRAW
     }
+
+    // These 2 functions are common for {scene,paper}_button1_release_event
     #[must_use]
-    pub fn scene_button1_release_event(&mut self, size: Vector2, pos: Vector2, join_strip: bool, add_to_sel: bool) -> RebuildFlags {
+    fn do_edge_action(&mut self, i_edge: EdgeIndex, i_face: Option<FaceIndex>, shift_action: bool) -> RebuildFlags {
+        let undo = if shift_action {
+            self.try_join_strip(i_edge)
+        } else {
+            self.edge_toggle_cut(i_edge, i_face)
+        };
+        if let Some(undo) = undo {
+            self.push_undo_action(undo);
+        }
+        RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+    }
+    #[must_use]
+    fn do_tab_action(&mut self, i_edge: EdgeIndex, shift_action: bool) -> RebuildFlags {
+        let action = if shift_action {
+            EdgeToggleTabAction::Hide
+        } else {
+            EdgeToggleTabAction::Toggle
+        };
+        if let Some(tab_side) = self.papercraft.edge_toggle_tab(i_edge, action) {
+            self.push_undo_action(vec![UndoAction::TabToggle { i_edge, tab_side } ]);
+            RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+        } else {
+            RebuildFlags::empty()
+        }
+    }
+
+    #[must_use]
+    pub fn scene_button1_release_event(&mut self, size: Vector2, pos: Vector2, shift_action: bool, add_to_sel: bool) -> RebuildFlags {
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                let undo = if join_strip {
-                    self.try_join_strip(i_edge)
-                } else {
-                    self.edge_toggle_cut(i_edge, i_face)
-                };
-                if let Some(undo) = undo {
-                    self.push_undo_action(undo);
-                }
-                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+                self.do_edge_action(i_edge, i_face, shift_action)
             }
             (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                self.papercraft.edge_toggle_tab(i_edge);
-                self.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+                self.do_tab_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) => {
                 self.set_selection(ClickResult::Face(f), true, add_to_sel)
@@ -1352,26 +1371,15 @@ impl PapercraftContext {
         }
         RebuildFlags::PAPER
     }
-    pub fn paper_button1_click_event(&mut self, size: Vector2, pos: Vector2, join_strip: bool, add_to_sel: bool, modifiable: bool) -> RebuildFlags {
+    pub fn paper_button1_click_event(&mut self, size: Vector2, pos: Vector2, shift_action: bool, add_to_sel: bool, modifiable: bool) -> RebuildFlags {
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 self.grabbed_island = None;
-
-                let undo = if join_strip {
-                    self.try_join_strip(i_edge)
-                } else {
-                    self.edge_toggle_cut(i_edge, i_face)
-                };
-                if let Some(undo) = undo {
-                    self.push_undo_action(undo);
-                }
-                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+                self.do_edge_action(i_edge, i_face, shift_action)
             }
             (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                self.papercraft.edge_toggle_tab(i_edge);
-                self.push_undo_action(vec![UndoAction::TabToggle { i_edge } ]);
-                RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+                self.do_tab_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) => {
                 let flags = self.set_selection(ClickResult::Face(f), true, add_to_sel);
@@ -1449,8 +1457,8 @@ impl PapercraftContext {
                         island.reset_transformation(i_root, prev_rot, prev_loc);
                     }
                 }
-                UndoAction::TabToggle { i_edge } => {
-                    self.papercraft.edge_toggle_tab(i_edge);
+                UndoAction::TabToggle { i_edge, tab_side } => {
+                    self.papercraft.edge_toggle_tab(i_edge, EdgeToggleTabAction::Set(tab_side));
                 }
                 UndoAction::EdgeCut { i_edge } => {
                     self.papercraft.edge_join(i_edge, None);

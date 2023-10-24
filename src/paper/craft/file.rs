@@ -91,7 +91,7 @@ impl Papercraft {
         }
         let (model, facemap) = Model::from_waveobj(&obj, texture_map);
 
-        let mut edges = vec![EdgeStatus::Cut(false); model.num_edges()];
+        let mut edges = vec![EdgeStatus::Cut(TabSide::False); model.num_edges()];
 
         for (i_edge, edge_status) in edges.iter_mut().enumerate() {
             let i_edge = EdgeIndex::from(i_edge);

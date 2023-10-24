@@ -905,7 +905,7 @@ impl GlobalContext {
         let status_text = match self.data.ui.mode {
             MouseMode::Face => "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it.",
             MouseMode::Edge => "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads.",
-            MouseMode::Tab => "Tab mode. Click on an edge to swap the side of a tab.",
+            MouseMode::Tab => "Tab mode. Click on an edge to swap the side of a tab. Shift-click to hide a tab.",
             MouseMode::ReadOnly => "View mode. Click to highlight a piece. Move the mouse over an edge to highlight the matching pair.",
         };
         ui.text(status_text);

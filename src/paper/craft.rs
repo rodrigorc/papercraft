@@ -12,11 +12,46 @@ use super::*;
 mod file;
 mod update;
 
+// Which side of a cut will the tab be drawn, compare with face_sign
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum TabSide {
+    False,
+    True,
+    None,
+}
+
+pub enum EdgeToggleTabAction {
+    Toggle,
+    Hide,
+    Set(TabSide),
+}
+
+impl TabSide {
+    pub fn apply(self, action: EdgeToggleTabAction) -> TabSide {
+        use TabSide::*;
+        match (self, action) {
+            (_, EdgeToggleTabAction::Set(next)) => next,
+            (False, EdgeToggleTabAction::Toggle) => True,
+            (True, EdgeToggleTabAction::Toggle) => False,
+            (None, EdgeToggleTabAction::Toggle) => False,
+            (False, EdgeToggleTabAction::Hide) => None,
+            (True, EdgeToggleTabAction::Hide) => None,
+            (None, EdgeToggleTabAction::Hide) => False,
+        }
+    }
+    pub fn tab_visible(self, face_sign: bool) -> bool {
+        match (self, face_sign) {
+            (TabSide::False, false) | (TabSide::True, true) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EdgeStatus {
     Hidden,
     Joined,
-    Cut(bool), //the tab will be drawn on the side with the same sign as this bool
+    Cut(TabSide),
 }
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
@@ -323,13 +358,15 @@ impl Papercraft {
         self.edges[usize::from(edge)]
     }
 
-    pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex) {
+    pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex, action: EdgeToggleTabAction) -> Option<TabSide> {
         // brim edges cannot have a tab
         if let (_, None) = self.model()[i_edge].faces() {
-            return;
+            return None;
         }
         if let EdgeStatus::Cut(ref mut x) = self.edges[usize::from(i_edge)] {
-            *x = !*x;
+            Some(std::mem::replace(x, x.apply(action)))
+        } else {
+            None
         }
     }
 
@@ -347,7 +384,7 @@ impl Papercraft {
         //one of the edge faces will be the root of the new island, but we do not know which one, yet
         let i_island = self.island_by_face(i_face_a);
 
-        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(false);
+        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(TabSide::False);
 
         let mut data_found = None;
         self.traverse_faces(&self.islands[i_island],
@@ -1038,8 +1075,9 @@ impl Serialize for EdgeStatus {
         let is = match self {
             EdgeStatus::Hidden => 0,
             EdgeStatus::Joined => 1,
-            EdgeStatus::Cut(false) => 2,
-            EdgeStatus::Cut(true) => 3,
+            EdgeStatus::Cut(TabSide::False) => 2,
+            EdgeStatus::Cut(TabSide::True) => 3,
+            EdgeStatus::Cut(TabSide::None) => 4,
         };
         serializer.serialize_i32(is)
     }
@@ -1052,8 +1090,9 @@ impl<'de> Deserialize<'de> for EdgeStatus {
         let res = match d {
             0 => EdgeStatus::Hidden,
             1 => EdgeStatus::Joined,
-            2 => EdgeStatus::Cut(false),
-            3 => EdgeStatus::Cut(true),
+            2 => EdgeStatus::Cut(TabSide::False),
+            3 => EdgeStatus::Cut(TabSide::True),
+            4 => EdgeStatus::Cut(TabSide::None),
             _ => return Err(serde::de::Error::missing_field("invalid edge status")),
         };
         Ok(res)

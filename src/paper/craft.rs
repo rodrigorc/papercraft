@@ -359,7 +359,7 @@ impl Papercraft {
     }
 
     pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex, action: EdgeToggleTabAction) -> Option<TabSide> {
-        // brim edges cannot have a tab
+        // rim edges cannot have a tab, for now
         if let (_, None) = self.model()[i_edge].faces() {
             return None;
         }

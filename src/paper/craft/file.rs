@@ -100,6 +100,10 @@ impl Papercraft {
                 (fa, Some(fb)) if facemap[&fa] == facemap[&fb] => {
                     *edge_status = EdgeStatus::Hidden;
                 }
+                (_, None) => {
+                    // edges in the rim (without adjacent face) do not have a tab
+                    *edge_status = EdgeStatus::Cut(TabSide::None)
+                }
                 _ => {}
             }
         }

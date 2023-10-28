@@ -102,7 +102,7 @@ impl Papercraft {
                 }
                 (_, None) => {
                     // edges in the rim (without adjacent face) do not have a tab
-                    *edge_status = EdgeStatus::Cut(TabSide::None)
+                    *edge_status = EdgeStatus::Cut(TabSide::Hidden)
                 }
                 _ => {}
             }

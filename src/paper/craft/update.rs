@@ -107,7 +107,7 @@ impl Papercraft {
                     self.edge_cut(i_edge, None);
                     if let EdgeStatus::Cut(new_c) = self.edge_status(i_edge) {
                         match c {
-                            TabSide::None => {
+                            TabSide::Hidden => {
                                 self.edge_toggle_tab(i_edge, EdgeToggleTabAction::Hide);
                             }
                             c => {

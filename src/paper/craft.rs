@@ -17,7 +17,7 @@ mod update;
 pub enum TabSide {
     False,
     True,
-    None,
+    Hidden,
 }
 
 pub enum EdgeToggleTabAction {
@@ -27,16 +27,19 @@ pub enum EdgeToggleTabAction {
 }
 
 impl TabSide {
-    pub fn apply(self, action: EdgeToggleTabAction) -> TabSide {
+    pub fn apply(self, action: EdgeToggleTabAction, rim: bool) -> TabSide {
         use TabSide::*;
         match (self, action) {
             (_, EdgeToggleTabAction::Set(next)) => next,
-            (False, EdgeToggleTabAction::Toggle) => True,
+            // toggle
+            (False, EdgeToggleTabAction::Toggle) => if rim { Hidden } else { True },
             (True, EdgeToggleTabAction::Toggle) => False,
-            (None, EdgeToggleTabAction::Toggle) => False,
-            (False, EdgeToggleTabAction::Hide) => None,
-            (True, EdgeToggleTabAction::Hide) => None,
-            (None, EdgeToggleTabAction::Hide) => False,
+            (Hidden, EdgeToggleTabAction::Toggle) => False,
+
+            // hide
+            (False, EdgeToggleTabAction::Hide) => Hidden,
+            (True, EdgeToggleTabAction::Hide) => Hidden,
+            (Hidden, EdgeToggleTabAction::Hide) => False,
         }
     }
     pub fn tab_visible(self, face_sign: bool) -> bool {
@@ -359,12 +362,9 @@ impl Papercraft {
     }
 
     pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex, action: EdgeToggleTabAction) -> Option<TabSide> {
-        // rim edges cannot have a tab, for now
-        if let (_, None) = self.model()[i_edge].faces() {
-            return None;
-        }
+        let rim = matches!(self.model()[i_edge].faces(), (_, None));
         if let EdgeStatus::Cut(ref mut x) = self.edges[usize::from(i_edge)] {
-            Some(std::mem::replace(x, x.apply(action)))
+            Some(std::mem::replace(x, x.apply(action, rim)))
         } else {
             None
         }
@@ -629,7 +629,7 @@ impl Papercraft {
         let a0 = Rad::turn_div_2() - a0;
         let a1 = Rad::turn_div_2() - a1;
 
-        let tab_angle = Rad::from(Deg(self.options().tab_angle));
+        let tab_angle = Rad::from(Deg(self.options.tab_angle));
         let a0 = Rad(a0.0.min(tab_angle.0));
         let a1 = Rad(a1.0.min(tab_angle.0));
 
@@ -777,6 +777,31 @@ impl Papercraft {
                 width,
                 triangular,
             }
+        }
+    }
+    pub fn flat_face_rim_tab_dimensions(&self, i_face: FaceIndex, i_edge: EdgeIndex) -> TabGeom {
+        let tab_angle = Rad::from(Deg(self.options.tab_angle));
+        let tan = tab_angle.cot();
+        let face = &self.model[i_face];
+        let plane = self.model.face_plane(face);
+        let edge = &self.model[i_edge];
+        let v0 = self.model[edge.v0()].pos();
+        let v1 = self.model[edge.v1()].pos();
+        let scale = self.options.scale;
+        let p0 = plane.project(&v0, scale);
+        let p1 = plane.project(&v1, scale);
+        let base_len = (p1 - p0).magnitude();
+        let mut width = self.options.tab_width;
+        let base2 = base_len - 2.0 * tan * width;
+        let triangular = base2 <= 0.0;
+        if triangular {
+            width = base_len / (2.0 * tan);
+        }
+        TabGeom {
+            tan_0: tan,
+            tan_1: tan,
+            width,
+            triangular,
         }
     }
 
@@ -1077,7 +1102,7 @@ impl Serialize for EdgeStatus {
             EdgeStatus::Joined => 1,
             EdgeStatus::Cut(TabSide::False) => 2,
             EdgeStatus::Cut(TabSide::True) => 3,
-            EdgeStatus::Cut(TabSide::None) => 4,
+            EdgeStatus::Cut(TabSide::Hidden) => 4,
         };
         serializer.serialize_i32(is)
     }
@@ -1092,7 +1117,7 @@ impl<'de> Deserialize<'de> for EdgeStatus {
             1 => EdgeStatus::Joined,
             2 => EdgeStatus::Cut(TabSide::False),
             3 => EdgeStatus::Cut(TabSide::True),
-            4 => EdgeStatus::Cut(TabSide::None),
+            4 => EdgeStatus::Cut(TabSide::Hidden),
             _ => return Err(serde::de::Error::missing_field("invalid edge status")),
         };
         Ok(res)

@@ -1531,7 +1531,6 @@ dependencies = [
  "cgmath",
  "clap",
  "clipboard",
- "either",
  "flate2",
  "fxhash",
  "gl",

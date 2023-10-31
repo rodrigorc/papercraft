@@ -2,7 +2,6 @@ use std::collections::HashMap;
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
-use either::Either;
 use fxhash::FxHashMap;
 use cgmath::{
     prelude::*,
@@ -34,7 +33,7 @@ pub struct GLObjects {
 
     pub paper_vertices: glr::DynamicVertexArray<MVertex2D>,
     pub paper_vertices_sel: glr::DynamicVertexArray<MStatus2D>,
-    pub paper_vertices_edge_border: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_edge_cut: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_crease: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_tab: glr::DynamicVertexArray<MVertex2DColor>,
     pub paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2DLine>,
@@ -235,14 +234,13 @@ pub enum ClickResult {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum EdgeDrawKind {
-    Cut,
     Mountain,
     Valley,
 }
 
 pub struct PaperDrawFaceArgs {
     vertices: Vec<MVertex2D>,
-    vertices_edge_border: Vec<MVertex2DLine>,
+    vertices_edge_cut: Vec<MVertex2DLine>,
     vertices_edge_crease: Vec<MVertex2DLine>,
     vertices_tab: Vec<MVertex2DColor>,
     vertices_tab_edge: Vec<MVertex2DLine>,
@@ -250,9 +248,7 @@ pub struct PaperDrawFaceArgs {
 
     // Maps a FaceIndex to the index into vertices
     face_index: Vec<u32>,
-    // For each line in vertices_edge_border says which kind of line
-    border_kind: Vec<EdgeDrawKind>,
-    // Ditto for vertices_edge_crease
+    // For each line in vertices_edge_crease says which kind of line
     crease_kind: Vec<EdgeDrawKind>,
 }
 
@@ -260,43 +256,30 @@ impl PaperDrawFaceArgs {
     fn new(model: &Model) -> PaperDrawFaceArgs {
         PaperDrawFaceArgs {
             vertices: Vec::new(),
-            vertices_edge_border: Vec::new(),
+            vertices_edge_cut: Vec::new(),
             vertices_edge_crease: Vec::new(),
             vertices_tab: Vec::new(),
             vertices_tab_edge: Vec::new(),
             vertices_shadow_tab: Vec::new(),
             face_index: vec![0; model.num_faces()],
-            border_kind: Vec::new(),
             crease_kind: Vec::new(),
         }
     }
 
-    pub fn iter_edges(&self, kind: EdgeDrawKind) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
-        match kind {
-            EdgeDrawKind::Cut => {
-                let it = self.vertices_tab_edge
-                    .chunks_exact(2)
-                    .chain(self.vertices_edge_border
-                        .chunks_exact(2)
-                        .zip(self.border_kind.iter())
-                        .filter_map(move |(line, kind)| (*kind == EdgeDrawKind::Cut).then_some(line))
-                    )
-                    .map(|s| (&s[0], &s[1]));
-                Either::Left(it)
-            }
-            kind => {
-                let it = self.vertices_edge_crease
-                    .chunks_exact(2)
-                    .zip(self.crease_kind.iter())
-                    .chain(self.vertices_edge_border
-                        .chunks_exact(2)
-                        .zip(self.border_kind.iter())
-                    )
-                    .filter_map(move |(line, ek)| (*ek == kind).then_some(line))
-                    .map(|s| (&s[0], &s[1]));
-                Either::Right(it)
-            }
-        }
+    pub fn iter_cut(&self) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+        self.vertices_tab_edge
+            .chunks_exact(2)
+            .chain(self.vertices_edge_cut
+                .chunks_exact(2)
+            )
+            .map(|s| (&s[0], &s[1]))
+    }
+    pub fn iter_crease(&self, kind: EdgeDrawKind) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+        self.vertices_edge_crease
+            .chunks_exact(2)
+            .zip(self.crease_kind.iter())
+            .filter_map(move |(line, ek)| (*ek == kind).then_some(line))
+            .map(|s| (&s[0], &s[1]))
     }
 }
 
@@ -467,14 +450,15 @@ impl PapercraftContext {
 
             //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
             //cut with a tab
-            let dotted = if edge_status == EdgeStatus::Joined || i_face_tab_other.is_some() {
+            let crease_kind = if edge_status == EdgeStatus::Joined || i_face_tab_other.is_some() {
                 let angle_3d = self.papercraft.model().edge_angle(i_edge);
                 if edge_status == EdgeStatus::Joined && Rad(angle_3d.0.abs()) < Rad::from(Deg(self.papercraft.options().hidden_line_angle)) {
                     continue;
                 }
-                angle_3d < Rad(0.0)
+                let kind = if angle_3d.0.is_sign_negative() { EdgeDrawKind::Valley } else { EdgeDrawKind::Mountain };
+                Some(kind)
             } else {
-                false
+                None
             };
 
             let v = pos1 - pos0;
@@ -486,80 +470,76 @@ impl PapercraftContext {
             };
 
             let v_len = v.magnitude();
-            let (new_lines_, new_lines_2_);
 
             let fold_factor = self.papercraft.options().fold_line_len / v_len;
-            let visible_line =
-                if edge_status == EdgeStatus::Joined || i_face_tab_other.is_some() {
-                    match self.papercraft.options().fold_style {
-                        FoldStyle::Full => (Some(0.0), None),
-                        FoldStyle::FullAndOut => (Some(fold_factor), None),
-                        FoldStyle::Out => (Some(fold_factor), Some(0.0)),
-                        FoldStyle::In => (Some(0.0), Some(fold_factor)),
-                        FoldStyle::InAndOut => (Some(fold_factor), Some(fold_factor)),
-                        FoldStyle::None => (None, None),
+            if let Some(crease_kind) = crease_kind {
+                let visible_line = match self.papercraft.options().fold_style {
+                    FoldStyle::Full => (Some(0.0), None),
+                    FoldStyle::FullAndOut => (Some(fold_factor), None),
+                    FoldStyle::Out => (Some(fold_factor), Some(0.0)),
+                    FoldStyle::In => (Some(0.0), Some(fold_factor)),
+                    FoldStyle::InAndOut => (Some(fold_factor), Some(fold_factor)),
+                    FoldStyle::None => (None, None),
+                };
+                match visible_line  {
+                    (None, None) | (None, Some(_)) => { }
+                    (Some(f), None) => {
+                        let vn = v * f;
+                        let v0 = MVertex2DLine {
+                            pos: pos0 - vn,
+                            line_dash: 0.0,
+                            .. v2d
+                        };
+                        let v1 = MVertex2DLine {
+                            pos: pos1 + vn,
+                            line_dash: if crease_kind == EdgeDrawKind::Valley { v_len * (1.0 + 2.0 * f) } else { 0.0 },
+                            .. v0
+                        };
+                        let new_lines = [v0, v1];
+                        args.vertices_edge_crease.extend_from_slice(&new_lines);
+                        args.crease_kind.push(crease_kind);
                     }
-                } else {
-                    (Some(0.0), None)
+                    (Some(f_a), Some(f_b)) => {
+                        let vn_a = v * f_a;
+                        let vn_b = v * f_b;
+                        let va0 = MVertex2DLine {
+                            pos: pos0 - vn_a,
+                            line_dash: 0.0,
+                            .. v2d
+                        };
+                        let va1 = MVertex2DLine {
+                            pos: pos0 + vn_b,
+                            line_dash: if crease_kind == EdgeDrawKind::Valley { v_len * (f_a + f_b) } else { 0.0 },
+                            .. v2d
+                        };
+                        let vb0 = MVertex2DLine {
+                            pos: pos1 - vn_b,
+                            line_dash: 0.0,
+                            .. v2d
+                        };
+                        let vb1 = MVertex2DLine {
+                            pos: pos1 + vn_a,
+                            line_dash: va1.line_dash,
+                            .. v2d
+                        };
+                        let new_lines = [va0, va1, vb0, vb1];
+                        args.vertices_edge_crease.extend_from_slice(&new_lines);
+                        // two lines
+                        args.crease_kind.push(crease_kind);
+                        args.crease_kind.push(crease_kind);
+                    }
                 };
-
-            let new_lines: &[_] = match visible_line  {
-                (None, None) | (None, Some(_)) => { &[] }
-                (Some(f), None) => {
-                    let vn = v * f;
-                    let v0 = MVertex2DLine {
-                        pos: pos0 - vn,
-                        line_dash: 0.0,
-                        .. v2d
-                    };
-                    let v1 = MVertex2DLine {
-                        pos: pos1 + vn,
-                        line_dash: if dotted { v_len * (1.0 + 2.0 * f) } else { 0.0 },
-                        .. v0
-                    };
-                    new_lines_ = [v0, v1];
-                    &new_lines_
-                }
-                (Some(f_a), Some(f_b)) => {
-                    let vn_a = v * f_a;
-                    let vn_b = v * f_b;
-                    let va0 = MVertex2DLine {
-                        pos: pos0 - vn_a,
-                        line_dash: 0.0,
-                        .. v2d
-                    };
-                    let va1 = MVertex2DLine {
-                        pos: pos0 + vn_b,
-                        line_dash: if dotted { v_len * (f_a + f_b) } else { 0.0 },
-                        .. v2d
-                    };
-                    let vb0 = MVertex2DLine {
-                        pos: pos1 - vn_b,
-                        line_dash: 0.0,
-                        .. v2d
-                    };
-                    let vb1 = MVertex2DLine {
-                        pos: pos1 + vn_a,
-                        line_dash: va1.line_dash,
-                        .. v2d
-                    };
-                    new_lines_2_ = [va0, va1, vb0, vb1];
-                    &new_lines_2_
-                }
-            };
-
-            let edge_container = if edge_status == EdgeStatus::Joined || i_face_tab_other.is_some() {
-                let kind = match dotted {
-                    true => EdgeDrawKind::Valley,
-                    false => EdgeDrawKind::Mountain,
-                };
-                args.crease_kind.push(kind);
-                &mut args.vertices_edge_crease
             } else {
-                args.border_kind.push(EdgeDrawKind::Cut);
-                &mut args.vertices_edge_border
-            };
-            edge_container.extend_from_slice(new_lines);
+                let v0 = MVertex2DLine {
+                    pos: pos0,
+                    .. v2d
+                };
+                let v1 = MVertex2DLine {
+                    pos: pos1,
+                    .. v0
+                };
+                args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
+            }
 
             // Draw the tab?
             if let Some(draw_tab) = i_face_tab_other {
@@ -750,7 +730,7 @@ impl PapercraftContext {
         }
 
         self.gl_objs.paper_vertices.set(args.vertices);
-        self.gl_objs.paper_vertices_edge_border.set(args.vertices_edge_border);
+        self.gl_objs.paper_vertices_edge_cut.set(args.vertices_edge_cut);
         self.gl_objs.paper_vertices_edge_crease.set(args.vertices_edge_crease);
         self.gl_objs.paper_vertices_tab.set(args.vertices_tab);
         self.gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge);
@@ -1654,7 +1634,7 @@ impl GLObjects {
 
         let paper_vertices = glr::DynamicVertexArray::new();
         let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * model.num_faces()]);
-        let paper_vertices_edge_border = glr::DynamicVertexArray::new();
+        let paper_vertices_edge_cut = glr::DynamicVertexArray::new();
         let paper_vertices_edge_crease = glr::DynamicVertexArray::new();
         let paper_vertices_tab = glr::DynamicVertexArray::new();
         let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
@@ -1674,7 +1654,7 @@ impl GLObjects {
 
             paper_vertices,
             paper_vertices_sel,
-            paper_vertices_edge_border,
+            paper_vertices_edge_cut,
             paper_vertices_edge_crease,
             paper_vertices_tab,
             paper_vertices_tab_edge,

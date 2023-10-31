@@ -1836,7 +1836,7 @@ impl GlobalContext {
             gl::Disable(gl::STENCIL_TEST);
 
             // Borders
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_border, gl::LINES);
+            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, gl::LINES);
 
             gl::Enable(gl::STENCIL_TEST);
 
@@ -2079,7 +2079,7 @@ impl GlobalContext {
             writeln!(&mut out, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
             for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
                 writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
-                for (a, b) in lines.iter_edges(EdgeDrawKind::Cut) {
+                for (a, b) in lines.iter_cut() {
                     if let (Some(a), Some(b)) = (in_page(a.pos), in_page(b.pos)) {
                         writeln!(&mut out, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
                     }
@@ -2097,7 +2097,7 @@ impl GlobalContext {
                         if fold_kind == EdgeDrawKind::Mountain  { "#ff0000" } else { "#0000ff" },
                         if fold_kind == EdgeDrawKind::Mountain  { "foldm_" } else { "foldv_" }
                     )?;
-                    for (a, b) in lines.iter_edges(fold_kind) {
+                    for (a, b) in lines.iter_crease(fold_kind) {
                         if let (Some(a), Some(b)) = (in_page(a.pos), in_page(b.pos)) {
                             writeln!(&mut out, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
                         }
@@ -2238,7 +2238,7 @@ impl GlobalContext {
                 }
 
                 // Borders
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_border, gl::LINES);
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, gl::LINES);
 
                 // Textured faces
                 gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);

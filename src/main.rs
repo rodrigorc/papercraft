@@ -2016,7 +2016,7 @@ impl GlobalContext {
         let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
         let cr = cairo::Context::new(&pdf)?;
 
-        self.generate_pages(|_page, pixbuf| {
+        self.generate_pages(true, |_page, pixbuf| {
             cr.set_source_surface(pixbuf, 0.0, 0.0)?;
             let pat = cr.source();
             let mut mc = cairo::Matrix::identity();
@@ -2038,22 +2038,20 @@ impl GlobalContext {
     fn generate_svg(&self, file_name: &Path) -> anyhow::Result<()> {
 
         let lines_by_island = self.data.lines_by_island();
+        let options = self.data.papercraft().options();
+        let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
 
-        self.generate_pages(|page, pixbuf| {
+        self.generate_pages(false, |page, pixbuf| {
             let name = Self::file_name_for_page(file_name, page);
             let out = std::fs::File::create(name)?;
             let mut out = std::io::BufWriter::new(out);
-            let options = self.data.papercraft().options();
 
             let page_pos_0 = options.page_position(page);
             let page_size = Vector2::from(options.page_size);
-            let in_page = |p: Vector2| -> Option<Vector2> {
+            let in_page = |p: Vector2| -> (bool, Vector2) {
                 let r = p - page_pos_0;
-                if r.x >= 0.0 && r.y >= 0.0 && r.x < page_size.x && r.y < page_size.y {
-                    Some(r)
-                } else {
-                    None
-                }
+                let is_in = r.x >= 0.0 && r.y >= 0.0 && r.x < page_size.x && r.y < page_size.y;
+                (is_in, r)
             };
 
             use base64::prelude::*;
@@ -2069,51 +2067,101 @@ impl GlobalContext {
                 page_size.x, page_size.y
             )?;
 
+            // begin layer Background
             writeln!(&mut out, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
             writeln!(
                 &mut out,
                 r#"<image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/png;base64,{}" id="background" x="0" y="0" style="display:inline"/>"#,
                 page_size.x, page_size.y, b64png)?;
             writeln!(&mut out, r#"</g>"#)?;
+            // end layer Background
 
+            // begin layer Cut
             writeln!(&mut out, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
             for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
-                writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
-                for (a, b) in lines.iter_cut() {
-                    if let (Some(a), Some(b)) = (in_page(a.pos), in_page(b.pos)) {
-                        writeln!(&mut out, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
+                let cut = lines.iter_cut();
+                // if the countour touches the page, draw it whole because it is a loop
+                let mut touching = false;
+                let page_cut = cut
+                    .iter()
+                    .map(|(v0, v1)| {
+                        let (is_in_0, v0) = in_page(v0.pos);
+                        let (is_in_1, v1) = in_page(v1.pos);
+                        touching |= is_in_0 | is_in_1;
+                        (v0, v1)
+                    })
+                    .collect::<Vec<_>>();
+                if touching {
+                    writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
+                    write!(&mut out, r#"M "#)?;
+                    let page_contour = PaperDrawFaceArgs::cut_to_contour(page_cut);
+                    for v in page_contour {
+                        writeln!(&mut out, r#"{},{}"#, v.x, v.y)?;
                     }
+                    writeln!(&mut out, r#"z"#)?;
+                    writeln!(&mut out, r#"" />"#)?;
                 }
-                writeln!(&mut out, r#"" />"#)?;
             }
             writeln!(&mut out, r#"</g>"#)?;
+            // end layer Cut
 
+            // begin layer Fold
             writeln!(&mut out, r#"<g inkscape:label="Fold" inkscape:groupmode="layer" id="Fold" style="display:none">"#)?;
             for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
-                writeln!(&mut out, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#, if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
+                writeln!(&mut out, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
+                    if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
                 for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
-                    writeln!(&mut out, r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
-                        idx,
-                        if fold_kind == EdgeDrawKind::Mountain  { "#ff0000" } else { "#0000ff" },
-                        if fold_kind == EdgeDrawKind::Mountain  { "foldm_" } else { "foldv_" }
-                    )?;
-                    for (a, b) in lines.iter_crease(fold_kind) {
-                        if let (Some(a), Some(b)) = (in_page(a.pos), in_page(b.pos)) {
+                    let creases = lines.iter_crease(fold_kind);
+                    // each crease can be checked for bounds individually
+                    let page_creases = creases
+                        .filter_map(|(a, b)| {
+                            let (is_in_a, a) = in_page(a.pos);
+                            let (is_in_b, b) = in_page(b.pos);
+                            (is_in_a || is_in_b).then_some((a, b))
+                        })
+                        .collect::<Vec<_>>();
+                    if !page_creases.is_empty() {
+                        writeln!(&mut out, r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
+                            idx,
+                            if fold_kind == EdgeDrawKind::Mountain  { "#ff0000" } else { "#0000ff" },
+                            if fold_kind == EdgeDrawKind::Mountain  { "foldm" } else { "foldv" }
+                        )?;
+                        for (a, b) in page_creases {
                             writeln!(&mut out, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
                         }
+                        writeln!(&mut out, r#"" />"#)?;
                     }
-                    writeln!(&mut out, r#"" />"#)?;
                 }
                 writeln!(&mut out, r#"</g>"#)?;
             }
             writeln!(&mut out, r#"</g>"#)?;
+            // end layer Fold
+
+            // begin layer Text
+            writeln!(&mut out, r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#)?;
+            if options.show_self_promotion {
+                writeln!(&mut out, r#"<text id="Signature" x="{}" y="{}" style="font-size:{};font-family:sans-serif;fill:#000000">{}</text>"#,
+                    margin_left, options.page_size.1 - margin_bottom + 3.0, 3.0,
+                    signature()
+                )?;
+            }
+            if options.show_page_number {
+                writeln!(&mut out, r#"<text id="Page_{3}" x="{0}" y="{1}" style="text-anchor:end;font-size:{2};font-family:sans-serif;fill:#000000">Page {3}/{4}</text>"#,
+                    options.page_size.0 - margin_right, options.page_size.1 - margin_bottom + 3.0, 3.0,
+                    page + 1,
+                    options.pages,
+                )?;
+            }
+            writeln!(&mut out, r#"</g>"#)?;
+            // end layer Text
+            //
             writeln!(&mut out, r#"</svg>"#)?;
             Ok(())
         })?;
         Ok(())
     }
     fn generate_png(&self, file_name: &Path) -> anyhow::Result<()> {
-        self.generate_pages(|page, pixbuf| {
+        self.generate_pages(true, |page, pixbuf| {
             let name = Self::file_name_for_page(file_name, page);
             let f = std::fs::File::create(name)?;
             let mut f = std::io::BufWriter::new(f);
@@ -2136,7 +2184,7 @@ impl GlobalContext {
         name.set_extension(ext);
         parent.join(name)
     }
-    fn generate_pages<F>(&self, mut do_page_fn: F) -> anyhow::Result<()>
+    fn generate_pages<F>(&self, with_text: bool, mut do_page_fn: F) -> anyhow::Result<()>
         where F: FnMut(u32, &cairo::ImageSurface) -> anyhow::Result<()>
     {
         let options = self.data.papercraft().options();
@@ -2273,7 +2321,7 @@ impl GlobalContext {
                     gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::BGRA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
                 }
 
-                if options.show_self_promotion || options.show_page_number {
+                if with_text && (options.show_self_promotion || options.show_page_number) {
                     let cr = cairo::Context::new(&pixbuf)?;
                     let mut mc = cairo::Matrix::identity();
                     let scale = resolution / 25.4; // use millimeters

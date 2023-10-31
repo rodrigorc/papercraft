@@ -266,13 +266,34 @@ impl PaperDrawFaceArgs {
         }
     }
 
-    pub fn iter_cut(&self) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+    pub fn iter_cut(&self) -> Vec<(&MVertex2DLine, &MVertex2DLine)> {
         self.vertices_tab_edge
             .chunks_exact(2)
             .chain(self.vertices_edge_cut
                 .chunks_exact(2)
             )
             .map(|s| (&s[0], &s[1]))
+            .collect()
+    }
+    pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
+        // Order the vertices in a closed loop
+        let mut res = Vec::with_capacity(cuts.len());
+        while let Some(mut p) = cuts.pop() {
+            res.push(p.0);
+            res.push(p.1);
+            while let Some((next, _)) = cuts
+                .iter()
+                .enumerate()
+                .map(|(idx, (v0, _))| (idx, (p.1 - v0).magnitude2()))
+                .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
+            {
+                p = cuts.swap_remove(next);
+                res.push(p.1);
+            }
+            // the last point should match the first, it is redundant
+            res.pop();
+        }
+        res
     }
     pub fn iter_crease(&self, kind: EdgeDrawKind) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
         self.vertices_edge_crease

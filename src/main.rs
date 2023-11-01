@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
-    Deg,
+    Deg, Rad,
 };
 use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
@@ -32,11 +32,12 @@ use ui::*;
 static LOGO_PNG: &[u8] = include_bytes!("papercraft.png");
 static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
 static ICONS_PNG: &[u8] = include_bytes!("icons.png");
+const FONT_SIZE: f32 = 3.0;
 
-use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions};
+use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions, EdgeIndex};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
-use util_gl::{Uniforms2D, Uniforms3D, UniformQuad};
+use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
 
 use glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
@@ -1087,6 +1088,10 @@ impl GlobalContext {
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
                 ui.set_next_item_width(ui.current_font_size() * 11.0);
                 ui.checkbox("Print page number", &mut options.show_page_number);
+
+                ui.set_next_item_width(ui.current_font_size() * 5.0);
+                ui.input_float("Edge id font size in pt (0 to disable)", &mut options.edge_id_font_size).display_format("%g").build();
+                options.edge_id_font_size = options.edge_id_font_size.clamp(0.0, 72.0);
             }
             if ui.collapsing_header("Paper size", imgui::TreeNodeFlags::empty()) {
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
@@ -2040,32 +2045,69 @@ impl GlobalContext {
         let lines_by_island = self.data.lines_by_island();
         let options = self.data.papercraft().options();
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
+        let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
 
         self.generate_pages(false, |page, pixbuf| {
             let name = Self::file_name_for_page(file_name, page);
             let out = std::fs::File::create(name)?;
             let mut out = std::io::BufWriter::new(out);
 
-            let page_pos_0 = options.page_position(page);
             let page_size = Vector2::from(options.page_size);
-            let in_page = |p: Vector2| -> (bool, Vector2) {
-                let r = p - page_pos_0;
-                let is_in = r.x >= 0.0 && r.y >= 0.0 && r.x < page_size.x && r.y < page_size.y;
-                (is_in, r)
-            };
+            let in_page = options.is_in_page_fn(page);
 
             use base64::prelude::*;
             let mut png = Vec::new();
             pixbuf.write_to_png(&mut png)?;
             let b64png = BASE64_STANDARD.encode(&png);
 
+            let mut cut_idxs = Vec::new();
+            let mut all_page_cuts = Vec::new();
 
+            for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
+                let cuts = lines.iter_cut();
+                let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
+                    continue;
+                };
+                if edge_id_font_size > 0.0 {
+                    cut_idxs.extend(page_cuts_to_cuts_idxs(edge_id_font_size, &page_cuts));
+                }
+                all_page_cuts.push((idx, page_cuts));
+            }
             writeln!(&mut out, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
             writeln!(
                 &mut out,
                 r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
                 page_size.x, page_size.y
             )?;
+
+            // begin layer Text
+            writeln!(&mut out, r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#)?;
+            if options.show_self_promotion {
+                writeln!(&mut out, r#"<text id="Signature" x="{}" y="{}" style="font-size:{};font-family:sans-serif;fill:#000000">{}</text>"#,
+                    margin_left, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
+                    signature()
+                )?;
+            }
+            if options.show_page_number {
+                writeln!(&mut out, r#"<text id="Page_{3}" x="{0}" y="{1}" style="text-anchor:end;font-size:{2};font-family:sans-serif;fill:#000000">Page {3}/{4}</text>"#,
+                    page_size.x - margin_right, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
+                    page + 1,
+                    options.pages,
+                )?;
+            }
+            if edge_id_font_size > 0.0 {
+                for id in cut_idxs {
+                    let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-id.angle);
+                    let p = basis2.rotate_vector(id.p);
+                    writeln!(&mut out, r#"<text x="{}" y="{}" style="text-anchor:middle;font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
+                        p.x, p.y, edge_id_font_size,
+                        Deg::from(id.angle).0,
+                        usize::from(id.idx),
+                    )?;
+                }
+            }
+            writeln!(&mut out, r#"</g>"#)?;
+            // end layer Text
 
             // begin layer Background
             writeln!(&mut out, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
@@ -2078,29 +2120,15 @@ impl GlobalContext {
 
             // begin layer Cut
             writeln!(&mut out, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
-            for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
-                let cut = lines.iter_cut();
-                // if the countour touches the page, draw it whole because it is a loop
-                let mut touching = false;
-                let page_cut = cut
-                    .iter()
-                    .map(|(v0, v1)| {
-                        let (is_in_0, v0) = in_page(v0.pos);
-                        let (is_in_1, v1) = in_page(v1.pos);
-                        touching |= is_in_0 | is_in_1;
-                        (v0, v1)
-                    })
-                    .collect::<Vec<_>>();
-                if touching {
-                    writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
-                    write!(&mut out, r#"M "#)?;
-                    let page_contour = PaperDrawFaceArgs::cut_to_contour(page_cut);
-                    for v in page_contour {
-                        writeln!(&mut out, r#"{},{}"#, v.x, v.y)?;
-                    }
-                    writeln!(&mut out, r#"z"#)?;
-                    writeln!(&mut out, r#"" />"#)?;
+            for (idx, page_cut) in all_page_cuts {
+                writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
+                write!(&mut out, r#"M "#)?;
+                let page_contour = cut_to_contour(page_cut);
+                for v in page_contour {
+                    writeln!(&mut out, r#"{},{}"#, v.x, v.y)?;
                 }
+                writeln!(&mut out, r#"z"#)?;
+                writeln!(&mut out, r#"" />"#)?;
             }
             writeln!(&mut out, r#"</g>"#)?;
             // end layer Cut
@@ -2137,24 +2165,6 @@ impl GlobalContext {
             writeln!(&mut out, r#"</g>"#)?;
             // end layer Fold
 
-            // begin layer Text
-            writeln!(&mut out, r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#)?;
-            if options.show_self_promotion {
-                writeln!(&mut out, r#"<text id="Signature" x="{}" y="{}" style="font-size:{};font-family:sans-serif;fill:#000000">{}</text>"#,
-                    margin_left, options.page_size.1 - margin_bottom + 3.0, 3.0,
-                    signature()
-                )?;
-            }
-            if options.show_page_number {
-                writeln!(&mut out, r#"<text id="Page_{3}" x="{0}" y="{1}" style="text-anchor:end;font-size:{2};font-family:sans-serif;fill:#000000">Page {3}/{4}</text>"#,
-                    options.page_size.0 - margin_right, options.page_size.1 - margin_bottom + 3.0, 3.0,
-                    page + 1,
-                    options.pages,
-                )?;
-            }
-            writeln!(&mut out, r#"</g>"#)?;
-            // end layer Text
-            //
             writeln!(&mut out, r#"</svg>"#)?;
             Ok(())
         })?;
@@ -2321,14 +2331,17 @@ impl GlobalContext {
                     gl::ReadPixels(0, 0, page_size_pixels.x, page_size_pixels.y, gl::BGRA, gl::UNSIGNED_BYTE, data.as_mut_ptr() as *mut _);
                 }
 
-                if with_text && (options.show_self_promotion || options.show_page_number) {
+                let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
+
+                if with_text && (options.show_self_promotion || options.show_page_number || edge_id_font_size > 0.0) {
                     let cr = cairo::Context::new(&pixbuf)?;
+                    // Text should be below the texture
+                    cr.set_operator(cairo::Operator::DestOver);
                     let mut mc = cairo::Matrix::identity();
                     let scale = resolution / 25.4; // use millimeters
                     mc.scale(scale as f64, scale as f64);
                     cr.set_matrix(mc);
 
-                    const FONT_SIZE: f32 = 3.0;
                     if options.show_self_promotion {
                         cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                         cr.set_font_size(FONT_SIZE as f64);
@@ -2346,6 +2359,29 @@ impl GlobalContext {
                         let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
                         cr.move_to(x as f64 - ext.width(), y as f64);
                         let _ = cr.show_text(&text);
+                    }
+                    if edge_id_font_size > 0.0 {
+                        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                        cr.set_font_size(edge_id_font_size as f64);
+
+                        let in_page = options.is_in_page_fn(page);
+                        let lines_by_island = self.data.lines_by_island();
+                        for (_, (_, lines)) in lines_by_island.iter().enumerate() {
+                            let cuts = lines.iter_cut();
+                            let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
+                                continue;
+                            };
+                            for cut_idx in page_cuts_to_cuts_idxs(edge_id_font_size, &page_cuts) {
+                                let text = format!("{}", usize::from(cut_idx.idx));
+                                let ext = cr.text_extents(&text).unwrap();
+                                let p = cut_idx.p - ext.width() as f32 / 2.0 * cut_idx.v;
+
+                                cr.set_matrix(mc);
+                                cr.move_to(p.x as f64, p.y as f64);
+                                cr.rotate(cut_idx.angle.0 as f64);
+                                let _ = cr.show_text(&text);
+                            }
+                        }
                     }
                 }
 
@@ -2545,6 +2581,66 @@ fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     if ui.is_item_hovered() {
         ui.set_mouse_cursor(Some(imgui::MouseCursor::Hand));
     }
+}
+
+pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<EdgeIndex>)>) -> Vec<Vector2> {
+    // Order the vertices in a closed loop
+    let mut res = Vec::with_capacity(cuts.len());
+    while let Some(mut p) = cuts.pop() {
+        res.push(p.0);
+        res.push(p.1);
+        while let Some((next, _)) = cuts
+            .iter()
+            .enumerate()
+            .map(|(idx, (v0, _, _))| (idx, (p.1 - v0).magnitude2()))
+            .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
+        {
+            p = cuts.swap_remove(next);
+            res.push(p.1);
+        }
+        // the last point should match the first, it is redundant
+        res.pop();
+    }
+    res
+}
+
+pub fn cuts_to_page_cuts(cuts: Vec<(&MVertex2DLine, &MVertex2DLine, Option<EdgeIndex>)>, in_page: impl Fn(Vector2) -> (bool, Vector2)) -> Option<Vec<(Vector2, Vector2, Option<EdgeIndex>)>>{
+    let mut touching = false;
+    let page_cut = cuts
+        .iter()
+        .map(|(v0, v1, idx)| {
+            let (is_in_0, v0) = in_page(v0.pos);
+            let (is_in_1, v1) = in_page(v1.pos);
+            touching |= is_in_0 | is_in_1;
+            (v0, v1, *idx)
+        })
+        .collect::<Vec<_>>();
+    touching.then_some(page_cut)
+}
+
+struct CutIdx {
+    v: Vector2,
+    p: Vector2,
+    angle: Rad<f32>,
+    idx: paper::EdgeIndex,
+}
+
+fn page_cuts_to_cuts_idxs(edge_id_font_size: f32, page_cuts: &[(Vector2, Vector2, Option<EdgeIndex>)]) -> impl Iterator<Item = CutIdx> + '_ {
+    page_cuts.into_iter()
+        .filter_map(move |(a, b, idx)| {
+            idx.map(|idx| {
+                let c = (a + b) / 2.0;
+                let v = (b - a).normalize();
+                let n = Vector2::new(-v.y, v.x) * edge_id_font_size;
+                let p = c + n;
+                let angle = -v.angle(Vector2::new(1.0, 0.0));
+                CutIdx {
+                    v, p,
+                    angle,
+                    idx
+                }
+            })
+        })
 }
 
 struct MyClipboard {

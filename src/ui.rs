@@ -250,6 +250,10 @@ pub struct PaperDrawFaceArgs {
     face_index: Vec<u32>,
     // For each line in vertices_edge_crease says which kind of line
     crease_kind: Vec<EdgeDrawKind>,
+    // For each pair of vertices_edge_cut, the EdgeIndex
+    vertices_edge_cut_index: Vec<EdgeIndex>,
+    // For each pair of vertices_tab_edge, the EdgeIndex
+    vertices_tab_edge_index: Vec<Option<EdgeIndex>>,
 }
 
 impl PaperDrawFaceArgs {
@@ -263,37 +267,21 @@ impl PaperDrawFaceArgs {
             vertices_shadow_tab: Vec::new(),
             face_index: vec![0; model.num_faces()],
             crease_kind: Vec::new(),
+            vertices_edge_cut_index: Vec::new(),
+            vertices_tab_edge_index: Vec::new(),
         }
     }
 
-    pub fn iter_cut(&self) -> Vec<(&MVertex2DLine, &MVertex2DLine)> {
+    pub fn iter_cut(&self) -> Vec<(&MVertex2DLine, &MVertex2DLine, Option<EdgeIndex>)> {
         self.vertices_tab_edge
             .chunks_exact(2)
+            .zip(self.vertices_tab_edge_index.iter().copied())
             .chain(self.vertices_edge_cut
                 .chunks_exact(2)
+                .zip(self.vertices_edge_cut_index.iter().copied().map(Some))
             )
-            .map(|s| (&s[0], &s[1]))
+            .map(|(s, idx)| (&s[0], &s[1], idx))
             .collect()
-    }
-    pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
-        // Order the vertices in a closed loop
-        let mut res = Vec::with_capacity(cuts.len());
-        while let Some(mut p) = cuts.pop() {
-            res.push(p.0);
-            res.push(p.1);
-            while let Some((next, _)) = cuts
-                .iter()
-                .enumerate()
-                .map(|(idx, (v0, _))| (idx, (p.1 - v0).magnitude2()))
-                .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
-            {
-                p = cuts.swap_remove(next);
-                res.push(p.1);
-            }
-            // the last point should match the first, it is redundant
-            res.pop();
-        }
-        res
     }
     pub fn iter_crease(&self, kind: EdgeDrawKind) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
         self.vertices_edge_crease
@@ -560,6 +548,7 @@ impl PapercraftContext {
                     .. v0
                 };
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
+                args.vertices_edge_cut_index.push(i_edge);
             }
 
             // Draw the tab?
@@ -611,9 +600,11 @@ impl PapercraftContext {
                     //The unneeded vertex is actually [2], so remove that copying the [3] over
                     p[2] = p[3];
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
+                    args.vertices_tab_edge_index.extend_from_slice(&[Some(i_edge), None]);
                     &mut p[..3]
                 } else {
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
+                    args.vertices_tab_edge_index.extend_from_slice(&[None, Some(i_edge), None]);
                     &mut p[..]
                 };
 

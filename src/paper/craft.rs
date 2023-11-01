@@ -92,6 +92,7 @@ pub struct JoinResult {
 
 fn my_true() -> bool { true }
 fn default_fold_line_width() -> f32 { 0.1 }
+fn my_zero() -> f32 { 0.0 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PaperOptions {
@@ -122,6 +123,8 @@ pub struct PaperOptions {
     pub show_self_promotion: bool,
     #[serde(default="my_true")]
     pub show_page_number: bool,
+    #[serde(default="my_zero")]
+    pub edge_id_font_size: f32, //0.0 to disable
 }
 
 impl Default for PaperOptions {
@@ -145,6 +148,7 @@ impl Default for PaperOptions {
             hidden_line_angle: 0.0,
             show_self_promotion: true,
             show_page_number: true,
+            edge_id_font_size: 0.0,
         }
     }
 }
@@ -164,6 +168,15 @@ impl PaperOptions {
         let row = page / page_cols;
         let col = page % page_cols;
         Vector2::new((col as f32) * (page_size.x + PAGE_SEP), (row as f32) * (page_size.y + PAGE_SEP))
+    }
+    pub fn is_in_page_fn(&self, page: u32) -> impl Fn(Vector2) -> (bool, Vector2) {
+        let page_pos_0 = self.page_position(page);
+        let page_size = Vector2::from(self.page_size);
+        move |p: Vector2| {
+            let r = p - page_pos_0;
+            let is_in = r.x >= 0.0 && r.y >= 0.0 && r.x < page_size.x && r.y < page_size.y;
+            (is_in, r)
+        }
     }
     pub fn global_to_page(&self, pos: Vector2) -> PageOffset {
         let page_cols = self.page_cols;

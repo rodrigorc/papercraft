@@ -52,7 +52,23 @@ impl Papercraft {
     fn recompute_edge_ids(&mut self) {
         let mut next_edge_id = 0;
         let mut edge_ids: Vec<Option<NonZeroU32>> = vec![None; self.model.num_edges()];
-        for (((_, edge), edge_status), edge_id) in self.model.edges().zip(&self.edges).zip(&mut edge_ids) {
+
+        let mut edge_collection: Vec<_> = self.model.edges()
+            .zip(&self.edges)
+            .zip(&mut edge_ids)
+            .map(|(((_, edge), edge_status), edge_id)| {
+                let p0 = self.model[edge.v0()].pos();
+                let p1 = self.model[edge.v1()].pos();
+                let c = (p0 + p1) / 2.0;
+                (c, edge, edge_status, edge_id)
+            })
+            .collect();
+
+        edge_collection.sort_by(|(ca, _, _, _), (cb, _, _, _)| {
+            ca.y.total_cmp(&cb.y).then_with(|| ca.z.total_cmp(&cb.z)).then_with(|| ca.x.total_cmp(&cb.x))
+        });
+
+        for (_, edge, edge_status, edge_id) in edge_collection {
             match (edge.faces(), edge_status) {
                 // edges from tessellations or rims don't have ids
                 (_, EdgeStatus::Hidden) | ((_, None), _) => {}

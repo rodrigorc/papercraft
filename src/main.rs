@@ -2414,7 +2414,7 @@ impl GlobalContext {
                                 let Some(cut_idx) = cut_idx else {
                                     continue
                                 };
-                                let text = format!("{}", cut_idx.id);
+                                let text = format!("{}.", cut_idx.id);
                                 let ext = cr.text_extents(&text).unwrap();
                                 let p = in_page(cut_idx.pos).1 - ext.width() as f32 / 2.0 * cut_idx.dir;
 

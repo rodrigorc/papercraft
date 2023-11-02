@@ -9,7 +9,7 @@ use cgmath::{
 };
 use image::DynamicImage;
 
-use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, TabGeom, TabSide, EdgeToggleTabAction};
+use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, EdgeIdPosition, TabGeom, TabSide, EdgeToggleTabAction};
 use crate::util_3d::{self, Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use crate::util_gl::{MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 use crate::glr::{self, Rgba};
@@ -299,24 +299,30 @@ pub struct CutIndex {
     pub pos: Vector2,
     pub dir: Vector2,
     pub angle: Rad<f32>,
-    pub idx: EdgeIndex,
+    pub id: u32,
 }
 
 impl CutIndex {
-    fn new(a: Vector2, b: Vector2, idx: EdgeIndex, font_size: f32) -> Option<CutIndex> {
-        if font_size <= 0.0 {
+    fn new(a: Vector2, b: Vector2, id: u32, options: &PaperOptions) -> Option<CutIndex> {
+        if options.edge_id_font_size <= 0.0 {
             return None;
         }
+        let factor = match options.edge_id_position {
+            EdgeIdPosition::None => return None,
+            EdgeIdPosition::Inside => -0.1, // somewhat arbitrary separation
+            EdgeIdPosition::Outside => 1.0,
+        };
+        let factor = factor * 25.4 / 72.0;
         let center = (a + b) / 2.0;
         let dir = (b - a).normalize();
         let normal = Vector2::new(-dir.y, dir.x);
-        let pos = center + normal * font_size;
+        let pos = center + normal * options.edge_id_font_size * factor;
         let angle = -dir.angle(Vector2::new(1.0, 0.0));
         Some(CutIndex {
             pos,
             dir,
             angle,
-            idx
+            id
         })
     }
 }
@@ -426,7 +432,10 @@ impl PapercraftContext {
     )
     {
         args.face_index[usize::from(i_face)] = args.vertices.len() as u32 / 3;
-        let scale = self.papercraft.options().scale;
+        let options = self.papercraft.options();
+        let scale = options.scale;
+        let tab_style = options.tab_style;
+        let fold_line_width = options.fold_line_width;
 
         for i_v in face.index_vertices() {
             let v = &self.papercraft.model()[i_v];
@@ -440,13 +449,10 @@ impl PapercraftContext {
             });
         }
 
-        let tab_style = self.papercraft.options().tab_style;
-        let fold_line_width = self.papercraft.options().fold_line_width;
-        let edge_id_font_size = self.papercraft.options().edge_id_font_size * 25.4 / 72.0; // pt to mm
-
         for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
             let edge = &self.papercraft.model()[i_edge];
             let edge_status = self.papercraft.edge_status(i_edge);
+            let edge_id = self.papercraft.edge_id(i_edge);
 
             // If a tab is to be drawn, i_face_tab_other references the adjacent face
             enum DrawTab {
@@ -500,7 +506,7 @@ impl PapercraftContext {
             //cut with a tab
             let crease_kind = if edge_status == EdgeStatus::Joined || i_face_tab_other.is_some() {
                 let angle_3d = self.papercraft.model().edge_angle(i_edge);
-                if edge_status == EdgeStatus::Joined && Rad(angle_3d.0.abs()) < Rad::from(Deg(self.papercraft.options().hidden_line_angle)) {
+                if edge_status == EdgeStatus::Joined && Rad(angle_3d.0.abs()) < Rad::from(Deg(options.hidden_line_angle)) {
                     continue;
                 }
                 let kind = if angle_3d.0.is_sign_negative() { EdgeDrawKind::Valley } else { EdgeDrawKind::Mountain };
@@ -519,9 +525,9 @@ impl PapercraftContext {
 
             let v_len = v.magnitude();
 
-            let fold_factor = self.papercraft.options().fold_line_len / v_len;
+            let fold_factor = options.fold_line_len / v_len;
             if let Some(crease_kind) = crease_kind {
-                let visible_line = match self.papercraft.options().fold_style {
+                let visible_line = match options.fold_style {
                     FoldStyle::Full => (Some(0.0), None),
                     FoldStyle::FullAndOut => (Some(fold_factor), None),
                     FoldStyle::Out => (Some(fold_factor), Some(0.0)),
@@ -590,8 +596,8 @@ impl PapercraftContext {
                     .. v0
                 };
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
-                if let Some(extra) = extra.as_mut() {
-                    extra.vertices_edge_cut_index.push(CutIndex::new(v0.pos, v1.pos, i_edge, edge_id_font_size));
+                if let (Some(extra), Some(edge_id)) = (extra.as_mut(), edge_id) {
+                    extra.vertices_edge_cut_index.push(CutIndex::new(v0.pos, v1.pos, edge_id, &options));
                 }
             }
 
@@ -645,12 +651,12 @@ impl PapercraftContext {
                     p[2] = p[3];
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
 
-                    if let Some(extra) = extra.as_mut() {
+                    if let (Some(extra), Some(edge_id)) = (extra.as_mut(), edge_id) {
                         // Attach the edge id to the longest edge of the triangular tab
                         let tei = if (p[1].pos - p[0].pos).magnitude2() > (p[2].pos - p[1].pos).magnitude2() {
-                            [CutIndex::new(p[0].pos, p[1].pos, i_edge, edge_id_font_size), None]
+                            [CutIndex::new(p[0].pos, p[1].pos, edge_id, options), None]
                         } else {
-                            [None, CutIndex::new(p[1].pos, p[2].pos, i_edge, edge_id_font_size)]
+                            [None, CutIndex::new(p[1].pos, p[2].pos, edge_id, options)]
                         };
                         extra.vertices_tab_edge_index.extend_from_slice(&tei);
                     }
@@ -658,9 +664,9 @@ impl PapercraftContext {
                 } else {
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
 
-                    if let Some(extra) = extra.as_mut() {
+                    if let (Some(extra), Some(edge_id)) = (extra.as_mut(), edge_id) {
                         // Attach the edge id to the opposite edge of the tab
-                        extra.vertices_tab_edge_index.extend_from_slice(&[None, CutIndex::new(p[1].pos, p[2].pos, i_edge, edge_id_font_size), None]);
+                        extra.vertices_tab_edge_index.extend_from_slice(&[None, CutIndex::new(p[1].pos, p[2].pos, edge_id, options), None]);
                     }
                     &mut p[..]
                 };

@@ -1,5 +1,6 @@
 use std::ops::ControlFlow;
 use std::cell::RefCell;
+use std::num::NonZeroU32;
 
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad, Deg};
@@ -77,6 +78,14 @@ pub enum FoldStyle {
     None,
 }
 
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum EdgeIdPosition {
+    None,
+    #[default]
+    Outside,
+    Inside,
+}
+
 new_key_type! {
     pub struct IslandKey;
 }
@@ -92,7 +101,7 @@ pub struct JoinResult {
 
 fn my_true() -> bool { true }
 fn default_fold_line_width() -> f32 { 0.1 }
-fn my_zero() -> f32 { 0.0 }
+fn default_edge_id_font_size() -> f32 { 8.0 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PaperOptions {
@@ -123,8 +132,10 @@ pub struct PaperOptions {
     pub show_self_promotion: bool,
     #[serde(default="my_true")]
     pub show_page_number: bool,
-    #[serde(default="my_zero")]
-    pub edge_id_font_size: f32, //0.0 to disable
+    #[serde(default="default_edge_id_font_size")]
+    pub edge_id_font_size: f32,
+    #[serde(default)]
+    pub edge_id_position: EdgeIdPosition,
 }
 
 impl Default for PaperOptions {
@@ -148,7 +159,8 @@ impl Default for PaperOptions {
             hidden_line_angle: 0.0,
             show_self_promotion: true,
             show_page_number: true,
-            edge_id_font_size: 0.0,
+            edge_id_font_size: default_edge_id_font_size(),
+            edge_id_position: EdgeIdPosition::Outside,
         }
     }
 }
@@ -227,6 +239,8 @@ pub struct Papercraft {
 
     #[serde(skip)]
     memo: Memoization,
+    #[serde(skip)]
+    edge_ids: Vec<Option<NonZeroU32>>, //parallel to EdgeIndex
 }
 
 #[derive(Copy, Clone, Default)]
@@ -251,6 +265,7 @@ impl Papercraft {
             edges: Vec::new(),
             islands: SlotMap::with_key(),
             memo: Memoization::default(),
+            edge_ids: Vec::new(),
         }
     }
 
@@ -372,6 +387,9 @@ impl Papercraft {
 
     pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {
         self.edges[usize::from(edge)]
+    }
+    pub fn edge_id(&self, edge: EdgeIndex) -> Option<u32> {
+        self.edge_ids[usize::from(edge)].map(|x| x.get())
     }
 
     pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex, action: EdgeToggleTabAction) -> Option<TabSide> {
@@ -1194,6 +1212,32 @@ impl<'de> Deserialize<'de> for FoldStyle {
             4 => FoldStyle::InAndOut,
             5 => FoldStyle::None,
             _ => return Err(serde::de::Error::missing_field("invalid fold_style value")),
+        };
+        Ok(res)
+    }
+}
+
+impl Serialize for EdgeIdPosition {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let is = match self {
+            EdgeIdPosition::None => 0,
+            EdgeIdPosition::Outside => 1,
+            EdgeIdPosition::Inside => -1,
+        };
+        serializer.serialize_i32(is)
+    }
+}
+impl<'de> Deserialize<'de> for EdgeIdPosition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: serde::Deserializer<'de>
+    {
+        let d = i32::deserialize(deserializer)?;
+        let res = match d {
+            1 => EdgeIdPosition::Outside,
+            -1 => EdgeIdPosition::Inside,
+            _ => return Err(serde::de::Error::missing_field("invalid edge_id_position value")),
         };
         Ok(res)
     }

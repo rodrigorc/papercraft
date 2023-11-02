@@ -45,7 +45,24 @@ impl Papercraft {
                 .decode()?;
             Ok(img)
         })?;
+
+        papercraft.recompute_edge_ids();
         Ok(papercraft)
+    }
+    fn recompute_edge_ids(&mut self) {
+        let mut next_edge_id = 0;
+        let mut edge_ids: Vec<Option<NonZeroU32>> = vec![None; self.model.num_edges()];
+        for (((_, edge), edge_status), edge_id) in self.model.edges().zip(&self.edges).zip(&mut edge_ids) {
+            match (edge.faces(), edge_status) {
+                // edges from tessellations or rims don't have ids
+                (_, EdgeStatus::Hidden) | ((_, None), _) => {}
+                _ => {
+                    next_edge_id += 1;
+                    *edge_id = NonZeroU32::new(next_edge_id);
+                }
+            }
+        }
+        self.edge_ids = edge_ids;
     }
 
     pub fn import_waveobj(file_name: &Path) -> Result<Papercraft> {
@@ -97,13 +114,16 @@ impl Papercraft {
             let i_edge = EdgeIndex::from(i_edge);
             let edge = &model[i_edge];
             match edge.faces() {
+                // Edge from tessellation of a n-gon
                 (fa, Some(fb)) if facemap[&fa] == facemap[&fb] => {
                     *edge_status = EdgeStatus::Hidden;
                 }
+                // Rim
                 (_, None) => {
                     // edges in the rim (without adjacent face) do not have a tab
                     *edge_status = EdgeStatus::Cut(TabSide::Hidden)
                 }
+                // Normal edge
                 _ => {}
             }
         }
@@ -136,7 +156,10 @@ impl Papercraft {
             edges,
             islands,
             memo: Memoization::default(),
+            edge_ids: Vec::new(),
         };
+        papercraft.recompute_edge_ids();
+
         let (v_min, v_max) = crate::util_3d::bounding_box_3d(
             papercraft.model()
                 .vertices()

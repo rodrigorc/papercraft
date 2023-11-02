@@ -34,7 +34,7 @@ static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
 static ICONS_PNG: &[u8] = include_bytes!("icons.png");
 const FONT_SIZE: f32 = 3.0;
 
-use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions};
+use paper::{Papercraft, TabStyle, FoldStyle, EdgeIdPosition, PaperOptions};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
@@ -1089,9 +1089,30 @@ impl GlobalContext {
                 ui.set_next_item_width(ui.current_font_size() * 11.0);
                 ui.checkbox("Print page number", &mut options.show_page_number);
 
-                ui.set_next_item_width(ui.current_font_size() * 5.0);
-                ui.input_float("Edge id font size in pt (0 to disable)", &mut options.edge_id_font_size).display_format("%g").build();
-                options.edge_id_font_size = options.edge_id_font_size.clamp(0.0, 72.0);
+                static EDGE_ID_POSITIONS: &[EdgeIdPosition] = &[
+                    EdgeIdPosition::None,
+                    EdgeIdPosition::Outside,
+                    EdgeIdPosition::Inside,
+                ];
+                fn fmt_edge_id_position(s: EdgeIdPosition) -> &'static str {
+                    match s {
+                        EdgeIdPosition::None => "None",
+                        EdgeIdPosition::Outside => "Outside",
+                        EdgeIdPosition::Inside => "Inside",
+                    }
+                }
+                let mut i_edge_id_pos = EDGE_ID_POSITIONS.iter().position(|s| *s == options.edge_id_position).unwrap_or(0);
+                ui.set_next_item_width(ui.current_font_size() * 6.0);
+                if ui.combo("Edge id position", &mut i_edge_id_pos, EDGE_ID_POSITIONS, |s| fmt_edge_id_position(*s).into()) {
+                    options.edge_id_position = EDGE_ID_POSITIONS[i_edge_id_pos];
+                }
+
+                ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
+
+                ui.set_next_item_width(ui.current_font_size() * 3.0);
+                ui.input_float("Edge id font size (pt)", &mut options.edge_id_font_size).display_format("%g").build();
+                options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
+
             }
             if ui.collapsing_header("Paper size", imgui::TreeNodeFlags::empty()) {
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
@@ -2046,6 +2067,7 @@ impl GlobalContext {
         let options = self.data.papercraft().options();
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
         let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
+        let edge_id_position = options.edge_id_position;
 
         self.generate_pages(false, |page, pixbuf| {
             let name = Self::file_name_for_page(file_name, page);
@@ -2068,7 +2090,7 @@ impl GlobalContext {
                 let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
                     continue;
                 };
-                if edge_id_font_size > 0.0 {
+                if edge_id_position != EdgeIdPosition::None {
                     cut_idxs.extend(page_cuts.iter().filter_map(|(_, _, idx)| *idx));
                 }
                 all_page_cuts.push((idx, page_cuts));
@@ -2080,34 +2102,41 @@ impl GlobalContext {
                 page_size.x, page_size.y
             )?;
 
-            // begin layer Text
-            writeln!(&mut out, r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#)?;
-            if options.show_self_promotion {
-                writeln!(&mut out, r#"<text id="Signature" x="{}" y="{}" style="font-size:{};font-family:sans-serif;fill:#000000">{}</text>"#,
-                    margin_left, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
-                    signature()
-                )?;
-            }
-            if options.show_page_number {
-                writeln!(&mut out, r#"<text id="Page_{3}" x="{0}" y="{1}" style="text-anchor:end;font-size:{2};font-family:sans-serif;fill:#000000">Page {3}/{4}</text>"#,
-                    page_size.x - margin_right, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
-                    page + 1,
-                    options.pages,
-                )?;
-            }
-            if edge_id_font_size > 0.0 {
-                for id in cut_idxs {
-                    let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-id.angle);
-                    let p = basis2.rotate_vector(id.pos);
-                    writeln!(&mut out, r#"<text x="{}" y="{}" style="text-anchor:middle;font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
-                        p.x, p.y, edge_id_font_size,
-                        Deg::from(id.angle).0,
-                        usize::from(id.idx),
+            let write_layer_text = |out: &mut std::io::BufWriter<std::fs::File>| -> anyhow::Result<()> {
+                // begin layer Text
+                writeln!(out, r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#)?;
+                if options.show_self_promotion {
+                    writeln!(out, r#"<text id="Signature" x="{}" y="{}" style="font-size:{};font-family:sans-serif;fill:#000000">{}</text>"#,
+                        margin_left, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
+                        signature()
                     )?;
                 }
+                if options.show_page_number {
+                    writeln!(out, r#"<text id="Page_{3}" x="{0}" y="{1}" style="text-anchor:end;font-size:{2};font-family:sans-serif;fill:#000000">Page {3}/{4}</text>"#,
+                        page_size.x - margin_right, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
+                        page + 1,
+                        options.pages,
+                    )?;
+                }
+                if edge_id_position != EdgeIdPosition::None {
+                    for cut_idx in &cut_idxs {
+                        let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-cut_idx.angle);
+                        let p = basis2.rotate_vector(in_page(cut_idx.pos).1);
+                        writeln!(out, r#"<text x="{}" y="{}" style="text-anchor:middle;font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}.</text>"#,
+                            p.x, p.y, edge_id_font_size,
+                            Deg::from(cut_idx.angle).0,
+                            cut_idx.id,
+                        )?;
+                    }
+                }
+                writeln!(out, r#"</g>"#)?;
+                // end layer Text
+                Ok(())
+            };
+
+            if edge_id_position != EdgeIdPosition::Inside {
+                write_layer_text(&mut out)?;
             }
-            writeln!(&mut out, r#"</g>"#)?;
-            // end layer Text
 
             // begin layer Background
             writeln!(&mut out, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
@@ -2117,6 +2146,10 @@ impl GlobalContext {
                 page_size.x, page_size.y, b64png)?;
             writeln!(&mut out, r#"</g>"#)?;
             // end layer Background
+
+            if edge_id_position == EdgeIdPosition::Inside {
+                write_layer_text(&mut out)?;
+            }
 
             // begin layer Cut
             writeln!(&mut out, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
@@ -2332,11 +2365,17 @@ impl GlobalContext {
                 }
 
                 let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
+                let edge_id_position = options.edge_id_position;
 
-                if with_text && (options.show_self_promotion || options.show_page_number || edge_id_font_size > 0.0) {
+                if with_text && (options.show_self_promotion || options.show_page_number || edge_id_position != EdgeIdPosition::None) {
                     let cr = cairo::Context::new(&pixbuf)?;
-                    // Text should be below the texture
-                    cr.set_operator(cairo::Operator::DestOver);
+                    match edge_id_position {
+                        // Text below the texture
+                        EdgeIdPosition::None |
+                        EdgeIdPosition::Outside => cr.set_operator(cairo::Operator::DestOver),
+                        // Text above the texture
+                        EdgeIdPosition::Inside => cr.set_operator(cairo::Operator::Over),
+                    }
                     let mut mc = cairo::Matrix::identity();
                     let scale = resolution / 25.4; // use millimeters
                     mc.scale(scale as f64, scale as f64);
@@ -2360,7 +2399,7 @@ impl GlobalContext {
                         cr.move_to(x as f64 - ext.width(), y as f64);
                         let _ = cr.show_text(&text);
                     }
-                    if edge_id_font_size > 0.0 {
+                    if edge_id_position != EdgeIdPosition::None {
                         cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                         cr.set_font_size(edge_id_font_size as f64);
 
@@ -2375,9 +2414,9 @@ impl GlobalContext {
                                 let Some(cut_idx) = cut_idx else {
                                     continue
                                 };
-                                let text = format!("{}", usize::from(cut_idx.idx));
+                                let text = format!("{}", cut_idx.id);
                                 let ext = cr.text_extents(&text).unwrap();
-                                let p = cut_idx.pos - ext.width() as f32 / 2.0 * cut_idx.dir;
+                                let p = in_page(cut_idx.pos).1 - ext.width() as f32 / 2.0 * cut_idx.dir;
 
                                 cr.set_matrix(mc);
                                 cr.move_to(p.x as f64, p.y as f64);

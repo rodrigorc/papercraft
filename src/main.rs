@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
-    Deg, Rad,
+    Deg,
 };
 use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
@@ -34,7 +34,7 @@ static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
 static ICONS_PNG: &[u8] = include_bytes!("icons.png");
 const FONT_SIZE: f32 = 3.0;
 
-use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions, EdgeIndex};
+use paper::{Papercraft, TabStyle, FoldStyle, PaperOptions};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
@@ -2060,16 +2060,16 @@ impl GlobalContext {
             pixbuf.write_to_png(&mut png)?;
             let b64png = BASE64_STANDARD.encode(&png);
 
-            let mut cut_idxs = Vec::new();
+            let mut cut_idxs: Vec<&CutIndex> = Vec::new();
             let mut all_page_cuts = Vec::new();
 
-            for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
-                let cuts = lines.iter_cut();
+            for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
+                let cuts = lines.iter_cut(&extra);
                 let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
                     continue;
                 };
                 if edge_id_font_size > 0.0 {
-                    cut_idxs.extend(page_cuts_to_cuts_idxs(edge_id_font_size, &page_cuts));
+                    cut_idxs.extend(page_cuts.iter().filter_map(|(_, _, idx)| *idx));
                 }
                 all_page_cuts.push((idx, page_cuts));
             }
@@ -2098,7 +2098,7 @@ impl GlobalContext {
             if edge_id_font_size > 0.0 {
                 for id in cut_idxs {
                     let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-id.angle);
-                    let p = basis2.rotate_vector(id.p);
+                    let p = basis2.rotate_vector(id.pos);
                     writeln!(&mut out, r#"<text x="{}" y="{}" style="text-anchor:middle;font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
                         p.x, p.y, edge_id_font_size,
                         Deg::from(id.angle).0,
@@ -2138,8 +2138,8 @@ impl GlobalContext {
             for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
                 writeln!(&mut out, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
                     if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
-                for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
-                    let creases = lines.iter_crease(fold_kind);
+                for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
+                    let creases = lines.iter_crease(&extra, fold_kind);
                     // each crease can be checked for bounds individually
                     let page_creases = creases
                         .filter_map(|(a, b)| {
@@ -2366,15 +2366,18 @@ impl GlobalContext {
 
                         let in_page = options.is_in_page_fn(page);
                         let lines_by_island = self.data.lines_by_island();
-                        for (_, (_, lines)) in lines_by_island.iter().enumerate() {
-                            let cuts = lines.iter_cut();
+                        for (_, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
+                            let cuts = lines.iter_cut(&extra);
                             let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
                                 continue;
                             };
-                            for cut_idx in page_cuts_to_cuts_idxs(edge_id_font_size, &page_cuts) {
+                            for (_, _, cut_idx) in &page_cuts {
+                                let Some(cut_idx) = cut_idx else {
+                                    continue
+                                };
                                 let text = format!("{}", usize::from(cut_idx.idx));
                                 let ext = cr.text_extents(&text).unwrap();
-                                let p = cut_idx.p - ext.width() as f32 / 2.0 * cut_idx.v;
+                                let p = cut_idx.pos - ext.width() as f32 / 2.0 * cut_idx.dir;
 
                                 cr.set_matrix(mc);
                                 cr.move_to(p.x as f64, p.y as f64);
@@ -2583,7 +2586,7 @@ fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     }
 }
 
-pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<EdgeIndex>)>) -> Vec<Vector2> {
+pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> Vec<Vector2> {
     // Order the vertices in a closed loop
     let mut res = Vec::with_capacity(cuts.len());
     while let Some(mut p) = cuts.pop() {
@@ -2604,7 +2607,7 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<EdgeIndex>)>) -> V
     res
 }
 
-pub fn cuts_to_page_cuts(cuts: Vec<(&MVertex2DLine, &MVertex2DLine, Option<EdgeIndex>)>, in_page: impl Fn(Vector2) -> (bool, Vector2)) -> Option<Vec<(Vector2, Vector2, Option<EdgeIndex>)>>{
+pub fn cuts_to_page_cuts<'c>(cuts: Vec<(&MVertex2DLine, &MVertex2DLine, Option<&'c CutIndex>)>, in_page: impl Fn(Vector2) -> (bool, Vector2)) -> Option<Vec<(Vector2, Vector2, Option<&'c CutIndex>)>>{
     let mut touching = false;
     let page_cut = cuts
         .iter()
@@ -2616,31 +2619,6 @@ pub fn cuts_to_page_cuts(cuts: Vec<(&MVertex2DLine, &MVertex2DLine, Option<EdgeI
         })
         .collect::<Vec<_>>();
     touching.then_some(page_cut)
-}
-
-struct CutIdx {
-    v: Vector2,
-    p: Vector2,
-    angle: Rad<f32>,
-    idx: paper::EdgeIndex,
-}
-
-fn page_cuts_to_cuts_idxs(edge_id_font_size: f32, page_cuts: &[(Vector2, Vector2, Option<EdgeIndex>)]) -> impl Iterator<Item = CutIdx> + '_ {
-    page_cuts.into_iter()
-        .filter_map(move |(a, b, idx)| {
-            idx.map(|idx| {
-                let c = (a + b) / 2.0;
-                let v = (b - a).normalize();
-                let n = Vector2::new(-v.y, v.x) * edge_id_font_size;
-                let p = c + n;
-                let angle = -v.angle(Vector2::new(1.0, 0.0));
-                CutIdx {
-                    v, p,
-                    angle,
-                    idx
-                }
-            })
-        })
 }
 
 struct MyClipboard {

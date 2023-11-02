@@ -248,12 +248,17 @@ pub struct PaperDrawFaceArgs {
 
     // Maps a FaceIndex to the index into vertices
     face_index: Vec<u32>,
+}
+
+// Complements PaperDrawFaceArgs for printable operations
+#[derive(Default)]
+pub struct PaperDrawFaceArgsExtra {
     // For each line in vertices_edge_crease says which kind of line
     crease_kind: Vec<EdgeDrawKind>,
-    // For each pair of vertices_edge_cut, the EdgeIndex
-    vertices_edge_cut_index: Vec<EdgeIndex>,
-    // For each pair of vertices_tab_edge, the EdgeIndex
-    vertices_tab_edge_index: Vec<Option<EdgeIndex>>,
+    // For each pair of vertices_edge_cut, the edge id position
+    vertices_edge_cut_index: Vec<Option<CutIndex>>,
+    // For each pair of vertices_tab_edge, the edge id position
+    vertices_tab_edge_index: Vec<Option<CutIndex>>,
 }
 
 impl PaperDrawFaceArgs {
@@ -266,29 +271,53 @@ impl PaperDrawFaceArgs {
             vertices_tab_edge: Vec::new(),
             vertices_shadow_tab: Vec::new(),
             face_index: vec![0; model.num_faces()],
-            crease_kind: Vec::new(),
-            vertices_edge_cut_index: Vec::new(),
-            vertices_tab_edge_index: Vec::new(),
         }
     }
 
-    pub fn iter_cut(&self) -> Vec<(&MVertex2DLine, &MVertex2DLine, Option<EdgeIndex>)> {
+    pub fn iter_cut<'a>(&'a self, extra: &'a PaperDrawFaceArgsExtra) -> Vec<(&'a MVertex2DLine, &'a MVertex2DLine, Option<&'a CutIndex>)> {
         self.vertices_tab_edge
             .chunks_exact(2)
-            .zip(self.vertices_tab_edge_index.iter().copied())
+            .zip(extra.vertices_tab_edge_index.iter())
             .chain(self.vertices_edge_cut
                 .chunks_exact(2)
-                .zip(self.vertices_edge_cut_index.iter().copied().map(Some))
+                .zip(extra.vertices_edge_cut_index.iter())
             )
-            .map(|(s, idx)| (&s[0], &s[1], idx))
+            .map(|(s, idx)| (&s[0], &s[1], idx.as_ref()))
             .collect()
     }
-    pub fn iter_crease(&self, kind: EdgeDrawKind) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+    pub fn iter_crease<'a>(&'a self, extra: &'a PaperDrawFaceArgsExtra, kind: EdgeDrawKind) -> impl Iterator<Item = (&'a MVertex2DLine, &'a MVertex2DLine)> + 'a {
         self.vertices_edge_crease
             .chunks_exact(2)
-            .zip(self.crease_kind.iter())
+            .zip(extra.crease_kind.iter())
             .filter_map(move |(line, ek)| (*ek == kind).then_some(line))
             .map(|s| (&s[0], &s[1]))
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct CutIndex {
+    pub pos: Vector2,
+    pub dir: Vector2,
+    pub angle: Rad<f32>,
+    pub idx: EdgeIndex,
+}
+
+impl CutIndex {
+    fn new(a: Vector2, b: Vector2, idx: EdgeIndex, font_size: f32) -> Option<CutIndex> {
+        if font_size <= 0.0 {
+            return None;
+        }
+        let center = (a + b) / 2.0;
+        let dir = (b - a).normalize();
+        let normal = Vector2::new(-dir.y, dir.x);
+        let pos = center + normal * font_size;
+        let angle = -dir.angle(Vector2::new(1.0, 0.0));
+        Some(CutIndex {
+            pos,
+            dir,
+            angle,
+            idx
+        })
     }
 }
 
@@ -386,7 +415,16 @@ impl PapercraftContext {
         self.papercraft.set_options(options)
     }
 
-    fn paper_draw_face(&self, face: &Face, i_face: FaceIndex, m: &Matrix3, args: &mut PaperDrawFaceArgs, mut tab_cache: Option<&mut Vec<(FaceIndex, TabVertices)>>) {
+    fn paper_draw_face(
+        &self,
+        face: &Face,
+        i_face: FaceIndex,
+        m: &Matrix3,
+        args: &mut PaperDrawFaceArgs,
+        mut tab_cache: Option<&mut Vec<(FaceIndex, TabVertices)>>,
+        mut extra: Option<&mut PaperDrawFaceArgsExtra>,
+    )
+    {
         args.face_index[usize::from(i_face)] = args.vertices.len() as u32 / 3;
         let scale = self.papercraft.options().scale;
 
@@ -404,6 +442,7 @@ impl PapercraftContext {
 
         let tab_style = self.papercraft.options().tab_style;
         let fold_line_width = self.papercraft.options().fold_line_width;
+        let edge_id_font_size = self.papercraft.options().edge_id_font_size * 25.4 / 72.0; // pt to mm
 
         for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
             let edge = &self.papercraft.model()[i_edge];
@@ -506,7 +545,9 @@ impl PapercraftContext {
                         };
                         let new_lines = [v0, v1];
                         args.vertices_edge_crease.extend_from_slice(&new_lines);
-                        args.crease_kind.push(crease_kind);
+                        if let Some(extra) = extra.as_mut() {
+                            extra.crease_kind.push(crease_kind);
+                        }
                     }
                     (Some(f_a), Some(f_b)) => {
                         let vn_a = v * f_a;
@@ -534,8 +575,9 @@ impl PapercraftContext {
                         let new_lines = [va0, va1, vb0, vb1];
                         args.vertices_edge_crease.extend_from_slice(&new_lines);
                         // two lines
-                        args.crease_kind.push(crease_kind);
-                        args.crease_kind.push(crease_kind);
+                        if let Some(extra) = extra.as_mut() {
+                            extra.crease_kind.extend_from_slice(&[crease_kind, crease_kind]);
+                        }
                     }
                 };
             } else {
@@ -548,7 +590,9 @@ impl PapercraftContext {
                     .. v0
                 };
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
-                args.vertices_edge_cut_index.push(i_edge);
+                if let Some(extra) = extra.as_mut() {
+                    extra.vertices_edge_cut_index.push(CutIndex::new(v0.pos, v1.pos, i_edge, edge_id_font_size));
+                }
             }
 
             // Draw the tab?
@@ -600,11 +644,24 @@ impl PapercraftContext {
                     //The unneeded vertex is actually [2], so remove that copying the [3] over
                     p[2] = p[3];
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
-                    args.vertices_tab_edge_index.extend_from_slice(&[Some(i_edge), None]);
+
+                    if let Some(extra) = extra.as_mut() {
+                        // Attach the edge id to the longest edge of the triangular tab
+                        let tei = if (p[1].pos - p[0].pos).magnitude2() > (p[2].pos - p[1].pos).magnitude2() {
+                            [CutIndex::new(p[0].pos, p[1].pos, i_edge, edge_id_font_size), None]
+                        } else {
+                            [None, CutIndex::new(p[1].pos, p[2].pos, i_edge, edge_id_font_size)]
+                        };
+                        extra.vertices_tab_edge_index.extend_from_slice(&tei);
+                    }
                     &mut p[..3]
                 } else {
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
-                    args.vertices_tab_edge_index.extend_from_slice(&[None, Some(i_edge), None]);
+
+                    if let Some(extra) = extra.as_mut() {
+                        // Attach the edge id to the opposite edge of the tab
+                        extra.vertices_tab_edge_index.extend_from_slice(&[None, CutIndex::new(p[1].pos, p[2].pos, i_edge, edge_id_font_size), None]);
+                    }
                     &mut p[..]
                 };
 
@@ -717,7 +774,7 @@ impl PapercraftContext {
                     if let Some((mx_face, _)) = &mut shadow_cache {
                         mx_face.insert(i_face, *mx);
                     }
-                    self.paper_draw_face(face, i_face, mx, &mut args, shadow_cache.as_mut().map(|(_, t)| t));
+                    self.paper_draw_face(face, i_face, mx, &mut args, shadow_cache.as_mut().map(|(_, t)| t), None);
                     ControlFlow::Continue(())
                 }
             );
@@ -1529,17 +1586,18 @@ impl PapercraftContext {
         self.selected_edge.is_some()
     }
 
-    pub fn lines_by_island(&self) -> Vec<(IslandKey, PaperDrawFaceArgs)> {
+    pub fn lines_by_island(&self) -> Vec<(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))> {
         self.papercraft.islands()
             .map(|(id, island)| {
                 let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
+                let mut extra = PaperDrawFaceArgsExtra::default();
                 self.papercraft.traverse_faces(island,
                     |i_face, face, mx| {
-                        self.paper_draw_face(face, i_face, mx, &mut args, None);
+                        self.paper_draw_face(face, i_face, mx, &mut args, None, Some(&mut extra));
                         ControlFlow::Continue(())
                     }
                 );
-                (id, args)
+                (id, (args, extra))
             })
             .collect()
     }

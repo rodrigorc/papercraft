@@ -454,33 +454,46 @@ impl PapercraftContext {
             let edge_status = self.papercraft.edge_status(i_edge);
             let edge_id = self.papercraft.edge_id(i_edge);
 
-            // If a tab is to be drawn, i_face_tab_other references the adjacent face
+            // `draw_tab`` references the adjacent face, and tells if it has to be drawn
+            #[derive(Copy, Clone)]
             enum DrawTab {
-                Other(FaceIndex),
-                Rim,
+                Visible(Option<FaceIndex>),
+                Invisible(Option<FaceIndex>),
             }
-            let i_face_tab_other = match edge_status {
+            impl DrawTab {
+                fn is_visible(&self) -> bool {
+                    matches!(self, DrawTab::Visible(_))
+                }
+                #[allow(dead_code)]
+                fn face(self) -> Option<FaceIndex> {
+                    match self {
+                        DrawTab::Visible(x) | DrawTab::Invisible(x) => x,
+                    }
+                }
+            }
+            let draw_tab = match edge_status {
                 EdgeStatus::Hidden => {
                     // hidden edges are never drawn
                     continue;
                 }
                 EdgeStatus::Cut(c) => {
-                    // cut edges are always drawn, the tab dependson the value of c and the face_sign
+                    // cut edges are always drawn, the tab depends on the value of c and the face_sign
+                    let maybe_i_face_b = match edge.faces() {
+                        (fa, Some(fb)) if i_face == fb => Some(fa),
+                        (fa, Some(fb)) if i_face == fa => Some(fb),
+                        // Rim edge, no face b
+                        (_, None) => None,
+                        // should not happen
+                        _ => continue,
+                    };
                     if tab_style == TabStyle::None {
                         // User doesn't want tabs
-                        None
+                        DrawTab::Invisible(maybe_i_face_b)
                     } else if !c.tab_visible(edge.face_sign(i_face)) {
                         // The tab is in the other face
-                        None
+                        DrawTab::Invisible(maybe_i_face_b)
                     } else {
-                        match edge.faces() {
-                            (fa, Some(fb)) if i_face == fb => Some(DrawTab::Other(fa)),
-                            (fa, Some(fb)) if i_face == fa => Some(DrawTab::Other(fb)),
-                            // Rim edge with a tab?
-                            (_, None) => Some(DrawTab::Rim),
-                            // should not happen
-                            _ => None,
-                        }
+                        DrawTab::Visible(maybe_i_face_b)
                     }
                 }
                 EdgeStatus::Joined => {
@@ -488,8 +501,8 @@ impl PapercraftContext {
                     if !edge.face_sign(i_face) {
                         continue;
                     }
-                    // but never with a tab
-                    None
+                    // but never with a tab or a tab-id
+                    DrawTab::Invisible(None)
                 }
             };
 
@@ -504,7 +517,7 @@ impl PapercraftContext {
 
             //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
             //cut with a tab
-            let crease_kind = if edge_status == EdgeStatus::Joined || i_face_tab_other.is_some() {
+            let crease_kind = if edge_status == EdgeStatus::Joined || draw_tab.is_visible() {
                 let angle_3d = self.papercraft.model().edge_angle(i_edge);
                 if edge_status == EdgeStatus::Joined && Rad(angle_3d.0.abs()) < Rad::from(Deg(options.hidden_line_angle)) {
                     continue;
@@ -519,7 +532,7 @@ impl PapercraftContext {
             let v2d = MVertex2DLine {
                 pos: pos0,
                 line_dash: 0.0,
-                width_left: if edge_status == EdgeStatus::Joined { fold_line_width / 2.0 } else if i_face_tab_other.is_some() { fold_line_width } else { BORDER_LINE_WIDTH },
+                width_left: if edge_status == EdgeStatus::Joined { fold_line_width / 2.0 } else if draw_tab.is_visible() { fold_line_width } else { BORDER_LINE_WIDTH },
                 width_right: if edge_status == EdgeStatus::Joined { fold_line_width / 2.0 } else { 0.0 },
             };
 
@@ -602,13 +615,11 @@ impl PapercraftContext {
             }
 
             // Draw the tab?
-            if let Some(draw_tab) = i_face_tab_other {
-                //DrawTab::Other(i_face_b)
-                let tab_geom = match draw_tab {
-                    DrawTab::Other(i_face_b) => self.papercraft.flat_face_tab_dimensions(i_face_b, i_edge),
-                    DrawTab::Rim => self.papercraft.flat_face_rim_tab_dimensions(i_face, i_edge),
+            if let DrawTab::Visible(maybe_i_face_b) = draw_tab {
+                let tab_geom = match maybe_i_face_b {
+                    Some(i_face_b) => self.papercraft.flat_face_tab_dimensions(i_face_b, i_edge),
+                    None => self.papercraft.flat_face_rim_tab_dimensions(i_face, i_edge),
                 };
-
                 let TabGeom {
                     tan_0,
                     tan_1,
@@ -703,8 +714,8 @@ impl PapercraftContext {
                         }).collect()
                     }
                 };
-                match draw_tab {
-                    DrawTab::Other(i_face_b) => {
+                match maybe_i_face_b {
+                    Some(i_face_b) => {
                         let face_b = &self.papercraft.model()[i_face_b];
                         let mx_b = m * self.papercraft.face_to_face_edge_matrix(edge, face, face_b);
                         let mx_b_inv = mx_b.invert().unwrap();
@@ -713,7 +724,7 @@ impl PapercraftContext {
                         mat = face_b.material();
                         uvs = compute_uvs(face_b, &mx_b);
                     }
-                    DrawTab::Rim => {
+                    None => {
                         // There is no adjacent face to copy the texture from, so use the current
                         // face but mirrored.
                         // N shadow tabs.

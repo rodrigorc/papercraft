@@ -43,6 +43,8 @@ use glr::{BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer};
 
 use clap::Parser;
 
+use crate::util_3d::bounding_box_2d;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 /// Long
@@ -2056,7 +2058,6 @@ impl GlobalContext {
             pat.set_matrix(mc);
 
             let _ = cr.paint();
-
             PrintableText::to_cairo_all(texts, options.edge_id_position, 72.0, &cr);
             let _ = cr.show_page();
             Ok(())
@@ -2304,6 +2305,13 @@ impl GlobalContext {
 
             let page_count = options.pages;
             let tab_style = options.tab_style;
+            let edge_id_position = options.edge_id_position;
+
+            let island_names = if edge_id_position != EdgeIdPosition::None {
+                self.data.papercraft().generate_island_names()
+            } else {
+                Default::default()
+            };
 
             let mut texts = Vec::new();
 
@@ -2397,24 +2405,48 @@ impl GlobalContext {
                 if edge_id_position != EdgeIdPosition::None {
                     let in_page = options.is_in_page_fn(page);
                     let lines_by_island = self.data.lines_by_island();
-                    for (_, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
+                    for (i_island, (lines, extra)) in lines_by_island.iter() {
                         let cuts = lines.iter_cut(&extra);
                         let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
                             continue;
                         };
+                        // Edge ids
                         for (_, _, cut_idx) in &page_cuts {
                             let Some(cut_idx) = cut_idx else {
                                 continue
                             };
-                            let text = format!("{}.", cut_idx.id);
+                            let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face);
+                            let ii = island_names.get(i_island_b).map(|s| s.as_str()).unwrap_or("?");
+                            let text = format!("{}-{}.", ii, cut_idx.id);
                             let pos = in_page(cut_idx.pos).1;
-
                             texts.push(PrintableText {
                                 size: edge_id_font_size,
                                 pos,
                                 angle: cut_idx.angle,
                                 align: TextAlign::Center,
                                 text,
+                            });
+                        }
+                        // Island ids
+                        let (v0, v1) = bounding_box_2d(page_cuts.iter().flat_map(|c| [c.0, c.1]));
+                        let pos = match edge_id_position {
+                            // On top
+                            EdgeIdPosition::None |
+                            EdgeIdPosition::Outside => {
+                                Vector2::new((v0.x + v1.x) / 2.0, v0.y - 1.5 * edge_id_font_size)
+                            }
+                            // In the middle
+                            EdgeIdPosition::Inside => {
+                                (v0 + v1) / 2.0 + Vector2::new(0.0, edge_id_font_size)
+                            }
+                        };
+                        if let Some(ii) = island_names.get(*i_island) {
+                            texts.push(PrintableText {
+                                size: 2.0 * edge_id_font_size,
+                                pos,
+                                angle: Rad(0.0),
+                                align: TextAlign::Center,
+                                text: ii.clone(),
                             });
                         }
                     }

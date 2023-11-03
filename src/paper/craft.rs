@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad, Deg};
-use slotmap::{SlotMap, new_key_type};
+use slotmap::{SlotMap, new_key_type, SecondaryMap};
 use serde::{Serialize, Deserialize};
 use crate::util_3d;
 
@@ -377,12 +377,30 @@ impl Papercraft {
         }
         None
     }
-    // Islands come and go, so this kay may not exist.
+    // Islands come and go, so this key may not exist.
     pub fn island_by_key(&self, key: IslandKey) -> Option<&Island> {
         self.islands.get(key)
     }
     pub fn island_by_key_mut(&mut self, key: IslandKey) -> Option<&mut Island> {
         self.islands.get_mut(key)
+    }
+    // The returned map is temporary only valid while the model is not changed
+    pub fn generate_island_names(&self) -> SecondaryMap<IslandKey, String> {
+        let mut island_counter = 0;
+        fn counter_name(mut x: u32) -> String {
+            let mut s = String::new();
+            while x > 0 {
+                s.push(char::from(b'A' + (x % 26) as u8));
+                x /= 26;
+            }
+            s.chars().rev().collect()
+        }
+        self.islands.keys()
+            .map(|idx| {
+                island_counter += 1;
+                (idx, counter_name(island_counter))
+            })
+            .collect()
     }
 
     pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {

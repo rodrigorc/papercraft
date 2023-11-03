@@ -2152,7 +2152,7 @@ impl GlobalContext {
                 writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
                 write!(&mut out, r#"M "#)?;
                 let page_contour = cut_to_contour(page_cut);
-                for v in page_contour {
+                for (v, _, _) in page_contour {
                     writeln!(&mut out, r#"{},{}"#, v.x, v.y)?;
                 }
                 writeln!(&mut out, r#"z"#)?;
@@ -2411,13 +2411,37 @@ impl GlobalContext {
                             continue;
                         };
                         // Edge ids
-                        for (_, _, cut_idx) in &page_cuts {
+                        let page_cuts = cut_to_contour(page_cuts);
+                        let n_cuts = page_cuts.len();
+                        for (i_cut, (_, _, cut_idx)) in page_cuts.iter().enumerate() {
                             let Some(cut_idx) = cut_idx else {
                                 continue
                             };
                             let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face);
-                            let ii = island_names.get(i_island_b).map(|s| s.as_str()).unwrap_or("?");
-                            let text = format!("{}-{}.", ii, cut_idx.id);
+                            //let ii = island_names.get(i_island_b).map(|s| s.as_str()).unwrap_or("?");
+                            let mut prefix = "<";
+                            let mut postfix = ">";
+                            for i in 1 .. n_cuts {
+                                let (_, _, Some(prev_cut)) = page_cuts[(i_cut + n_cuts - i) % n_cuts] else {
+                                    continue;
+                                };
+                                let i_island_x = self.data.papercraft().island_by_face(prev_cut.i_face);
+                                if i_island_x == i_island_b {
+                                    prefix = "";
+                                }
+                                break;
+                            }
+                            for i in 1 .. n_cuts {
+                                let (_, _, Some(next_cut)) = page_cuts[(i_cut + i) % n_cuts] else {
+                                    continue;
+                                };
+                                let i_island_x = self.data.papercraft().island_by_face(next_cut.i_face);
+                                if i_island_x == i_island_b {
+                                    postfix = "";
+                                }
+                                break;
+                            }
+                            let text = format!("{prefix}{}.{postfix}", cut_idx.id);
                             let pos = in_page(cut_idx.pos).1;
                             texts.push(PrintableText {
                                 size: edge_id_font_size,
@@ -2428,6 +2452,7 @@ impl GlobalContext {
                             });
                         }
                         // Island ids
+                        /*
                         let (v0, v1) = bounding_box_2d(page_cuts.iter().flat_map(|c| [c.0, c.1]));
                         let pos = match edge_id_position {
                             // On top
@@ -2449,6 +2474,7 @@ impl GlobalContext {
                                 text: ii.clone(),
                             });
                         }
+                        */
                     }
                 }
 
@@ -2650,12 +2676,11 @@ fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     }
 }
 
-pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> Vec<Vector2> {
+pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> Vec<(Vector2, Vector2, Option<&CutIndex>)> {
     // Order the vertices in a closed loop
     let mut res = Vec::with_capacity(cuts.len());
     while let Some(mut p) = cuts.pop() {
-        res.push(p.0);
-        res.push(p.1);
+        res.push(p);
         while let Some((next, _)) = cuts
             .iter()
             .enumerate()
@@ -2663,10 +2688,8 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> V
             .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
         {
             p = cuts.swap_remove(next);
-            res.push(p.1);
+            res.push(p);
         }
-        // the last point should match the first, it is redundant
-        res.pop();
     }
     res
 }

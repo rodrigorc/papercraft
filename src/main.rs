@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use anyhow::{Result, anyhow, Context};
 use cgmath::{
     prelude::*,
-    Deg,
+    Deg, Rad,
 };
 use glow::HasContext;
 use glutin::{prelude::*, config::{ConfigTemplateBuilder, Config}, display::GetGlDisplay, context::{ContextAttributesBuilder, ContextApi}, surface::{SurfaceAttributesBuilder, WindowSurface, Surface}};
@@ -2042,16 +2042,22 @@ impl GlobalContext {
         let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
         let cr = cairo::Context::new(&pdf)?;
 
-        self.generate_pages(true, |_page, pixbuf| {
+        self.generate_pages(|_page, pixbuf, texts| {
+            // A PDF output is in "dots" for some reason
+            // which is nice because 1pixel = 1dot
+            let mut mc = cairo::Matrix::identity();
+            cr.set_matrix(mc);
+
+            // Scale pattern to in dots
             cr.set_source_surface(pixbuf, 0.0, 0.0)?;
             let pat = cr.source();
-            let mut mc = cairo::Matrix::identity();
             let scale = resolution / 72.0; // to dots
             mc.scale(scale as f64, scale as f64);
             pat.set_matrix(mc);
 
             let _ = cr.paint();
-            cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+
+            PrintableText::to_cairo_all(texts, options.edge_id_position, 72.0, &cr);
             let _ = cr.show_page();
             Ok(())
         })?;
@@ -2065,11 +2071,9 @@ impl GlobalContext {
 
         let lines_by_island = self.data.lines_by_island();
         let options = self.data.papercraft().options();
-        let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
-        let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
         let edge_id_position = options.edge_id_position;
 
-        self.generate_pages(false, |page, pixbuf| {
+        self.generate_pages(|page, pixbuf, texts| {
             let name = Self::file_name_for_page(file_name, page);
             let out = std::fs::File::create(name)?;
             let mut out = std::io::BufWriter::new(out);
@@ -2082,18 +2086,13 @@ impl GlobalContext {
             pixbuf.write_to_png(&mut png)?;
             let b64png = BASE64_STANDARD.encode(&png);
 
-            let mut cut_idxs: Vec<&CutIndex> = Vec::new();
             let mut all_page_cuts = Vec::new();
 
             for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
                 let cuts = lines.iter_cut(&extra);
-                let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
-                    continue;
+                if let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) {
+                    all_page_cuts.push((idx, page_cuts));
                 };
-                if edge_id_position != EdgeIdPosition::None {
-                    cut_idxs.extend(page_cuts.iter().filter_map(|(_, _, idx)| *idx));
-                }
-                all_page_cuts.push((idx, page_cuts));
             }
             writeln!(&mut out, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
             writeln!(
@@ -2103,31 +2102,26 @@ impl GlobalContext {
             )?;
 
             let write_layer_text = |out: &mut std::io::BufWriter<std::fs::File>| -> anyhow::Result<()> {
+                if texts.is_empty() {
+                    return Ok(());
+                }
                 // begin layer Text
                 writeln!(out, r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#)?;
-                if options.show_self_promotion {
-                    writeln!(out, r#"<text id="Signature" x="{}" y="{}" style="font-size:{};font-family:sans-serif;fill:#000000">{}</text>"#,
-                        margin_left, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
-                        signature()
+                for text in texts {
+                    let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-text.angle);
+                    let pos = basis2.rotate_vector(text.pos);
+                    writeln!(out, r#"<text x="{}" y="{}" style="{}font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
+                        pos.x,
+                        pos.y,
+                        match text.align {
+                            TextAlign::Near => "",
+                            TextAlign::Center => "text-anchor:middle;",
+                            TextAlign::Far => "text-anchor:end;",
+                        },
+                        text.size,
+                        Deg::from(text.angle).0,
+                        text.text,
                     )?;
-                }
-                if options.show_page_number {
-                    writeln!(out, r#"<text id="Page_{3}" x="{0}" y="{1}" style="text-anchor:end;font-size:{2};font-family:sans-serif;fill:#000000">Page {3}/{4}</text>"#,
-                        page_size.x - margin_right, page_size.y - margin_bottom + FONT_SIZE, FONT_SIZE,
-                        page + 1,
-                        options.pages,
-                    )?;
-                }
-                if edge_id_position != EdgeIdPosition::None {
-                    for cut_idx in &cut_idxs {
-                        let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-cut_idx.angle);
-                        let p = basis2.rotate_vector(in_page(cut_idx.pos).1);
-                        writeln!(out, r#"<text x="{}" y="{}" style="text-anchor:middle;font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}.</text>"#,
-                            p.x, p.y, edge_id_font_size,
-                            Deg::from(cut_idx.angle).0,
-                            cut_idx.id,
-                        )?;
-                    }
                 }
                 writeln!(out, r#"</g>"#)?;
                 // end layer Text
@@ -2204,7 +2198,13 @@ impl GlobalContext {
         Ok(())
     }
     fn generate_png(&self, file_name: &Path) -> anyhow::Result<()> {
-        self.generate_pages(true, |page, pixbuf| {
+        let options = self.data.papercraft().options();
+        let resolution = options.resolution as f32;
+
+        self.generate_pages(|page, pixbuf, texts| {
+            let cr = cairo::Context::new(&pixbuf)?;
+            PrintableText::to_cairo_all(texts, options.edge_id_position, resolution, &cr);
+
             let name = Self::file_name_for_page(file_name, page);
             let f = std::fs::File::create(name)?;
             let mut f = std::io::BufWriter::new(f);
@@ -2227,8 +2227,8 @@ impl GlobalContext {
         name.set_extension(ext);
         parent.join(name)
     }
-    fn generate_pages<F>(&self, with_text: bool, mut do_page_fn: F) -> anyhow::Result<()>
-        where F: FnMut(u32, &cairo::ImageSurface) -> anyhow::Result<()>
+    fn generate_pages<F>(&self, mut do_page_fn: F) -> anyhow::Result<()>
+        where F: FnMut(u32, &cairo::ImageSurface, &[PrintableText]) -> anyhow::Result<()>
     {
         let options = self.data.papercraft().options();
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
@@ -2305,6 +2305,8 @@ impl GlobalContext {
             let page_count = options.pages;
             let tab_style = options.tab_style;
 
+            let mut texts = Vec::new();
+
             for page in 0..page_count {
                 // Start render
                 gl::Clear(gl::COLOR_BUFFER_BIT);
@@ -2367,67 +2369,58 @@ impl GlobalContext {
                 let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
                 let edge_id_position = options.edge_id_position;
 
-                if with_text && (options.show_self_promotion || options.show_page_number || edge_id_position != EdgeIdPosition::None) {
-                    let cr = cairo::Context::new(&pixbuf)?;
-                    match edge_id_position {
-                        // Text below the texture
-                        EdgeIdPosition::None |
-                        EdgeIdPosition::Outside => cr.set_operator(cairo::Operator::DestOver),
-                        // Text above the texture
-                        EdgeIdPosition::Inside => cr.set_operator(cairo::Operator::Over),
-                    }
-                    let mut mc = cairo::Matrix::identity();
-                    let scale = resolution / 25.4; // use millimeters
-                    mc.scale(scale as f64, scale as f64);
-                    cr.set_matrix(mc);
-
-                    if options.show_self_promotion {
-                        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                        cr.set_font_size(FONT_SIZE as f64);
-                        let x = margin_left;
-                        let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
-                        cr.move_to(x as f64, y as f64);
-                        let _ = cr.show_text(signature());
-                    }
-                    if options.show_page_number {
-                        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                        cr.set_font_size(FONT_SIZE as f64);
-                        let text = format!("Page {}/{}", page + 1, page_count);
-                        let ext = cr.text_extents(&text).unwrap();
-                        let x = page_size_mm.x - margin_right;
-                        let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
-                        cr.move_to(x as f64 - ext.width(), y as f64);
-                        let _ = cr.show_text(&text);
-                    }
-                    if edge_id_position != EdgeIdPosition::None {
-                        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-                        cr.set_font_size(edge_id_font_size as f64);
-
-                        let in_page = options.is_in_page_fn(page);
-                        let lines_by_island = self.data.lines_by_island();
-                        for (_, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
-                            let cuts = lines.iter_cut(&extra);
-                            let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
-                                continue;
+                texts.clear();
+                if options.show_self_promotion {
+                    let x = margin_left;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    let text = String::from(signature());
+                    texts.push(PrintableText {
+                        size: FONT_SIZE,
+                        pos: Vector2::new(x, y),
+                        angle: Rad(0.0),
+                        align: TextAlign::Near,
+                        text,
+                    });
+                }
+                if options.show_page_number {
+                    let x = page_size_mm.x - margin_right;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    let text = format!("Page {}/{}", page + 1, page_count);
+                    texts.push(PrintableText {
+                        size: FONT_SIZE,
+                        pos: Vector2::new(x, y),
+                        angle: Rad(0.0),
+                        align: TextAlign::Far,
+                        text,
+                    });
+                }
+                if edge_id_position != EdgeIdPosition::None {
+                    let in_page = options.is_in_page_fn(page);
+                    let lines_by_island = self.data.lines_by_island();
+                    for (_, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
+                        let cuts = lines.iter_cut(&extra);
+                        let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
+                            continue;
+                        };
+                        for (_, _, cut_idx) in &page_cuts {
+                            let Some(cut_idx) = cut_idx else {
+                                continue
                             };
-                            for (_, _, cut_idx) in &page_cuts {
-                                let Some(cut_idx) = cut_idx else {
-                                    continue
-                                };
-                                let text = format!("{}.", cut_idx.id);
-                                let ext = cr.text_extents(&text).unwrap();
-                                let p = in_page(cut_idx.pos).1 - ext.width() as f32 / 2.0 * cut_idx.dir;
+                            let text = format!("{}.", cut_idx.id);
+                            let pos = in_page(cut_idx.pos).1;
 
-                                cr.set_matrix(mc);
-                                cr.move_to(p.x as f64, p.y as f64);
-                                cr.rotate(cut_idx.angle.0 as f64);
-                                let _ = cr.show_text(&text);
-                            }
+                            texts.push(PrintableText {
+                                size: edge_id_font_size,
+                                pos,
+                                angle: cut_idx.angle,
+                                align: TextAlign::Center,
+                                text,
+                            });
                         }
                     }
                 }
 
-                do_page_fn(page, &pixbuf)?;
+                do_page_fn(page, &pixbuf, &texts)?;
             }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
         }
@@ -2658,6 +2651,63 @@ pub fn cuts_to_page_cuts<'c>(cuts: Vec<(&MVertex2DLine, &MVertex2DLine, Option<&
         })
         .collect::<Vec<_>>();
     touching.then_some(page_cut)
+}
+
+enum TextAlign {
+    Near,
+    Center,
+    Far,
+}
+
+struct PrintableText {
+    size: f32,
+    pos: Vector2,
+    angle: Rad<f32>,
+    align: TextAlign,
+    text: String,
+}
+
+impl PrintableText {
+    fn to_cairo_all(texts: &[PrintableText], edge_id_position: EdgeIdPosition, resolution: f32, cr: &cairo::Context) {
+        // Dest in millimeters
+        let mut mc = cairo::Matrix::identity();
+        let scale = resolution / 25.4; // to millimeters
+        mc.scale(scale as f64, scale as f64);
+        cr.set_matrix(mc);
+        // Black
+        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+        match edge_id_position {
+            // Text below the texture
+            EdgeIdPosition::None |
+            EdgeIdPosition::Outside => cr.set_operator(cairo::Operator::DestOver),
+            // Text above the texture
+            EdgeIdPosition::Inside => cr.set_operator(cairo::Operator::Over),
+        }
+        for text in texts {
+            text.to_cairo(cr);
+        }
+    }
+    fn to_cairo(&self, cr: &cairo::Context) {
+        let m = cr.matrix();
+        cr.set_font_size(self.size as f64);
+        let align = match self.align {
+            TextAlign::Near => { 0.0 }
+            TextAlign::Center => {
+                cr.text_extents(&self.text).unwrap().width() / 2.0
+            }
+            TextAlign::Far => {
+                cr.text_extents(&self.text).unwrap().width()
+            }
+        };
+        let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(self.angle);
+        let p = basis2.rotate_vector(Vector2::new(-align as f32, 0.0));
+
+        let Vector2 { x, y } = self.pos + p;
+        cr.move_to(x as f64, y as f64);
+        cr.rotate(self.angle.0 as f64);
+        let _ = cr.show_text(&self.text);
+        cr.set_matrix(m);
+    }
 }
 
 struct MyClipboard {

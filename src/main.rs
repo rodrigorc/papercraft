@@ -2397,7 +2397,7 @@ impl GlobalContext {
                 if edge_id_position != EdgeIdPosition::None {
                     let in_page = options.is_in_page_fn(page);
                     let lines_by_island = self.data.lines_by_island();
-                    for (_, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
+                    for (_, (lines, extra)) in &lines_by_island {
                         let cuts = lines.iter_cut(&extra);
                         let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
                             continue;
@@ -2623,7 +2623,6 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> V
     let mut res = Vec::with_capacity(cuts.len());
     while let Some(mut p) = cuts.pop() {
         res.push(p.0);
-        res.push(p.1);
         while let Some((next, _)) = cuts
             .iter()
             .enumerate()
@@ -2631,10 +2630,9 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> V
             .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
         {
             p = cuts.swap_remove(next);
-            res.push(p.1);
+            res.push(p.0);
         }
-        // the last point should match the first, it is redundant
-        res.pop();
+        // the last point should connect to the first 
     }
     res
 }

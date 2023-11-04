@@ -377,7 +377,7 @@ impl Papercraft {
         }
         None
     }
-    // Islands come and go, so this kay may not exist.
+    // Islands come and go, so this key may not exist.
     pub fn island_by_key(&self, key: IslandKey) -> Option<&Island> {
         self.islands.get(key)
     }

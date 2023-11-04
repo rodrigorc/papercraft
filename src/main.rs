@@ -2056,7 +2056,6 @@ impl GlobalContext {
             pat.set_matrix(mc);
 
             let _ = cr.paint();
-
             PrintableText::to_cairo_all(texts, options.edge_id_position, 72.0, &cr);
             let _ = cr.show_page();
             Ok(())
@@ -2304,6 +2303,13 @@ impl GlobalContext {
 
             let page_count = options.pages;
             let tab_style = options.tab_style;
+            let edge_id_position = options.edge_id_position;
+
+            let island_names = if edge_id_position != EdgeIdPosition::None {
+                self.data.papercraft().build_island_names()
+            } else {
+                Default::default()
+            };
 
             let mut texts = Vec::new();
 
@@ -2397,24 +2403,62 @@ impl GlobalContext {
                 if edge_id_position != EdgeIdPosition::None {
                     let in_page = options.is_in_page_fn(page);
                     let lines_by_island = self.data.lines_by_island();
-                    for (_, (lines, extra)) in &lines_by_island {
+                    for (i_island, (lines, extra)) in &lines_by_island {
                         let cuts = lines.iter_cut(&extra);
                         let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
                             continue;
                         };
+                        // Edge ids
                         for (_, _, cut_idx) in &page_cuts {
                             let Some(cut_idx) = cut_idx else {
                                 continue
                             };
-                            let text = format!("{}.", cut_idx.id);
+                            let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face_b);
+                            let ii = island_names.get(i_island_b).map(|s| s.as_str()).unwrap_or("?");
+                            let text = format!("{}:{}", ii, cut_idx.id);
                             let pos = in_page(cut_idx.pos).1;
-
                             texts.push(PrintableText {
                                 size: edge_id_font_size,
                                 pos,
                                 angle: cut_idx.angle,
                                 align: TextAlign::Center,
                                 text,
+                            });
+                        }
+                        // Island ids
+                        let pos = match edge_id_position {
+                            // On top
+                            EdgeIdPosition::None |
+                            EdgeIdPosition::Outside => {
+                                let top = page_cuts.iter().min_by(|a, b| a.0.y.total_cmp(&b.0.y)).unwrap().0;
+                                top - Vector2::new(0.0, edge_id_font_size)
+                            }
+                            // In the middle
+                            EdgeIdPosition::Inside => {
+                                let island = self.data.papercraft().island_by_key(*i_island).unwrap();
+                                let (flat_face, total_area) = self.data.papercraft().get_biggest_flat_face(island);
+                                // Compute the center of mass of the flat-face, that will be the
+                                // weighted mean of the centers of masses of each single face.
+                                let center: Vector2 = flat_face
+                                    .iter()
+                                    .map(|(i_face, area)| {
+                                        let vv: Vector2 = lines.vertices_for_face(*i_face).into_iter().sum();
+                                        vv * *area
+                                    })
+                                    .sum();
+                                // Don't forget to divide the center of each triangle by 3!
+                                let center = center / total_area / 3.0;
+                                let center = in_page(center).1;
+                                center + Vector2::new(0.0, edge_id_font_size)
+                            }
+                        };
+                        if let Some(ii) = island_names.get(*i_island) {
+                            texts.push(PrintableText {
+                                size: 2.0 * edge_id_font_size,
+                                pos,
+                                angle: Rad(0.0),
+                                align: TextAlign::Center,
+                                text: ii.clone(),
                             });
                         }
                     }

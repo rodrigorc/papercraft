@@ -292,6 +292,14 @@ impl PaperDrawFaceArgs {
             .filter_map(move |(line, ek)| (*ek == kind).then_some(line))
             .map(|s| (&s[0], &s[1]))
     }
+    pub fn vertices_for_face(&self, i_face: FaceIndex) -> [Vector2; 3] {
+        let i0 = 3 * self.face_index[usize::from(i_face)] as usize;
+        [
+            self.vertices[i0].pos,
+            self.vertices[i0 + 1].pos,
+            self.vertices[i0 + 2].pos,
+        ]
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -299,11 +307,12 @@ pub struct CutIndex {
     pub pos: Vector2,
     pub dir: Vector2,
     pub angle: Rad<f32>,
+    pub i_face_b: FaceIndex,
     pub id: u32,
 }
 
 impl CutIndex {
-    fn new(a: Vector2, b: Vector2, id: u32, options: &PaperOptions) -> Option<CutIndex> {
+    fn new(a: Vector2, b: Vector2, i_face_b: FaceIndex, id: u32, options: &PaperOptions) -> Option<CutIndex> {
         if options.edge_id_font_size <= 0.0 {
             return None;
         }
@@ -322,6 +331,7 @@ impl CutIndex {
             pos,
             dir,
             angle,
+            i_face_b,
             id
         })
     }
@@ -464,7 +474,6 @@ impl PapercraftContext {
                 fn is_visible(&self) -> bool {
                     matches!(self, DrawTab::Visible(_))
                 }
-                #[allow(dead_code)]
                 fn face(self) -> Option<FaceIndex> {
                     match self {
                         DrawTab::Visible(x) | DrawTab::Invisible(x) => x,
@@ -609,8 +618,8 @@ impl PapercraftContext {
                     .. v0
                 };
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
-                if let (Some(extra), Some(edge_id)) = (extra.as_mut(), edge_id) {
-                    extra.vertices_edge_cut_index.push(CutIndex::new(v0.pos, v1.pos, edge_id, &options));
+                if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, draw_tab.face()) {
+                    extra.vertices_edge_cut_index.push(CutIndex::new(v0.pos, v1.pos, i_face_b, edge_id, &options));
                 }
             }
 
@@ -662,12 +671,12 @@ impl PapercraftContext {
                     p[2] = p[3];
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
 
-                    if let (Some(extra), Some(edge_id)) = (extra.as_mut(), edge_id) {
+                    if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, maybe_i_face_b) {
                         // Attach the edge id to the longest edge of the triangular tab
                         let tei = if (p[1].pos - p[0].pos).magnitude2() > (p[2].pos - p[1].pos).magnitude2() {
-                            [CutIndex::new(p[0].pos, p[1].pos, edge_id, options), None]
+                            [CutIndex::new(p[0].pos, p[1].pos, i_face_b, edge_id, options), None]
                         } else {
-                            [None, CutIndex::new(p[1].pos, p[2].pos, edge_id, options)]
+                            [None, CutIndex::new(p[1].pos, p[2].pos, i_face_b, edge_id, options)]
                         };
                         extra.vertices_tab_edge_index.extend_from_slice(&tei);
                     }
@@ -675,9 +684,9 @@ impl PapercraftContext {
                 } else {
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
 
-                    if let (Some(extra), Some(edge_id)) = (extra.as_mut(), edge_id) {
+                    if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, maybe_i_face_b) {
                         // Attach the edge id to the opposite edge of the tab
-                        extra.vertices_tab_edge_index.extend_from_slice(&[None, CutIndex::new(p[1].pos, p[2].pos, edge_id, options), None]);
+                        extra.vertices_tab_edge_index.extend_from_slice(&[None, CutIndex::new(p[1].pos, p[2].pos, i_face_b, edge_id, options), None]);
                     }
                     &mut p[..]
                 };

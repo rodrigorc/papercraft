@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad, Deg};
-use slotmap::{SlotMap, new_key_type};
+use slotmap::{SlotMap, new_key_type, SecondaryMap};
 use serde::{Serialize, Deserialize};
 use crate::util_3d;
 
@@ -383,6 +383,32 @@ impl Papercraft {
     }
     pub fn island_by_key_mut(&mut self, key: IslandKey) -> Option<&mut Island> {
         self.islands.get_mut(key)
+    }
+    // The returned map is temporary only valid while the model is not changed
+    pub fn build_island_names(&self) -> SecondaryMap<IslandKey, String> {
+        // To get somewhat predictable names try to sort the islands before naming them.
+        // For now, sort them by number of faces.
+        let mut islands: Vec<_> = self.islands
+            .iter()
+            .map(|(i_island, island)| (i_island, self.island_face_count(island)))
+            .collect();
+        islands.sort_by_key(|(_, n)| u32::MAX - *n);
+        let mut island_name = String::from("A");
+        islands
+            .into_iter()
+            .map(|(idx, _)| {
+                //island_counter += 1;
+                //e(idx, counter_name(island_counter))
+                let res = (idx, island_name.clone());
+                let last_char = island_name.pop().unwrap();
+                if last_char != 'Z' {
+                    island_name.push((last_char as u8 + 1) as char);
+                } else {
+                    island_name = format!("A{island_name}A");
+                }
+                res
+            })
+            .collect()
     }
 
     pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {
@@ -963,6 +989,35 @@ impl Papercraft {
             island.recompute_matrix();
         }
         page + 1
+    }
+    // Returns the ((face, area), total_area)
+    pub fn get_biggest_flat_face(&self, island: &Island) -> (Vec::<(FaceIndex, f32)>, f32) {
+        let mut biggest_face = None;
+        let mut visited = FxHashSet::<FaceIndex>::default();
+        self.traverse_faces_no_matrix(island, |i_face| {
+            if !visited.contains(&i_face) {
+                let flat_face = self.get_flat_faces(i_face);
+                visited.extend(&flat_face);
+                // Compute the area of the flat-face
+                let with_area: Vec<_> = flat_face
+                    .iter()
+                    .map(|i_face| {
+                        let [a, b, c] = self.model()[*i_face]
+                            .index_vertices()
+                            .map(|iv| self.model()[iv].pos());
+                        let ab = b - a;
+                        let ac = c - a;
+                        (*i_face, ab.cross(ac).magnitude() / 2.0)
+                    })
+                    .collect();
+                let total_area: f32 = with_area.iter().map(|(_, a)| a).sum();
+                if !biggest_face.as_ref().is_some_and(|(_, prev_area)| *prev_area > total_area) {
+                    biggest_face = Some((with_area, total_area));
+                }
+            }
+            ControlFlow::Continue(())
+        });
+        biggest_face.unwrap()
     }
 }
 

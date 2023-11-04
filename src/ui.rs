@@ -255,10 +255,7 @@ pub struct PaperDrawFaceArgs {
 pub struct PaperDrawFaceArgsExtra {
     // For each line in vertices_edge_crease says which kind of line
     crease_kind: Vec<EdgeDrawKind>,
-    // For each pair of vertices_edge_cut, the edge id position
-    vertices_edge_cut_index: Vec<Option<CutIndex>>,
-    // For each pair of vertices_tab_edge, the edge id position
-    vertices_tab_edge_index: Vec<Option<CutIndex>>,
+    pub cut_index: Vec<CutIndex>,
 }
 
 impl PaperDrawFaceArgs {
@@ -274,15 +271,13 @@ impl PaperDrawFaceArgs {
         }
     }
 
-    pub fn iter_cut<'a>(&'a self, extra: &'a PaperDrawFaceArgsExtra) -> Vec<(&'a MVertex2DLine, &'a MVertex2DLine, Option<&'a CutIndex>)> {
+    pub fn iter_cut(&self) -> Vec<(&MVertex2DLine, &MVertex2DLine)> {
         self.vertices_tab_edge
             .chunks_exact(2)
-            .zip(extra.vertices_tab_edge_index.iter())
             .chain(self.vertices_edge_cut
                 .chunks_exact(2)
-                .zip(extra.vertices_edge_cut_index.iter())
             )
-            .map(|(s, idx)| (&s[0], &s[1], idx.as_ref()))
+            .map(|s| (&s[0], &s[1]))
             .collect()
     }
     pub fn iter_crease<'a>(&'a self, extra: &'a PaperDrawFaceArgsExtra, kind: EdgeDrawKind) -> impl Iterator<Item = (&'a MVertex2DLine, &'a MVertex2DLine)> + 'a {
@@ -312,28 +307,37 @@ pub struct CutIndex {
 }
 
 impl CutIndex {
-    fn new(a: Vector2, b: Vector2, i_face_b: FaceIndex, id: u32, options: &PaperOptions) -> Option<CutIndex> {
-        if options.edge_id_font_size <= 0.0 {
-            return None;
-        }
-        let factor = match options.edge_id_position {
-            EdgeIdPosition::None => return None,
-            EdgeIdPosition::Inside => -0.1, // somewhat arbitrary separation
-            EdgeIdPosition::Outside => 1.0,
+    fn new(a: Vector2, b: Vector2, n_tab: Option<Vector2>, i_face_b: FaceIndex, id: u32, options: &PaperOptions) -> CutIndex {
+        let mut center = (a + b) / 2.0;
+
+        // Where does the edge-id go?
+        let factor = match (options.edge_id_position, n_tab) {
+            // inside the face
+            (EdgeIdPosition::Inside, None) => -0.1,
+            // in the tab, next to the face
+            (EdgeIdPosition::Inside, Some(_)) => 0.9,
+            // outside the face
+            (EdgeIdPosition::Outside, None) => 0.9,
+            // outside the tab
+            (EdgeIdPosition::Outside, Some(n)) => {
+                center += n;
+                0.9
+            }
+            // should not happen, if pos is None it is filtered before getting here
+            (EdgeIdPosition::None, _) => 0.0,
         };
         let factor = factor * 25.4 / 72.0;
-        let center = (a + b) / 2.0;
         let dir = (b - a).normalize();
         let normal = Vector2::new(-dir.y, dir.x);
         let pos = center + normal * options.edge_id_font_size * factor;
         let angle = -dir.angle(Vector2::new(1.0, 0.0));
-        Some(CutIndex {
+        CutIndex {
             pos,
             dir,
             angle,
             i_face_b,
             id
-        })
+        }
     }
 }
 
@@ -609,6 +613,7 @@ impl PapercraftContext {
                     }
                 };
             } else {
+                // This is a naked edge, without a tab
                 let v0 = MVertex2DLine {
                     pos: pos0,
                     .. v2d
@@ -619,7 +624,7 @@ impl PapercraftContext {
                 };
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
                 if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, draw_tab.face()) {
-                    extra.vertices_edge_cut_index.push(CutIndex::new(v0.pos, v1.pos, i_face_b, edge_id, &options));
+                    extra.cut_index.push(CutIndex::new(v0.pos, v1.pos, None, i_face_b, edge_id, &options));
                 }
             }
 
@@ -670,26 +675,14 @@ impl PapercraftContext {
                     //The unneeded vertex is actually [2], so remove that copying the [3] over
                     p[2] = p[3];
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
-
-                    if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, maybe_i_face_b) {
-                        // Attach the edge id to the longest edge of the triangular tab
-                        let tei = if (p[1].pos - p[0].pos).magnitude2() > (p[2].pos - p[1].pos).magnitude2() {
-                            [CutIndex::new(p[0].pos, p[1].pos, i_face_b, edge_id, options), None]
-                        } else {
-                            [None, CutIndex::new(p[1].pos, p[2].pos, i_face_b, edge_id, options)]
-                        };
-                        extra.vertices_tab_edge_index.extend_from_slice(&tei);
-                    }
                     &mut p[..3]
                 } else {
                     args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
-
-                    if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, maybe_i_face_b) {
-                        // Attach the edge id to the opposite edge of the tab
-                        extra.vertices_tab_edge_index.extend_from_slice(&[None, CutIndex::new(p[1].pos, p[2].pos, i_face_b, edge_id, options), None]);
-                    }
                     &mut p[..]
                 };
+                if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, maybe_i_face_b) {
+                    extra.cut_index.push(CutIndex::new(pos0, pos1, Some(n), i_face_b, edge_id, options));
+                }
 
                 // Get material and geometry from adjacent face, if any
                 let geom_b; //Option<(mx_b_inv, i_face_b)>

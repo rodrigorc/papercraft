@@ -34,7 +34,7 @@ static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
 static ICONS_PNG: &[u8] = include_bytes!("icons.png");
 const FONT_SIZE: f32 = 3.0;
 
-use paper::{Papercraft, TabStyle, FoldStyle, EdgeIdPosition, PaperOptions};
+use paper::{Papercraft, TabStyle, FoldStyle, EdgeIdPosition, PaperOptions, IslandKey};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
@@ -2042,7 +2042,7 @@ impl GlobalContext {
         let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
         let cr = cairo::Context::new(&pdf)?;
 
-        self.generate_pages(|_page, pixbuf, texts| {
+        self.generate_pages(|_page, pixbuf, texts, _| {
             // A PDF output is in "dots" for some reason
             // which is nice because 1pixel = 1dot
             let mut mc = cairo::Matrix::identity();
@@ -2067,12 +2067,10 @@ impl GlobalContext {
     }
 
     fn generate_svg(&self, file_name: &Path) -> anyhow::Result<()> {
-
-        let lines_by_island = self.data.lines_by_island();
         let options = self.data.papercraft().options();
         let edge_id_position = options.edge_id_position;
 
-        self.generate_pages(|page, pixbuf, texts| {
+        self.generate_pages(|page, pixbuf, texts, lines_by_island| {
             let name = Self::file_name_for_page(file_name, page);
             let out = std::fs::File::create(name)?;
             let mut out = std::io::BufWriter::new(out);
@@ -2087,8 +2085,8 @@ impl GlobalContext {
 
             let mut all_page_cuts = Vec::new();
 
-            for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
-                let cuts = lines.iter_cut(&extra);
+            for (idx, (_, (lines, _))) in lines_by_island.iter().enumerate() {
+                let cuts = lines.iter_cut();
                 if let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) {
                     all_page_cuts.push((idx, page_cuts));
                 };
@@ -2200,7 +2198,7 @@ impl GlobalContext {
         let options = self.data.papercraft().options();
         let resolution = options.resolution as f32;
 
-        self.generate_pages(|page, pixbuf, texts| {
+        self.generate_pages(|page, pixbuf, texts, _| {
             let cr = cairo::Context::new(&pixbuf)?;
             PrintableText::to_cairo_all(texts, options.edge_id_position, resolution, &cr);
 
@@ -2227,7 +2225,7 @@ impl GlobalContext {
         parent.join(name)
     }
     fn generate_pages<F>(&self, mut do_page_fn: F) -> anyhow::Result<()>
-        where F: FnMut(u32, &cairo::ImageSurface, &[PrintableText]) -> anyhow::Result<()>
+        where F: FnMut(u32, &cairo::ImageSurface, &[PrintableText], &[(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))]) -> anyhow::Result<()>
     {
         let options = self.data.papercraft().options();
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
@@ -2312,6 +2310,7 @@ impl GlobalContext {
             };
 
             let mut texts = Vec::new();
+            let lines_by_island = self.data.lines_by_island();
 
             for page in 0..page_count {
                 // Start render
@@ -2402,17 +2401,13 @@ impl GlobalContext {
                 }
                 if edge_id_position != EdgeIdPosition::None {
                     let in_page = options.is_in_page_fn(page);
-                    let lines_by_island = self.data.lines_by_island();
                     for (i_island, (lines, extra)) in &lines_by_island {
-                        let cuts = lines.iter_cut(&extra);
+                        let cuts = lines.iter_cut();
                         let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
                             continue;
                         };
                         // Edge ids
-                        for (_, _, cut_idx) in &page_cuts {
-                            let Some(cut_idx) = cut_idx else {
-                                continue
-                            };
+                        for cut_idx in &extra.cut_index {
                             let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face_b);
                             let ii = island_names.get(i_island_b).map(|s| s.as_str()).unwrap_or("?");
                             let text = format!("{}:{}", ii, cut_idx.id);
@@ -2464,7 +2459,7 @@ impl GlobalContext {
                     }
                 }
 
-                do_page_fn(page, &pixbuf, &texts)?;
+                do_page_fn(page, &pixbuf, &texts, &lines_by_island)?;
             }
             gl::PixelStorei(gl::PACK_ROW_LENGTH, 0);
         }
@@ -2662,7 +2657,7 @@ fn center_url(ui: &imgui::Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     }
 }
 
-pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> Vec<Vector2> {
+pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
     // Order the vertices in a closed loop
     let mut res = Vec::with_capacity(cuts.len());
     while let Some(mut p) = cuts.pop() {
@@ -2670,7 +2665,7 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> V
         while let Some((next, _)) = cuts
             .iter()
             .enumerate()
-            .map(|(idx, (v0, _, _))| (idx, (p.1 - v0).magnitude2()))
+            .map(|(idx, (v0, _))| (idx, (p.1 - v0).magnitude2()))
             .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
         {
             p = cuts.swap_remove(next);
@@ -2681,15 +2676,15 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2, Option<&CutIndex>)>) -> V
     res
 }
 
-pub fn cuts_to_page_cuts<'c>(cuts: Vec<(&MVertex2DLine, &MVertex2DLine, Option<&'c CutIndex>)>, in_page: impl Fn(Vector2) -> (bool, Vector2)) -> Option<Vec<(Vector2, Vector2, Option<&'c CutIndex>)>>{
+pub fn cuts_to_page_cuts<'c>(cuts: Vec<(&MVertex2DLine, &MVertex2DLine)>, in_page: impl Fn(Vector2) -> (bool, Vector2)) -> Option<Vec<(Vector2, Vector2)>>{
     let mut touching = false;
     let page_cut = cuts
         .iter()
-        .map(|(v0, v1, idx)| {
+        .map(|(v0, v1)| {
             let (is_in_0, v0) = in_page(v0.pos);
             let (is_in_1, v1) = in_page(v1.pos);
             touching |= is_in_0 | is_in_1;
-            (v0, v1, *idx)
+            (v0, v1)
         })
         .collect::<Vec<_>>();
     touching.then_some(page_cut)

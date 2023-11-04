@@ -415,6 +415,11 @@ impl Papercraft {
         self.edges[usize::from(edge)]
     }
     pub fn edge_id(&self, edge: EdgeIndex) -> Option<u32> {
+        if self.options.edge_id_font_size <= 0.0
+            || self.options.edge_id_position == EdgeIdPosition::None
+        {
+            return None;
+        }
         self.edge_ids[usize::from(edge)].map(|x| x.get())
     }
 

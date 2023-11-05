@@ -374,6 +374,17 @@ impl Model {
             _ => Rad::full_turn() / 2.0, //180 degrees
         }
     }
+    pub fn face_area(&self, i_face: FaceIndex) -> f32 {
+        let face = &self[i_face];
+        // Area in 3D space should be almost equal to the area in 2D space,
+        // except for very non planar n-gons, but if that is the case blame the user.
+        let [a, b, c] = face
+            .index_vertices()
+            .map(|iv| self[iv].pos());
+        let ab = b - a;
+        let ac = c - a;
+        ab.cross(ac).magnitude() / 2.0
+    }
 }
 
 impl std::ops::Index<VertexIndex> for Model {

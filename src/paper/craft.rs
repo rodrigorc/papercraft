@@ -390,23 +390,30 @@ impl Papercraft {
         // For now, sort them by number of faces.
         let mut islands: Vec<_> = self.islands
             .iter()
-            .map(|(i_island, island)| (i_island, self.island_face_count(island)))
+            .map(|(i_island, island)| (i_island, self.island_area(island)))
             .collect();
-        islands.sort_by_key(|(_, n)| u32::MAX - *n);
-        let mut island_name = String::from("A");
+        islands.sort_by(|(_, n1), (_, n2)| n2.total_cmp(&n1));
+
+        // A, B, ... Z, AA, ... AZ, BA, .... ZZ, AAA, AAB, ...
+        fn next_name(name: &mut Vec<u8>) {
+            for ch in name.iter_mut().rev() {
+                if *ch < b'Z' {
+                    *ch += 1;
+                    return;
+                }
+                *ch = b'A';
+            }
+            // The new 'A' is at the beginning, but here they are all 'A's, so it
+            // doesn't matter.
+            name.push(b'A');
+        }
+
+        let mut island_name = Vec::new();
         islands
             .into_iter()
             .map(|(idx, _)| {
-                //island_counter += 1;
-                //e(idx, counter_name(island_counter))
-                let res = (idx, island_name.clone());
-                let last_char = island_name.pop().unwrap();
-                if last_char != 'Z' {
-                    island_name.push((last_char as u8 + 1) as char);
-                } else {
-                    island_name = format!("A{island_name}A");
-                }
-                res
+                next_name(&mut island_name);
+                (idx, String::from_utf8(island_name.clone()).unwrap())
             })
             .collect()
     }
@@ -568,6 +575,11 @@ impl Papercraft {
         let mut count = 0;
         self.traverse_faces_no_matrix(island, |_| { count += 1; ControlFlow::Continue(()) });
         count
+    }
+    pub fn island_area(&self, island: &Island) -> f32 {
+        let mut area = 0.0;
+        self.traverse_faces_no_matrix(island, |face| { area += self.model().face_area(face); ControlFlow::Continue(()) });
+        area
     }
     pub fn get_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
         let mut res = FxHashSet::default();
@@ -884,13 +896,16 @@ impl Papercraft {
             // First try to join the edge, if it fails skip.
             let (i_face_a, i_face_b) = match self.model[i_edge].faces() {
                 (a, Some(b)) => (a, b),
+                // Rims cannot be joined
                 _ => continue,
             };
+            // Only cuts can be joined
             if !matches!(self.edge_status(i_edge), EdgeStatus::Cut(_)) {
                 continue;
             }
 
-            // Compute the number of faces before joining them
+            // Compute the number of faces before joining them, a strip is made of quads,
+            // and each square has 2 triangles. At least one of them must be a quad.
             let n_faces_a = self.island_face_count(self.island_by_key(self.island_by_face(i_face_a)).unwrap());
             let n_faces_b = self.island_face_count(self.island_by_key(self.island_by_face(i_face_b)).unwrap());
             if n_faces_a != 2 && n_faces_b != 2 {
@@ -898,6 +913,7 @@ impl Papercraft {
             }
 
             let r = self.edge_join(i_edge, None);
+            // Join failed?
             if r.is_empty() {
                 continue;
             }
@@ -1006,14 +1022,8 @@ impl Papercraft {
                 // Compute the area of the flat-face
                 let with_area: Vec<_> = flat_face
                     .iter()
-                    .map(|i_face| {
-                        let [a, b, c] = self.model()[*i_face]
-                            .index_vertices()
-                            .map(|iv| self.model()[iv].pos());
-                        let ab = b - a;
-                        let ac = c - a;
-                        (*i_face, ab.cross(ac).magnitude() / 2.0)
-                    })
+                    .copied()
+                    .map(|i_face| (i_face, self.model().face_area(i_face)))
                     .collect();
                 let total_area: f32 = with_area.iter().map(|(_, a)| a).sum();
                 if !biggest_face.as_ref().is_some_and(|(_, prev_area)| *prev_area > total_area) {

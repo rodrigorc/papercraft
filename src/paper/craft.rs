@@ -269,8 +269,23 @@ pub struct TabGeom {
 
 #[derive(Default)]
 struct Memoization {
+    // These depend on the options, but not on the islands
     flat_face_tab_dimensions: RefCell<FxHashMap<(FaceIndex, EdgeIndex), TabGeom>>,
     face_to_face_edge_matrix: RefCell<FxHashMap<(EdgeIndex, FaceIndex, FaceIndex), Matrix3>>,
+
+    // This depends on the islands, but not on the options
+    // Indexed by FaceIndex
+    island_by_face: RefCell<Vec<Option<IslandKey>>>,
+}
+
+impl Memoization {
+    fn invalidate_options(&self) {
+        self.flat_face_tab_dimensions.borrow_mut().clear();
+        self.face_to_face_edge_matrix.borrow_mut().clear();
+    }
+    fn invalidate_islands(&self) {
+        self.island_by_face.borrow_mut().clear();
+    }
 }
 
 impl Papercraft {
@@ -306,7 +321,7 @@ impl Papercraft {
         // Apply the new options
         std::mem::swap(&mut self.options, &mut options);
         // Invalidate the memoized values that may depend on any option
-        self.memo = Memoization::default();
+        self.memo.invalidate_options();
 
         // Apply the new positions
         for (i_island, mut po) in page_pos {
@@ -376,22 +391,29 @@ impl Papercraft {
         }
         (best_angle, best_bb)
     }
-
     pub fn island_by_face(&self, i_face: FaceIndex) -> IslandKey {
+        // Try to use a memoized value
+        let mut memo = self.memo.island_by_face.borrow_mut();
+        if memo.is_empty() {
+            memo.resize(self.model.num_faces(), None);
+        }
+        let res = &mut memo[usize::from(i_face)];
+        match res {
+            Some(x) => *x,
+            None => {
+                let i = self.island_by_face_internal(i_face);
+                *res = Some(i);
+                i
+            }
+        }
+    }
+    fn island_by_face_internal(&self, i_face: FaceIndex) -> IslandKey {
         for (i_island, island) in &self.islands {
             if self.contains_face(island, i_face) {
                 return i_island;
             }
         }
         panic!("Island not found");
-    }
-    pub fn island_by_root(&self, i_face: FaceIndex) -> Option<IslandKey> {
-        for (i_island, island) in &self.islands {
-            if island.root == i_face {
-                return Some(i_island);
-            }
-        }
-        None
     }
     // Islands come and go, so this key may not exist.
     pub fn island_by_key(&self, key: IslandKey) -> Option<&Island> {
@@ -514,6 +536,7 @@ impl Papercraft {
                 new_island.translate(sign * Vector2::new(-v.y, v.x));
             }
         }
+        self.memo.invalidate_islands();
         self.islands.insert(new_island);
     }
 
@@ -537,8 +560,9 @@ impl Papercraft {
         }
 
         // Join both islands
-        let mut island_b = self.islands.remove(i_island_b).unwrap();
         let i_island_a = self.island_by_face(i_face_a);
+        self.memo.invalidate_islands();
+        let mut island_b = self.islands.remove(i_island_b).unwrap();
 
         // Keep position of a or b?
         if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {

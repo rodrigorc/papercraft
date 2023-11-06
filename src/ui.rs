@@ -1569,10 +1569,9 @@ impl PapercraftContext {
         for action in action_pack.into_iter().rev() {
             match action {
                 UndoAction::IslandMove { i_root, prev_rot, prev_loc } => {
-                    if let Some(i_island) = self.papercraft.island_by_root(i_root) {
-                        let island = self.papercraft.island_by_key_mut(i_island).unwrap();
-                        island.reset_transformation(i_root, prev_rot, prev_loc);
-                    }
+                    let i_island = self.papercraft.island_by_face(i_root);
+                    let island = self.papercraft.island_by_key_mut(i_island).unwrap();
+                    island.reset_transformation(i_root, prev_rot, prev_loc);
                 }
                 UndoAction::TabToggle { i_edge, tab_side } => {
                     self.papercraft.edge_toggle_tab(i_edge, EdgeToggleTabAction::Set(tab_side));

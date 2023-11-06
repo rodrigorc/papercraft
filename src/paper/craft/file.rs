@@ -51,7 +51,7 @@ impl Papercraft {
     }
     fn recompute_edge_ids(&mut self) {
         let mut next_edge_id = 0;
-        let mut edge_ids: Vec<Option<NonZeroU32>> = vec![None; self.model.num_edges()];
+        let mut edge_ids: Vec<Option<EdgeId>> = vec![None; self.model.num_edges()];
 
         let mut edge_collection: Vec<_> = self.model.edges()
             .zip(&self.edges)
@@ -74,7 +74,7 @@ impl Papercraft {
                 (_, EdgeStatus::Hidden) | ((_, None), _) => {}
                 _ => {
                     next_edge_id += 1;
-                    *edge_id = NonZeroU32::new(next_edge_id);
+                    *edge_id = Some(EdgeId::new(next_edge_id));
                 }
             }
         }

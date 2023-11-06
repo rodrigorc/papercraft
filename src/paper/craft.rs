@@ -240,7 +240,23 @@ pub struct Papercraft {
     #[serde(skip)]
     memo: Memoization,
     #[serde(skip)]
-    edge_ids: Vec<Option<NonZeroU32>>, //parallel to EdgeIndex
+    edge_ids: Vec<Option<EdgeId>>, //parallel to EdgeIndex
+}
+
+/// The printable edge id, not to be confused with EdgeIndex
+#[derive(Copy, Clone, Debug)]
+pub struct EdgeId(NonZeroU32);
+
+impl EdgeId {
+    fn new(id: u32) -> EdgeId {
+        EdgeId(NonZeroU32::new(id).unwrap())
+    }
+}
+
+impl std::fmt::Display for EdgeId {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.get().fmt(fmt)
+    }
 }
 
 #[derive(Copy, Clone, Default)]
@@ -421,13 +437,13 @@ impl Papercraft {
     pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {
         self.edges[usize::from(edge)]
     }
-    pub fn edge_id(&self, edge: EdgeIndex) -> Option<u32> {
+    pub fn edge_id(&self, edge: EdgeIndex) -> Option<EdgeId> {
         if self.options.edge_id_font_size <= 0.0
             || self.options.edge_id_position == EdgeIdPosition::None
         {
             return None;
         }
-        self.edge_ids[usize::from(edge)].map(|x| x.get())
+        self.edge_ids[usize::from(edge)]
     }
 
     pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex, action: EdgeToggleTabAction) -> Option<TabSide> {

@@ -2407,7 +2407,7 @@ impl GlobalContext {
                             continue;
                         };
                         // Edge ids
-                        for cut_idx in &extra.cut_index {
+                        for cut_idx in extra.cut_indices() {
                             let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face_b);
                             let ii = island_names.get(i_island_b).map(|s| s.as_str()).unwrap_or("?");
                             let text = format!("{}:{}", ii, cut_idx.id);

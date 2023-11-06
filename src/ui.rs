@@ -9,7 +9,7 @@ use cgmath::{
 };
 use image::DynamicImage;
 
-use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, EdgeIdPosition, TabGeom, TabSide, EdgeToggleTabAction};
+use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, EdgeIdPosition, TabGeom, TabSide, EdgeToggleTabAction, EdgeId};
 use crate::util_3d::{self, Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use crate::util_gl::{MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 use crate::glr::{self, Rgba};
@@ -255,7 +255,7 @@ pub struct PaperDrawFaceArgs {
 pub struct PaperDrawFaceArgsExtra {
     // For each line in vertices_edge_crease says which kind of line
     crease_kind: Vec<EdgeDrawKind>,
-    pub cut_index: Vec<CutIndex>,
+    cut_index: Vec<CutIndex>,
 }
 
 impl PaperDrawFaceArgs {
@@ -297,17 +297,29 @@ impl PaperDrawFaceArgs {
     }
 }
 
+impl PaperDrawFaceArgsExtra {
+    pub fn cut_indices(&self) -> &[CutIndex] {
+        &self.cut_index
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct CutIndex {
     pub pos: Vector2,
     pub dir: Vector2,
     pub angle: Rad<f32>,
     pub i_face_b: FaceIndex,
-    pub id: u32,
+    pub id: EdgeId,
 }
 
 impl CutIndex {
-    fn new(a: Vector2, b: Vector2, n_tab: Option<Vector2>, i_face_b: FaceIndex, id: u32, options: &PaperOptions) -> CutIndex {
+    /// This struct stores the position and content of an edge-id
+    /// (a, b): coordinates of the edge on paper
+    /// n_tab: if there is a tab, a vector normal to the edge with the length of the tab width
+    /// i_face_b: the face index of the _other _ face (_this_ face is not needed)
+    /// id: the edge id
+    /// options: the PaperOptions
+    fn new(a: Vector2, b: Vector2, n_tab: Option<Vector2>, i_face_b: FaceIndex, id: EdgeId, options: &PaperOptions) -> CutIndex {
         let mut center = (a + b) / 2.0;
 
         // Where does the edge-id go?

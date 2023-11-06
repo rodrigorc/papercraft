@@ -325,15 +325,15 @@ impl CutIndex {
         // Where does the edge-id go?
         let factor = match (options.edge_id_position, n_tab) {
             // inside the face
-            (EdgeIdPosition::Inside, None) => -0.1,
+            (EdgeIdPosition::Inside, None) => -0.2,
             // in the tab, next to the face
-            (EdgeIdPosition::Inside, Some(_)) => 0.9,
+            (EdgeIdPosition::Inside, Some(_)) => 1.1,
             // outside the face
-            (EdgeIdPosition::Outside, None) => 0.9,
+            (EdgeIdPosition::Outside, None) => 1.1,
             // outside the tab
             (EdgeIdPosition::Outside, Some(n)) => {
                 center += n;
-                0.9
+                1.1
             }
             // should not happen, if pos is None it is filtered before getting here
             (EdgeIdPosition::None, _) => 0.0,

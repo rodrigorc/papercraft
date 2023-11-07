@@ -82,8 +82,6 @@ pub struct Face {
 // If you just want the position of the edge limits use `Model::edge_pos()`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Edge {
-    v0: VertexIndex,
-    v1: VertexIndex,
     f0: FaceIndex,
     f1: Option<FaceIndex>,
 }
@@ -214,8 +212,6 @@ impl Model {
                         }
                         None => {
                             EdgeCreation::New(Edge {
-                                v0: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v0).unwrap().1),
-                                v1: VertexIndex(*idx_vertices.iter().find(|&(f, _)| f.v() == v1).unwrap().1),
                                 f0: i_face,
                                 f1: None,
                             }, (v0, v1))
@@ -329,7 +325,9 @@ impl Model {
         FaceIndex(((e - s) / std::mem::size_of::<Face>()) as u32)
     }
     pub fn edge_pos(&self, e: &Edge) -> (Vector3, Vector3) {
-        (self[e.v0].pos, self[e.v1].pos)
+        let i_edge = self.edge_index(e);
+        let (v0, v1, _) = self[e.f0].vertices_with_edges().find(|&(_, _, e)| e == i_edge).unwrap();
+        (self[v0].pos, self[v1].pos)
     }
     pub fn num_edges(&self) -> usize {
         self.edges.len()

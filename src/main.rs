@@ -1674,6 +1674,7 @@ impl GlobalContext {
 
         let shift_pressed = ui.io().key_shift;
         let control_pressed = ui.io().key_ctrl;
+        let alt_pressed = ui.io().key_alt;
 
         let mouse_pos = self.scene_ui_status.mouse_pos;
         if self.scene_ui_status.action != Canvas3dAction::None {
@@ -1689,7 +1690,7 @@ impl GlobalContext {
         }
         let flags = match &self.scene_ui_status.action {
             Canvas3dAction::Hovering => {
-                self.data.scene_hover_event(self.sz_scene, mouse_pos)
+                self.data.scene_hover_event(self.sz_scene, mouse_pos, alt_pressed)
             }
             Canvas3dAction::Pressed(MouseButton::Left) |
             Canvas3dAction::Dragging(MouseButton::Left) => {
@@ -1723,7 +1724,7 @@ impl GlobalContext {
         }
         let flags = match &self.paper_ui_status.action {
             Canvas3dAction::Hovering => {
-                self.data.paper_hover_event(self.sz_paper, mouse_pos)
+                self.data.paper_hover_event(self.sz_paper, mouse_pos, alt_pressed)
             }
             Canvas3dAction::Clicked(MouseButton::Left) |
             Canvas3dAction::DoubleClicked(MouseButton::Left) => {
@@ -2677,7 +2678,7 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
             p = cuts.swap_remove(next);
             res.push(p.0);
         }
-        // the last point should connect to the first 
+        // the last point should connect to the first
     }
     res
 }

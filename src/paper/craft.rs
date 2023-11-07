@@ -687,6 +687,14 @@ impl Papercraft {
         };
         res
     }
+    pub fn island_edges(&self, island: &Island) -> FxHashSet<EdgeIndex> {
+        let mut res = FxHashSet::default();
+        self.traverse_faces_no_matrix(island, |i_f| {
+            res.extend(self.model[i_f].index_edges().iter().filter(|&&i| matches!(self.edge_status(i), EdgeStatus::Cut(_))));
+            ControlFlow::Continue(())
+        });
+        res
+    }
     fn flat_face_tab_dimensions_internal(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> TabGeom {
         #[derive(Debug)]
         struct EData {

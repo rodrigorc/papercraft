@@ -2,7 +2,7 @@ use std::collections::HashMap;
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{
     prelude::*,
     Deg, Rad,
@@ -59,8 +59,8 @@ pub fn color_edge(mode: MouseMode) -> Rgba {
     match mode {
         MouseMode::Edge => Rgba::new(0.5, 0.5, 1.0, 1.0),
         MouseMode::Tab => Rgba::new(0.0, 0.5, 0.0, 1.0),
-        MouseMode::Face | // this should not happen, because in face mode there is no edge selection
-        MouseMode::ReadOnly => Rgba::new(0.0, 0.0, 0.0, 1.0),
+        MouseMode::Face |
+        MouseMode::ReadOnly => Rgba::new(0.5, 0.5, 0.5, 1.0),
     }
 }
 
@@ -101,7 +101,7 @@ pub struct PapercraftContext {
 
     // State
     selected_face: Option<FaceIndex>,
-    selected_edge: Option<EdgeIndex>,
+    selected_edges: Option<FxHashSet<EdgeIndex>>,
     selected_islands: Vec<IslandKey>,
     // Contains the UndoActions if these islands are to be moved, the actual grabbed islands are selected_islands
     grabbed_island: Option<Vec<UndoAction>>,
@@ -398,7 +398,7 @@ impl PapercraftContext {
             modified: false,
             gl_objs,
             selected_face: None,
-            selected_edge: None,
+            selected_edges: None,
             selected_islands: Vec::new(),
             grabbed_island: None,
             last_cursor_pos: Vector2::zero(),
@@ -975,90 +975,93 @@ impl PapercraftContext {
                 }
             }
         }
-        if let Some(i_sel_edge) = self.selected_edge {
-            let mut edges_sel = Vec::new();
+        if let Some(i_sel_edges) = self.selected_edges.as_ref() {
+            let mut edges_sel_3d = Vec::with_capacity(2 * i_sel_edges.len());
+            let mut edge_sel_2d = Vec::with_capacity(6 * i_sel_edges.len());
             let color = color_edge(self.ui.mode);
-            let edge = &self.papercraft.model()[i_sel_edge];
-            let (p0, p1) = self.papercraft.model().edge_pos(edge);
-            edges_sel.push(MVertex3DLine { pos: p0, color });
-            edges_sel.push(MVertex3DLine { pos: p1, color });
-            self.gl_objs.vertices_edge_sel.set(edges_sel);
+            for &i_sel_edge in i_sel_edges {
+                let edge = &self.papercraft.model()[i_sel_edge];
+                let (p0, p1) = self.papercraft.model().edge_pos(edge);
+                edges_sel_3d.push(MVertex3DLine { pos: p0, color });
+                edges_sel_3d.push(MVertex3DLine { pos: p1, color });
 
-            let (i_face_a, i_face_b) = edge.faces();
+                let (i_face_a, i_face_b) = edge.faces();
 
-            // Returns the 2D vertices of i_sel_edge that belong to face i_face
-            let get_vx = |i_face: FaceIndex| {
-                let face_a = &self.papercraft.model()[i_face];
-                let idx_face = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
-                let idx_edge = face_a.index_edges().iter().position(|&e| e == i_sel_edge).unwrap();
-                let v0 = &self.gl_objs.paper_vertices[idx_face + idx_edge];
-                let v1 = &self.gl_objs.paper_vertices[idx_face + (idx_edge + 1) % 3];
-                (v0, v1)
-            };
+                // Returns the 2D vertices of i_sel_edge that belong to face i_face
+                let get_vx = |i_face: FaceIndex| {
+                    let face_a = &self.papercraft.model()[i_face];
+                    let idx_face = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                    let idx_edge = face_a.index_edges().iter().position(|&e| e == i_sel_edge).unwrap();
+                    let v0 = &self.gl_objs.paper_vertices[idx_face + idx_edge];
+                    let v1 = &self.gl_objs.paper_vertices[idx_face + (idx_edge + 1) % 3];
+                    (v0, v1)
+                };
 
-            let mut edge_sel = Vec::with_capacity(6);
-            let line_width = LINE_SEL_WIDTH / 2.0 / self.ui.trans_paper.mx[0][0];
+                let line_width = LINE_SEL_WIDTH / 2.0 / self.ui.trans_paper.mx[0][0];
 
-            let (v0, v1) = get_vx(i_face_a);
-            edge_sel.extend_from_slice(&[
-                MVertex2DLine {
-                    pos: v0.pos,
-                    line_dash: 0.0,
-                    width_left: line_width,
-                    width_right: line_width,
-                },
-                MVertex2DLine {
-                    pos: v1.pos,
-                    line_dash: 0.0,
-                    width_left: line_width,
-                    width_right: line_width,
-                },
-            ]);
-            if let Some(i_face_b) = i_face_b {
-                let (vb0, vb1) = get_vx(i_face_b);
-                edge_sel.extend_from_slice(&[
+                let (v0, v1) = get_vx(i_face_a);
+                let idx_2d = edge_sel_2d.len();
+                edge_sel_2d.extend_from_slice(&[
                     MVertex2DLine {
-                        pos: vb0.pos,
+                        pos: v0.pos,
                         line_dash: 0.0,
                         width_left: line_width,
                         width_right: line_width,
                     },
                     MVertex2DLine {
-                        pos: vb1.pos,
+                        pos: v1.pos,
                         line_dash: 0.0,
                         width_left: line_width,
                         width_right: line_width,
                     },
                 ]);
-                let mut link_line = [
-                    MVertex2DLine {
-                        pos: (edge_sel[0].pos + edge_sel[1].pos) / 2.0,
-                        line_dash: 0.0,
-                        width_left: line_width,
-                        width_right: line_width,
-                    },
-                    MVertex2DLine {
-                        pos: (edge_sel[2].pos + edge_sel[3].pos) / 2.0,
-                        line_dash: 0.0,
-                        width_left: line_width,
-                        width_right: line_width,
-                    },
-                ];
-                link_line[1].line_dash = (link_line[1].pos - link_line[0].pos).magnitude();
-                edge_sel.extend_from_slice(&link_line);
-            } else {
-                // If there is no face_b it is a rim, highlight it specially
-                // This line_dash will create a 4.5 repetition pattern (- - - -)
-                edge_sel[1].line_dash = ((edge_sel[1].pos - edge_sel[0].pos).magnitude() / 5.0).round() + 0.5;
+                if let Some(i_face_b) = i_face_b {
+                    let (vb0, vb1) = get_vx(i_face_b);
+                    edge_sel_2d.extend_from_slice(&[
+                        MVertex2DLine {
+                            pos: vb0.pos,
+                            line_dash: 0.0,
+                            width_left: line_width,
+                            width_right: line_width,
+                        },
+                        MVertex2DLine {
+                            pos: vb1.pos,
+                            line_dash: 0.0,
+                            width_left: line_width,
+                            width_right: line_width,
+                        },
+                    ]);
+                    let mut link_line = [
+                        MVertex2DLine {
+                            pos: (edge_sel_2d[idx_2d + 0].pos + edge_sel_2d[idx_2d + 1].pos) / 2.0,
+                            line_dash: 0.0,
+                            width_left: line_width,
+                            width_right: line_width,
+                        },
+                        MVertex2DLine {
+                            pos: (edge_sel_2d[idx_2d + 2].pos + edge_sel_2d[idx_2d + 3].pos) / 2.0,
+                            line_dash: 0.0,
+                            width_left: line_width,
+                            width_right: line_width,
+                        },
+                    ];
+                    link_line[1].line_dash = (link_line[1].pos - link_line[0].pos).magnitude();
+                    edge_sel_2d.extend_from_slice(&link_line);
+                } else {
+                    // If there is no face_b it is a rim, highlight it specially
+                    // This line_dash will create a 4.5 repetition pattern (- - - -)
+                    edge_sel_2d[idx_2d + 1].line_dash = ((edge_sel_2d[idx_2d + 1].pos - edge_sel_2d[idx_2d + 0].pos).magnitude() / 5.0).round() + 0.5;
+                }
             }
-            self.gl_objs.paper_vertices_edge_sel.set(edge_sel);
+            self.gl_objs.vertices_edge_sel.set(edges_sel_3d);
+            self.gl_objs.paper_vertices_edge_sel.set(edge_sel_2d);
         }
     }
 
     #[must_use]
-    pub fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool) -> RebuildFlags {
+    pub fn set_selection(&mut self, selection: ClickResult, clicked: bool, add_to_sel: bool, alt_pressed: bool) -> RebuildFlags {
         let mut island_changed = false;
-        let (new_edge, new_face) = match selection {
+        let (new_edges, new_face) = match selection {
             ClickResult::None => {
                 if clicked && !add_to_sel  && !self.selected_islands.is_empty() {
                     self.selected_islands.clear();
@@ -1067,32 +1070,50 @@ impl PapercraftContext {
                 (None, None)
             }
             ClickResult::Face(i_face) => {
+                let i_island = self.papercraft.island_by_face(i_face);
                 if clicked {
-                    let island = self.papercraft.island_by_face(i_face);
                     if add_to_sel {
-                        if let Some(_n) = self.selected_islands.iter().position(|i| *i == island) {
+                        if let Some(_n) = self.selected_islands.iter().position(|i| *i == i_island) {
                             //unselect the island?
                         } else {
-                            self.selected_islands.push(island);
+                            self.selected_islands.push(i_island);
                             island_changed = true;
                         }
                     } else {
-                        self.selected_islands = vec![island];
+                        self.selected_islands = vec![i_island];
                         island_changed = true;
                     }
                 }
-                (None, Some(i_face))
+                let edges = if alt_pressed {
+                    let island = self.papercraft.island_by_key(i_island).unwrap();
+                    Some(self.papercraft.island_edges(island))
+                } else {
+                    None
+                };
+                (edges, Some(i_face))
             }
-            ClickResult::Edge(i_edge, _) => {
-                (Some(i_edge), None)
+            ClickResult::Edge(i_edge, maybe_i_face) => {
+                let edges = match (alt_pressed, maybe_i_face) {
+                    (true, Some(i_face)) => {
+                        let i_island = self.papercraft.island_by_face(i_face);
+                        let island = self.papercraft.island_by_key(i_island).unwrap();
+                        self.papercraft.island_edges(island)
+                    }
+                    _ => {
+                        let mut set = FxHashSet::default();
+                        set.insert(i_edge);
+                        set
+                    }
+                };
+                (Some(edges), None)
             }
         };
-        let rebuild = if island_changed || self.selected_edge != new_edge || self.selected_face != new_face {
+        let rebuild = if island_changed || self.selected_edges != new_edges || self.selected_face != new_face {
             RebuildFlags::SELECTION
         } else {
             RebuildFlags::empty()
         };
-        self.selected_edge = new_edge;
+        self.selected_edges = new_edges;
         self.selected_face = new_face;
         rebuild
     }
@@ -1302,10 +1323,10 @@ impl PapercraftContext {
         RebuildFlags::SCENE_REDRAW
     }
     #[must_use]
-    pub fn scene_hover_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
+    pub fn scene_hover_event(&mut self, size: Vector2, pos: Vector2, alt_pressed: bool) -> RebuildFlags {
         self.last_cursor_pos = pos;
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
-        self.set_selection(selection, false, false)
+        self.set_selection(selection, false, false, alt_pressed)
     }
     #[must_use]
     pub fn scene_button1_click_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
@@ -1396,10 +1417,10 @@ impl PapercraftContext {
                 self.do_tab_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) => {
-                self.set_selection(ClickResult::Face(f), true, add_to_sel)
+                self.set_selection(ClickResult::Face(f), true, add_to_sel, false)
             }
             (_, ClickResult::None) => {
-                self.set_selection(ClickResult::None, true, add_to_sel)
+                self.set_selection(ClickResult::None, true, add_to_sel, false)
             }
             _ => RebuildFlags::empty(),
         }
@@ -1495,7 +1516,7 @@ impl PapercraftContext {
                 self.do_tab_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) => {
-                let flags = self.set_selection(ClickResult::Face(f), true, add_to_sel);
+                let flags = self.set_selection(ClickResult::Face(f), true, add_to_sel, false);
                 if modifiable {
                     let undo_action: Vec<_> = self.selected_islands
                         .iter()
@@ -1510,7 +1531,7 @@ impl PapercraftContext {
             }
             (_, ClickResult::None) => {
                 self.grabbed_island = None;
-                self.set_selection(ClickResult::None, true, add_to_sel)
+                self.set_selection(ClickResult::None, true, add_to_sel, false)
             }
             _ => RebuildFlags::empty()
         }
@@ -1527,12 +1548,12 @@ impl PapercraftContext {
         RebuildFlags::PAPER_REDRAW | RebuildFlags::SELECTION
 }
     #[must_use]
-    pub fn paper_hover_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
+    pub fn paper_hover_event(&mut self, size: Vector2, pos: Vector2, alt_pressed: bool) -> RebuildFlags {
         self.last_cursor_pos = pos;
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         self.rotation_center = None;
         self.grabbed_island = None;
-        self.set_selection(selection, false, false)
+        self.set_selection(selection, false, false, alt_pressed)
     }
 
     #[must_use]
@@ -1609,7 +1630,7 @@ impl PapercraftContext {
         self.undo_stack.push(action);
     }
     pub fn has_selected_edge(&self) -> bool {
-        self.selected_edge.is_some()
+        self.selected_edges.is_some()
     }
 
     pub fn lines_by_island(&self) -> Vec<(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))> {

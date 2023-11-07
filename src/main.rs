@@ -2078,10 +2078,8 @@ impl GlobalContext {
             let page_size = Vector2::from(options.page_size);
             let in_page = options.is_in_page_fn(page);
 
-            use base64::prelude::*;
             let mut png = Vec::new();
             pixbuf.write_to_png(&mut png)?;
-            let b64png = BASE64_STANDARD.encode(&png);
 
             let mut all_page_cuts = Vec::new();
 
@@ -2131,10 +2129,18 @@ impl GlobalContext {
 
             // begin layer Background
             writeln!(&mut out, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
-            writeln!(
+            write!(
                 &mut out,
-                r#"<image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/png;base64,{}" id="background" x="0" y="0" style="display:inline"/>"#,
-                page_size.x, page_size.y, b64png)?;
+                r#"<image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/png;base64,"#,
+                page_size.x, page_size.y)?;
+            {
+                use base64::prelude::*;
+                let mut b64png = base64::write::EncoderWriter::new(&mut out, &BASE64_STANDARD);
+                b64png.write_all(&png)?;
+                b64png.finish()?;
+            }
+            writeln!(&mut out, r#"" id="background" x="0" y="0" style="display:inline"/>"#)?;
+
             writeln!(&mut out, r#"</g>"#)?;
             // end layer Background
 

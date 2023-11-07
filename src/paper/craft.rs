@@ -522,8 +522,9 @@ impl Papercraft {
             let sign = if edge.face_sign(new_root) { 1.0 } else { -1.0 };
             let new_root = &self.model[new_root];
             let new_root_plane = self.model.face_plane(new_root);
-            let v0 = new_root_plane.project(&self.model[edge.v0()].pos(), self.options.scale);
-            let v1 = new_root_plane.project(&self.model[edge.v1()].pos(), self.options.scale);
+            let (v0, v1) = self.model.edge_pos(edge);
+            let v0 = new_root_plane.project(&v0, self.options.scale);
+            let v1 = new_root_plane.project(&v1, self.options.scale);
             let v0 = mx.transform_point(Point2::from_vec(v0)).to_vec();
             let v1 = mx.transform_point(Point2::from_vec(v1)).to_vec();
             let v = (v1 - v0).normalize_to(offset_on_cut);
@@ -658,8 +659,7 @@ impl Papercraft {
         }
     }
     fn face_to_face_edge_matrix_internal(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
-        let v0 = self.model[edge.v0()].pos();
-        let v1 = self.model[edge.v1()].pos();
+        let (v0, v1) = self.model.edge_pos(edge);
         let plane_a = self.model.face_plane(face_a);
         let plane_b = self.model.face_plane(face_b);
         let scale = self.options.scale;
@@ -899,8 +899,7 @@ impl Papercraft {
         let face = &self.model[i_face];
         let plane = self.model.face_plane(face);
         let edge = &self.model[i_edge];
-        let v0 = self.model[edge.v0()].pos();
-        let v1 = self.model[edge.v1()].pos();
+        let (v0, v1) = self.model.edge_pos(edge);
         let scale = self.options.scale;
         let p0 = plane.project(&v0, scale);
         let p1 = plane.project(&v1, scale);
@@ -964,8 +963,8 @@ impl Papercraft {
                 // face strips must be made by isolated quads: 4 flat edges and 2 faces
                 let edges: Vec<_> = self.get_flat_faces(i_face)
                     .into_iter()
-                    .flat_map(|f| self.model[f].index_edges())
-                    .filter(|&e| self.edge_status(e) != EdgeStatus::Hidden)
+                    .flat_map(|f| self.model[f].vertices_with_edges())
+                    .filter(|(_, _, e)| self.edge_status(*e) != EdgeStatus::Hidden)
                     .collect();
 
                 if n_faces != 2 {
@@ -974,19 +973,23 @@ impl Papercraft {
                 if edges.len() != 4 {
                     continue;
                 }
+                let Some(&(this_v0, this_v1, _)) = edges.iter().find(|(_, _, i_e)| *i_e == i_edge)
+                    else {
+                        continue;
+                };
                 // Get the opposite edge, if any
-                let opposite = edges.iter().copied().find(|&i_e| {
+                let Some(&(_, _, opposite)) = edges.iter().find(|&&(i_v0, i_v1, i_e)| {
                     if i_e == i_edge {
                         return false;
                     }
-                    let edge = &self.model[i_edge];
-                    let e = &self.model[i_e];
-                    if e.v0() == edge.v0() || e.v0() == edge.v1() || e.v1() == edge.v0() || e.v1() == edge.v1() {
+                    if i_v0 == this_v0 || i_v0 == this_v1 || i_v1 == this_v0 || i_v1 == this_v1 {
                         return false;
                     }
                     true
-                });
-                i_edges.extend(opposite);
+                }) else {
+                    continue;
+                };
+                i_edges.push(opposite);
             }
         }
         renames

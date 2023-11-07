@@ -57,8 +57,7 @@ impl Papercraft {
             .zip(&self.edges)
             .zip(&mut edge_ids)
             .map(|(((_, edge), edge_status), edge_id)| {
-                let p0 = self.model[edge.v0()].pos();
-                let p1 = self.model[edge.v1()].pos();
+                let (p0, p1) = self.model.edge_pos(edge);
                 let c = (p0 + p1) / 2.0;
                 (c, edge, edge_status, edge_id)
             })

@@ -3,11 +3,9 @@ use super::*;
 fn compute_edge_map(new: &Papercraft, old: &Papercraft) -> FxHashMap<EdgeIndex, (EdgeIndex, bool)> {
     let mut map = FxHashMap::default();
     for (i_new, e_new) in new.model.edges() {
-        let np0 = new.model[e_new.v0()].pos();
-        let np1 = new.model[e_new.v1()].pos();
+        let (np0, np1) = new.model.edge_pos(e_new);
         let distance = |e_old: &Edge| {
-            let op0 = old.model[e_old.v0()].pos();
-            let op1 = old.model[e_old.v1()].pos();
+            let (op0, op1) = old.model.edge_pos(e_old);
             let da = op0.distance2(np0) + op1.distance2(np1);
             let db = op0.distance2(np1) + op1.distance2(np0);
             (da, db)

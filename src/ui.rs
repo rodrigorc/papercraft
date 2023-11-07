@@ -928,8 +928,7 @@ impl PapercraftContext {
                 continue;
             }
             let cut = matches!(self.papercraft.edge_status(i_edge), EdgeStatus::Cut(_));
-            let p0 = self.papercraft.model()[edge.v0()].pos();
-            let p1 = self.papercraft.model()[edge.v1()].pos();
+            let (p0, p1) = self.papercraft.model().edge_pos(edge);
 
             let (edges, color) = if cut {
                 (&mut edges_cut, Rgba::new(1.0, 1.0, 1.0, 1.0))
@@ -980,8 +979,7 @@ impl PapercraftContext {
             let mut edges_sel = Vec::new();
             let color = color_edge(self.ui.mode);
             let edge = &self.papercraft.model()[i_sel_edge];
-            let p0 = self.papercraft.model()[edge.v0()].pos();
-            let p1 = self.papercraft.model()[edge.v1()].pos();
+            let (p0, p1) = self.papercraft.model().edge_pos(edge);
             edges_sel.push(MVertex3DLine { pos: p0, color });
             edges_sel.push(MVertex3DLine { pos: p1, color });
             self.gl_objs.vertices_edge_sel.set(edges_sel);
@@ -1190,8 +1188,7 @@ impl PapercraftContext {
                 (EdgeStatus::Joined, MouseMode::Tab) => continue,
                 _ => (),
             }
-            let v1 = self.papercraft.model()[edge.v0()].pos();
-            let v2 = self.papercraft.model()[edge.v1()].pos();
+            let (v1, v2) = self.papercraft.model().edge_pos(edge);
             let (ray_hit, _line_hit, new_dist) = util_3d::line_segment_distance(ray, (v1, v2));
 
             // Behind the screen, it is not a hit
@@ -1262,11 +1259,10 @@ impl PapercraftContext {
                                     _ => (),
                                 }
                                 let edge = &self.papercraft.model()[i_edge];
-                                let v0 = self.papercraft.model()[edge.v0()].pos();
+                                let (v0, v1) = self.papercraft.model().edge_pos(edge);
                                 let v0 = plane.project(&v0, scale);
-                                let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
-                                let v1 = self.papercraft.model()[edge.v1()].pos();
                                 let v1 = plane.project(&v1, scale);
+                                let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
                                 let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
 
                                 let (_o, d) = util_3d::point_segment_distance(click, (v0, v1));

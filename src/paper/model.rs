@@ -76,6 +76,10 @@ pub struct Face {
     edges: [EdgeIndex; 3],
 }
 
+// Beware! The vertices that form the edge in `f0` and those in `f1` may be different, because of
+// the UV. Edge::{v0,v1} are just some of them. At least the `pos` should match.
+// If you want the proper VertexIndex from the POV of a face, use `Face::vertices_with_edges()`.
+// If you just want the position of the edge limits use `Model::edge_pos()`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Edge {
     v0: VertexIndex,
@@ -324,6 +328,9 @@ impl Model {
         let s = self.faces.as_ptr() as usize;
         FaceIndex(((e - s) / std::mem::size_of::<Face>()) as u32)
     }
+    pub fn edge_pos(&self, e: &Edge) -> (Vector3, Vector3) {
+        (self[e.v0].pos, self[e.v1].pos)
+    }
     pub fn num_edges(&self) -> usize {
         self.edges.len()
     }
@@ -451,12 +458,7 @@ impl Vertex {
 }
 
 impl Edge {
-    pub fn v0(&self) -> VertexIndex {
-        self.v0
-    }
-    pub fn v1(&self) -> VertexIndex {
-        self.v1
-    }
+    // Do not make (v0,v1) public, they are prone to error
     pub fn faces(&self) -> (FaceIndex, Option<FaceIndex>) {
         (self.f0, self.f1)
     }

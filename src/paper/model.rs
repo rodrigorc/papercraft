@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+use std::cell::Cell;
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{InnerSpace, Rad, Angle, Zero};
 use image::DynamicImage;
@@ -23,7 +25,7 @@ impl Texture {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Model {
     textures: Vec<Texture>,
     #[serde(rename="vs")]
@@ -32,6 +34,45 @@ pub struct Model {
     edges: Vec<Edge>,
     #[serde(rename="fs")]
     faces: Vec<Face>,
+}
+
+// Hack to pass a serialization context to the Edges, it will be removed, eventually
+thread_local! {
+    static SER_MODEL: Cell<Option<*const Model>> = Cell::new(None);
+}
+struct SetSerModel<'a> {
+    old: Option<*const Model>,
+    _pd: PhantomData<&'a Model>,
+}
+impl SetSerModel<'_> {
+    fn new(m: &Model) -> SetSerModel {
+        let old = SER_MODEL.replace(Some(m));
+        SetSerModel {
+            old,
+            _pd: PhantomData,
+        }
+    }
+}
+impl Drop for SetSerModel<'_> {
+    fn drop(&mut self) {
+        SER_MODEL.set(self.old);
+    }
+}
+
+impl Serialize for Model {
+    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        let _ctx = SetSerModel::new(self);
+
+        use serde::ser::SerializeStruct;
+        let mut x = ser.serialize_struct("Model", 4)?;
+        x.serialize_field("textures", &self.textures)?;
+        x.serialize_field("vs", &self.vertices)?;
+        x.serialize_field("es", &self.edges)?;
+        x.serialize_field("fs", &self.faces)?;
+        x.end()
+    }
 }
 
 // We use u32 where usize should be use to save some memory in 64-bit systems, and because OpenGL likes 32-bit types in its buffers.
@@ -77,13 +118,34 @@ pub struct Face {
 }
 
 // Beware! The vertices that form the edge in `f0` and those in `f1` may be different, because of
-// the UV. Edge::{v0,v1} are just some of them. At least the `pos` should match.
+// the UV.
 // If you want the proper VertexIndex from the POV of a face, use `Face::vertices_with_edges()`.
 // If you just want the position of the edge limits use `Model::edge_pos()`.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Edge {
     f0: FaceIndex,
     f1: Option<FaceIndex>,
+}
+
+impl Serialize for Edge {
+    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        use serde::ser::SerializeStruct;
+
+        // (v0,v1) are not used, they are there for compatibility with old Papercraft
+        // versions.
+        let model = unsafe { &*SER_MODEL.get().unwrap() };
+        let i_edge = model.edge_index(self);
+        let (v0, v1, _) = model[self.f0].vertices_with_edges().find(|&(_, _, e)| e == i_edge).unwrap();
+
+        let mut x = ser.serialize_struct("Edge", 4)?;
+        x.serialize_field("f0", &self.f0)?;
+        x.serialize_field("f1", &self.f1)?;
+        x.serialize_field("v0", &v0)?;
+        x.serialize_field("v1", &v1)?;
+        x.end()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

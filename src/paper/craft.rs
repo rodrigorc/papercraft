@@ -167,8 +167,9 @@ impl Default for PaperOptions {
 
 #[derive(Debug, Copy, Clone)]
 pub struct PageOffset {
-    pub page: u32,
-    pub offset: Vector2,
+    row: i32,
+    col: i32,
+    offset: Vector2,
 }
 
 const PAGE_SEP: f32 = 10.0; // Currently not configurable
@@ -176,10 +177,12 @@ const PAGE_SEP: f32 = 10.0; // Currently not configurable
 impl PaperOptions {
     pub fn page_position(&self, page: u32) -> Vector2 {
         let page_cols = self.page_cols;
-        let page_size = Vector2::from(self.page_size);
         let row = page / page_cols;
         let col = page % page_cols;
-        Vector2::new((col as f32) * (page_size.x + PAGE_SEP), (row as f32) * (page_size.y + PAGE_SEP))
+        self.row_col_position(row as i32, col as i32)
+    }
+    fn row_col_position(&self, row: i32, col: i32) -> Vector2 {
+        Vector2::new((col as f32) * (self.page_size.0 + PAGE_SEP), (row as f32) * (self.page_size.1 + PAGE_SEP))
     }
     pub fn is_in_page_fn(&self, page: u32) -> impl Fn(Vector2) -> (bool, Vector2) {
         let page_pos_0 = self.page_position(page);
@@ -193,19 +196,18 @@ impl PaperOptions {
     pub fn global_to_page(&self, pos: Vector2) -> PageOffset {
         let page_cols = self.page_cols;
         let page_size = Vector2::from(self.page_size);
-        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).clamp(0, page_cols as i32) as u32;
-        let row = ((pos.y / (page_size.y + PAGE_SEP)) as i32).max(0) as u32;
+        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).clamp(0, page_cols as i32) as i32;
+        let row = ((pos.y / (page_size.y + PAGE_SEP)) as i32).max(0) as i32;
 
-        let page = row * page_cols + col;
-        let zero_pos = self.page_position(page);
+        let zero_pos = self.row_col_position(row, col);
         let offset = pos - zero_pos;
         PageOffset {
-            page,
+            row, col,
             offset,
         }
     }
     pub fn page_to_global(&self, po: PageOffset) -> Vector2 {
-        let zero_pos = self.page_position(po.page);
+        let zero_pos = self.row_col_position(po.row, po.col);
         zero_pos + po.offset
     }
     pub fn is_inside_canvas(&self, pos: Vector2) -> bool {

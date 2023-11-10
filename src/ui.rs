@@ -1677,8 +1677,8 @@ impl GLObjects {
                     gl::TexImage3D(gl::TEXTURE_2D_ARRAY, 0, gl::RGBA8 as i32,
                                    width as i32, height as i32, images.len() as i32, 0,
                                    gl::RGB, gl::UNSIGNED_BYTE, std::ptr::null());
-                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
                     set_texture_filter(papercraft.options().tex_filter);
 
                     for (layer, image) in images.iter().enumerate() {

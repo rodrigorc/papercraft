@@ -3,7 +3,7 @@ use std::{io::{Read, Seek, Write}, path::Path, hash::Hash};
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{One, Rad, Zero};
 use slotmap::SlotMap;
-use crate::waveobj;
+use crate::{waveobj, pepakura};
 use anyhow::{Result, anyhow, Context};
 
 use super::*;
@@ -343,5 +343,149 @@ impl Papercraft {
 
     }
 
+    pub fn import_pepakura(file_name: &Path) -> Result<Papercraft> {
+        let f = std::fs::File::open(file_name)?;
+        let f = std::io::BufReader::new(f);
+        let pdo = pepakura::Pdo::from_reader(f)?;
+        //dbg!(&pdo);
+
+        let (model, facemap, edgemap, vertexmap) = Model::from_pepakura(&pdo);
+
+        let mut edges = vec![EdgeStatus::Cut(TabSide::False); model.num_edges()];
+
+        for (i_edge, edge_status) in edges.iter_mut().enumerate() {
+            let i_edge = EdgeIndex::from(i_edge);
+            let edge = &model[i_edge];
+            match edge.faces() {
+                // Edge from tessellation of a n-gon
+                (fa, Some(fb)) if facemap[&fa] == facemap[&fb] => {
+                    *edge_status = EdgeStatus::Hidden;
+                }
+                // Rim
+                (_, None) => {
+                    // edges in the rim (without adjacent face) do not have a tab
+                    *edge_status = EdgeStatus::Cut(TabSide::Hidden)
+                }
+                // Normal edge
+                _ => {}
+            }
+        }
+
+        for (i_o, obj) in pdo.objects().iter().enumerate() {
+            for edge in obj.edges.iter() {
+                let edge_pos = edgemap.iter()
+                    .position(|&((o, v0), (_, v1))| {
+                        if i_o as u32 != o { return false; }
+                        (v0, v1) == (edge.i_v1, edge.i_v2) || (v1, v0) == (edge.i_v1, edge.i_v2)
+                    });
+                let Some(i_edge) = edge_pos else { continue; };
+                if edge.connected {
+                    edges[i_edge] = EdgeStatus::Joined;
+                } else {
+                    let v_f = obj.faces[edge.i_f1 as usize].verts.iter().find(|v_f| v_f.i_v == edge.i_v1).unwrap();
+                    edges[i_edge] = EdgeStatus::Cut(if v_f.flap { TabSide::True } else { TabSide::False });
+                    //TODO Cut(?)
+                }
+            }
+        }
+
+        let mut pending_faces: FxHashSet<FaceIndex> = model.faces().map(|(i_face, _face)| i_face).collect();
+
+        let mut islands = SlotMap::with_key();
+
+        while let Some(root) = pending_faces.iter().copied().next() {
+            pending_faces.remove(&root);
+
+            traverse_faces_ex(&model, root, (), NoMatrixTraverseFace(&model, &edges),
+                |i_face, _, _| {
+                    pending_faces.remove(&i_face);
+                    ControlFlow::Continue(())
+                }
+            );
+            let island = Island {
+                root,
+                loc: Vector2::zero(),
+                rot: Rad(0.0),
+                mx: Matrix3::one(),
+            };
+            islands.insert(island);
+        }
+
+        let mut options = PaperOptions::default();
+
+        if let Some(unfold) = pdo.unfold() {
+            let margin = Vector2::new(pdo.settings().margin_side as f32, pdo.settings().margin_top as f32);
+            let page_size = pdo.settings().page_size;
+            let area_size = page_size - 2.0 * margin;
+
+            options.scale = unfold.scale;
+            options.page_size = (page_size.x, page_size.y);
+            options.margin = (margin.y, margin.x, margin.x, margin.y);
+
+            let mut n_cols = 0;
+            let mut max_page = (0, 0);
+            for island in islands.values_mut() {
+                let face = &model[island.root];
+                let [i_v0, i_v1, _] = face.index_vertices();
+                let (ip_obj, ip_face, ip_v0) = vertexmap[usize::from(i_v0)];
+                let (_, _, ip_v1) = vertexmap[usize::from(i_v1)];
+                let p_face = &pdo.objects()[ip_obj as usize].faces[ip_face as usize];
+                let vf0 = p_face.verts[ip_v0 as usize].pos2d;
+                let vf1 = p_face.verts[ip_v1 as usize].pos2d;
+                let i_part = p_face.part_index;
+
+                let normal = model.face_plane(face);
+                let pv0 = normal.project(&model[i_v0].pos(), options.scale);
+                let pv1 = normal.project(&model[i_v1].pos(), options.scale);
+
+                let part = &unfold.parts[i_part as usize];
+
+                let rot = (pv1 - pv0).angle(vf1 - vf0);
+                let loc = vf0 - pv0 + part.bb.v0;
+
+                let mut col = loc.x.div_euclid(area_size.x) as i32;
+                let mut row = loc.y.div_euclid(area_size.y) as i32;
+                let loc = Vector2::new(loc.x.rem_euclid(area_size.x), loc.y.rem_euclid(area_size.y));
+                let loc = loc + margin;
+
+                // Some models use negative pages to hide pieces
+                if col < 0 || row < 0 {
+                    col = -1;
+                    row = 0;
+                } else {
+                    let row = row as u32;
+                    let col = col as u32;
+                    n_cols = n_cols.max(col);
+                    if row > max_page.0 || (row == max_page.0 && col > max_page.1) {
+                        max_page = (row, col);
+                    }
+                }
+
+                let loc = options.page_to_global(PageOffset { row, col, offset: loc });
+                island.reset_transformation(island.root, rot, loc);
+            }
+            // 0-based
+            options.page_cols = n_cols + 1;
+            options.pages = max_page.0 * options.page_cols + max_page.1 + 1;
+        }
+        options.hidden_line_angle = pdo.settings().fold_line_hide_angle
+            .map(|a| (180 - a) as f32)
+            .unwrap_or(0.0);
+
+        let mut papercraft = Papercraft {
+            model,
+            options,
+            edges,
+            islands,
+            memo: Memoization::default(),
+            edge_ids: Vec::new(),
+        };
+
+        if pdo.unfold().is_none() {
+            papercraft.pack_islands();
+        }
+        papercraft.recompute_edge_ids();
+        Ok(papercraft)
+    }
 }
 

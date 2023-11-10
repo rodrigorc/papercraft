@@ -21,6 +21,7 @@ use imgui_glow_renderer::TextureMap;
 
 mod imgui_filedialog;
 mod waveobj;
+mod pepakura;
 mod paper;
 mod glr;
 mod util_3d;

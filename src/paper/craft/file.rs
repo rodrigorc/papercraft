@@ -2,6 +2,7 @@ use std::{io::{Read, Seek, Write}, path::Path, hash::Hash};
 
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{One, Rad, Zero};
+use model::import::Importer;
 use slotmap::SlotMap;
 use anyhow::Result;
 
@@ -79,8 +80,7 @@ impl Papercraft {
         self.edge_ids = edge_ids;
     }
 
-    pub fn import<I: Importer>(file_name: &Path) -> Result<Papercraft> {
-        let mut importer = I::import(file_name)?;
+    pub fn import<I: Importer>(mut importer: I) -> Papercraft {
         let (model, face_map, edge_map) = Model::from_importer(&mut importer);
 
         let edges: Vec<_> = edge_map.iter().enumerate()
@@ -172,8 +172,7 @@ impl Papercraft {
             papercraft.options.pages = num_pages;
         }
         papercraft.recompute_edge_ids();
-
-        Ok(papercraft)
+        papercraft
     }
 
     pub fn export_waveobj(&self, file_name: &Path) -> Result<()> {

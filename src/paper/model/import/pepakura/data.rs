@@ -1,5 +1,7 @@
 use std::io::Read;
 use anyhow::{anyhow, Result};
+
+use super::super::*;
 type Vector2 = cgmath::Vector2<f32>;
 type Vector3 = cgmath::Vector3<f32>;
 
@@ -12,9 +14,9 @@ pub struct Pdo {
 }
 
 impl Pdo {
-    pub fn from_reader<R: Read>(rdr: R) -> Result<Pdo> {
+    pub fn from_reader<R: Read>(mut rdr: R) -> Result<Pdo> {
         let mut reader = Reader {
-            rdr,
+            rdr: &mut rdr,
             version: 0,
             _mbcs: false,
             shift: 0,
@@ -38,8 +40,8 @@ impl Pdo {
     }
 }
 
-struct Reader<R> {
-    rdr: R,
+struct Reader<'r, R> {
+    rdr: &'r mut R,
     version: u8,
     _mbcs: bool,
     shift: u32,
@@ -143,58 +145,14 @@ pub struct Line {
     pub second: Option<(u32, u32)>,
 }
 
-impl <R: Read> Reader<R> {
-    fn read_u8(&mut self) -> Result<u8> {
-        let mut x = [0; 1];
-        self.rdr.read_exact(&mut x)?;
-        Ok(x[0])
-    }
-    fn read_bool(&mut self) -> Result<bool> {
-        Ok(self.read_u8()? != 0)
-    }
-    fn read_u16(&mut self) -> Result<u16> {
-        let mut x = [0; 2];
-        self.rdr.read_exact(&mut x)?;
-        Ok(u16::from_le_bytes(x))
-    }
-    fn read_u32(&mut self) -> Result<u32> {
-        let mut x = [0; 4];
-        self.rdr.read_exact(&mut x)?;
-        Ok(u32::from_le_bytes(x))
-    }
-    fn read_u64(&mut self) -> Result<u64> {
-        let mut x = [0; 8];
-        self.rdr.read_exact(&mut x)?;
-        Ok(u64::from_le_bytes(x))
-    }
-    fn read_f32(&mut self) -> Result<f32> {
-        let mut x = [0; 4];
-        self.rdr.read_exact(&mut x)?;
-        Ok(f32::from_le_bytes(x))
-    }
-    fn read_f64(&mut self) -> Result<f64> {
-        let mut x = [0; 8];
-        self.rdr.read_exact(&mut x)?;
-        Ok(f64::from_le_bytes(x))
-    }
-    fn read_vector2(&mut self) -> Result<Vector2> {
-        let x = self.read_f64()? as f32;
-        let y = self.read_f64()? as f32;
-        Ok(Vector2::new(x, y))
-    }
-    fn read_vector3(&mut self) -> Result<Vector3> {
-        let x = self.read_f64()? as f32;
-        let y = self.read_f64()? as f32;
-        let z = self.read_f64()? as f32;
-        Ok(Vector3::new(x, y, z))
-    }
+impl <'r, R: Read> Reader<'r, R> {
     fn read_bounding_box(&mut self) -> Result<BoundingBox> {
-        let v0 = self.read_vector2()?;
-        let v1 = self.read_vector2()?;
+        let v0 = read_vector2_f64(self.rdr)?;
+        let v1 = read_vector2_f64(self.rdr)?;
         Ok(BoundingBox { v0, v1 })
     }
     fn read_string(&mut self) -> Result<String> {
-        let len = self.read_u32()?;
+        let len = read_u32(self.rdr)?;
         let mut res = vec![0; len as usize];
         self.rdr.read_exact(&mut res)?;
         //TODO mbcs?
@@ -205,9 +163,9 @@ impl <R: Read> Reader<R> {
         Ok(String::from_utf8_lossy(&res).into_owned())
     }
     fn read_texture(&mut self) -> Result<Texture> {
-        let width = self.read_u32()?;
-        let height = self.read_u32()?;
-        let size = self.read_u32()?;
+        let width = read_u32(self.rdr)?;
+        let height = read_u32(self.rdr)?;
+        let size = read_u32(self.rdr)?;
         let mut zdata = vec![0; size as usize];
         self.rdr.read_exact(&mut zdata)?;
         let mut z = flate2::bufread::ZlibDecoder::new(&zdata[..]);
@@ -220,20 +178,20 @@ impl <R: Read> Reader<R> {
         })
     }
     fn read_face(&mut self) -> Result<Face> {
-        let mat_index = self.read_u32()?;
-        let part_index = self.read_u32()?;
-        let normal = self.read_vector3()?;
-        let _coord = self.read_f64()?;
-        let n_verts = self.read_u32()?;
+        let mat_index = read_u32(self.rdr)?;
+        let part_index = read_u32(self.rdr)?;
+        let normal = read_vector3_f64(self.rdr)?;
+        let _coord = read_f64(self.rdr)?;
+        let n_verts = read_u32(self.rdr)?;
         let mut verts = Vec::with_capacity(n_verts as usize);
         for _ in 0 .. n_verts {
-            let i_v = self.read_u32()?;
-            let pos2d = self.read_vector2()?;
-            let uv = self.read_vector2()?;
-            let flap = self.read_bool()?;
-            let _h = self.read_f64()?;
-            let _a1 = self.read_f64()?;
-            let _a2 = self.read_f64()?;
+            let i_v = read_u32(self.rdr)?;
+            let pos2d = read_vector2_f64(self.rdr)?;
+            let uv = read_vector2_f64(self.rdr)?;
+            let flap = read_bool(self.rdr)?;
+            let _h = read_f64(self.rdr)?;
+            let _a1 = read_f64(self.rdr)?;
+            let _a2 = read_f64(self.rdr)?;
 
             let mut _fold_info = [0; 24];
             self.rdr.read_exact(&mut _fold_info)?;
@@ -253,29 +211,29 @@ impl <R: Read> Reader<R> {
     }
     fn read_object(&mut self) -> Result<Object> {
         let name = self.read_string()?;
-        let visible = self.read_bool()?;
-        let n_vertices = self.read_u32()?;
+        let visible = read_bool(self.rdr)?;
+        let n_vertices = read_u32(self.rdr)?;
         let mut vertices = Vec::with_capacity(n_vertices as usize);
         for _ in 0 .. n_vertices {
-            let v = self.read_vector3()?;
+            let v = read_vector3_f64(self.rdr)?;
             vertices.push(Vertex { v });
         }
-        let n_faces = self.read_u32()?;
+        let n_faces = read_u32(self.rdr)?;
         let mut faces = Vec::with_capacity(n_faces as usize);
         for _ in 0 .. n_faces {
             let face = self.read_face()?;
             faces.push(face);
         }
-        let n_edges = self.read_u32()?;
+        let n_edges = read_u32(self.rdr)?;
         let mut edges = Vec::with_capacity(n_edges as usize);
         for _ in 0 .. n_edges {
-            let i_f1 = self.read_u32()?;
-            let i_f2 = self.read_u32()?;
+            let i_f1 = read_u32(self.rdr)?;
+            let i_f2 = read_u32(self.rdr)?;
             let i_f2 = if i_f2 == u32::MAX { None } else { Some(i_f2) };
-            let i_v1 = self.read_u32()?;
-            let i_v2 = self.read_u32()?;
-            let connected = self.read_u16()? != 0;
-            let _nf = self.read_u32()?;
+            let i_v1 = read_u32(self.rdr)?;
+            let i_v2 = read_u32(self.rdr)?;
+            let connected = read_u16(self.rdr)? != 0;
+            let _nf = read_u32(self.rdr)?;
             edges.push(Edge {
                 i_f1, i_f2,
                 i_v1, i_v2,
@@ -293,12 +251,12 @@ impl <R: Read> Reader<R> {
     fn read_material(&mut self) -> Result<Material> {
         let name = self.read_string()?;
         for _ in 0 .. 16 {
-            let _color3d = self.read_f32()?;
+            let _color3d = read_f32(self.rdr)?;
         }
         for _ in 0 .. 4 {
-            let _color2d = self.read_f32()?;
+            let _color2d = read_f32(self.rdr)?;
         }
-        let textured = self.read_bool()?;
+        let textured = read_bool(self.rdr)?;
         let texture = if textured {
             let tex = self.read_texture()?;
             Some(tex)
@@ -311,14 +269,14 @@ impl <R: Read> Reader<R> {
         })
     }
     fn read_part(&mut self) -> Result<Part> {
-        let i_obj = self.read_u32()?;
+        let i_obj = read_u32(self.rdr)?;
         let bb = self.read_bounding_box()?;
         let name = if self.version >= 5 {
             self.read_string()?
         } else {
             String::new()
         };
-        let n_lines = self.read_u32()?;
+        let n_lines = read_u32(self.rdr)?;
         let mut lines = Vec::with_capacity(n_lines as usize);
         for _ in 0 .. n_lines {
             let line = self.read_line()?;
@@ -332,16 +290,16 @@ impl <R: Read> Reader<R> {
         })
     }
     fn read_line(&mut self) -> Result<Line> {
-        let hidden = self.read_bool()?;
-        let type_ = self.read_u32()?;
-        let _unk = self.read_u8()?;
-        let i_f = self.read_u32()?;
-        let i_v = self.read_u32()?;
+        let hidden = read_bool(self.rdr)?;
+        let type_ = read_u32(self.rdr)?;
+        let _unk = read_u8(self.rdr)?;
+        let i_f = read_u32(self.rdr)?;
+        let i_v = read_u32(self.rdr)?;
         let first = (i_f, i_v);
-        let second = self.read_bool()?;
+        let second = read_bool(self.rdr)?;
         let second = if second {
-            let face2_idx = self.read_u32()?;
-            let vertex2_idx = self.read_u32()?;
+            let face2_idx = read_u32(self.rdr)?;
+            let vertex2_idx = read_u32(self.rdr)?;
             Some((face2_idx, vertex2_idx))
         } else {
             None
@@ -356,20 +314,20 @@ impl <R: Read> Reader<R> {
     fn read_pdo(&mut self) -> Result<Pdo> {
         const SIGNATURE: &[u8] = b"version 3\n";
         for s in SIGNATURE {
-            let c = self.read_u8()?;
+            let c = read_u8(self.rdr)?;
             if c != *s {
                 return Err(anyhow!("signature error"));
             }
         }
-        self.version = self.read_u32()? as u8;
+        self.version = read_u32(self.rdr)? as u8;
         dbg!(self.version);
-        let mbcs = self.read_u32()?;
+        let mbcs = read_u32(self.rdr)?;
         dbg!(mbcs);
-        let _unk = self.read_u32()?;
+        let _unk = read_u32(self.rdr)?;
         if self.version >= 5 {
             let designer = self.read_string()?;
             dbg!(designer);
-            self.shift = self.read_u32()?;
+            self.shift = read_u32(self.rdr)?;
             dbg!(self.shift);
         }
         let locale = self.read_string()?;
@@ -377,75 +335,75 @@ impl <R: Read> Reader<R> {
         let codepage = self.read_string()?;
         dbg!(codepage);
 
-        let texlock = self.read_u32()?;
+        let texlock = read_u32(self.rdr)?;
         dbg!(texlock);
         if self.version >= 6 {
-            let show_startup_notes = self.read_bool()?;
+            let show_startup_notes = read_bool(self.rdr)?;
             dbg!(show_startup_notes);
-            let password_flag = self.read_bool()?;
+            let password_flag = read_bool(self.rdr)?;
             dbg!(password_flag);
         }
         let key = self.read_string()?;
         dbg!(key);
         if self.version >= 6 {
-            let v6_lock = self.read_u32()?;
+            let v6_lock = read_u32(self.rdr)?;
             dbg!(v6_lock);
             for _ in 0 .. v6_lock {
-                let _ = self.read_u64()?;
+                let _ = read_u64(self.rdr)?;
             }
         } else if self.version == 5 {
-            let show_startup_notes = self.read_bool()?;
+            let show_startup_notes = read_bool(self.rdr)?;
             dbg!(show_startup_notes);
-            let password_flag = self.read_bool()?;
+            let password_flag = read_bool(self.rdr)?;
             dbg!(password_flag);
         }
-        let assembled_height = self.read_f64()?;
+        let assembled_height = read_f64(self.rdr)?;
         dbg!(assembled_height);
-        let origin = self.read_vector3()?;
+        let origin = read_vector3_f64(self.rdr)?;
         dbg!(origin);
 
-        let n_objects = self.read_u32()?;
+        let n_objects = read_u32(self.rdr)?;
         let mut objs = Vec::with_capacity(n_objects as usize);
         for _ in 0 .. n_objects {
             let obj = self.read_object()?;
             objs.push(obj);
         }
-        let n_materials = self.read_u32()?;
+        let n_materials = read_u32(self.rdr)?;
         let mut mats = Vec::with_capacity(n_materials as usize);
         for _ in 0 .. n_materials {
             let mat = self.read_material()?;
             mats.push(mat);
         }
 
-        let has_unfold = self.read_bool()?;
+        let has_unfold = read_bool(self.rdr)?;
         let unfold =  if has_unfold {
-            let scale = self.read_f64()? as f32;
-            let padding = self.read_bool()?;
+            let scale = read_f64(self.rdr)? as f32;
+            let padding = read_bool(self.rdr)?;
             let bb = self.read_bounding_box()?;
-            let n_parts = self.read_u32()?;
+            let n_parts = read_u32(self.rdr)?;
             let mut parts = Vec::with_capacity(n_parts as usize);
             for _ in 0 .. n_parts {
                 let part = self.read_part()?;
                 parts.push(part);
             }
-            let n_texts = self.read_u32()?;
+            let n_texts = read_u32(self.rdr)?;
             for _ in 0 .. n_texts {
                 let _bb = self.read_bounding_box()?;
-                let _line_spacing = self.read_f64()?;
-                let _color = self.read_u32()?;
-                let _font_size = self.read_u32()?;
+                let _line_spacing = read_f64(self.rdr)?;
+                let _color = read_u32(self.rdr)?;
+                let _font_size = read_u32(self.rdr)?;
                 let _font_name = self.read_string()?;
-                let n_lines = self.read_u32()?;
+                let n_lines = read_u32(self.rdr)?;
                 for _ in 0 .. n_lines {
                     let _text = self.read_string()?;
                 }
             }
-            let n_images = self.read_u32()?;
+            let n_images = read_u32(self.rdr)?;
             for _ in 0 .. n_images {
                 let _bb = self.read_bounding_box()?;
                 let _tex = self.read_texture()?;
             }
-            let n_images2 = self.read_u32()?;
+            let n_images2 = read_u32(self.rdr)?;
             for _ in 0 .. n_images2 {
                 let _bb = self.read_bounding_box()?;
                 let _tex = self.read_texture()?;
@@ -460,26 +418,26 @@ impl <R: Read> Reader<R> {
             None
         };
         if self.version >= 6 && unfold.as_ref().is_some_and(|u| !u.parts.is_empty()) {
-            let n_unk = self.read_u32()?;
+            let n_unk = read_u32(self.rdr)?;
             for _ in 0 .. n_unk {
-                let n_parts = self.read_u32()?;
+                let n_parts = read_u32(self.rdr)?;
                 for _ in 0 .. n_parts {
-                    let _ = self.read_u32()?;
+                    let _ = read_u32(self.rdr)?;
                 }
             }
         }
         // settings
-        let _show_flaps = self.read_bool()?;
-        let _show_edge_id = self.read_bool()?;
-        let _edge_id_pos = self.read_bool()?;
-        let _face_mat = self.read_bool()?;
-        let hide_almost_flat = self.read_bool()?;
-        let fold_line_hide_angle = self.read_u32()?;
-        let _draw_white_dot = self.read_bool()?;
+        let _show_flaps = read_bool(self.rdr)?;
+        let _show_edge_id = read_bool(self.rdr)?;
+        let _edge_id_pos = read_bool(self.rdr)?;
+        let _face_mat = read_bool(self.rdr)?;
+        let hide_almost_flat = read_bool(self.rdr)?;
+        let fold_line_hide_angle = read_u32(self.rdr)?;
+        let _draw_white_dot = read_bool(self.rdr)?;
         for _ in 0 .. 4 {
-            let _mountain_style = self.read_u32()?;
+            let _mountain_style = read_u32(self.rdr)?;
         }
-        let page_type = self.read_u32()?;
+        let page_type = read_u32(self.rdr)?;
         let mut page_size = match page_type {
             0  /*A4*/=> Vector2::new(210.0, 297.0),
             1  /*A3*/=> Vector2::new(297.0, 420.0),
@@ -493,23 +451,23 @@ impl <R: Read> Reader<R> {
             9  /*letter*/=> Vector2::new(215.9, 279.4),
             10 /*legal*/=> Vector2::new(215.9, 355.6),
             11 => {
-                let width = self.read_f64()?;
-                let height = self.read_f64()?;
+                let width = read_f64(self.rdr)?;
+                let height = read_f64(self.rdr)?;
                 Vector2::new(width as f32, height as f32)
             }
             _ /* unk */=> Vector2::new(210.0, 297.0),
         };
-        let orientation = self.read_u32()?;
+        let orientation = read_u32(self.rdr)?;
         if orientation != 0 && page_size.y > page_size.x { //landscape
             std::mem::swap(&mut page_size.x, &mut page_size.y);
         }
-        let margin_side = self.read_u32()?;
-        let margin_top = self.read_u32()?;
+        let margin_side = read_u32(self.rdr)?;
+        let margin_top = read_u32(self.rdr)?;
         for _ in 0 .. 12 {
-            let _fold_pattern = self.read_f64()?;
+            let _fold_pattern = read_f64(self.rdr)?;
         }
-        let _outline_padding = self.read_bool()?;
-        let _scale_factor = self.read_f64()?;
+        let _outline_padding = read_bool(self.rdr)?;
+        let _scale_factor = read_f64(self.rdr)?;
         if self.version >= 5 {
             let _author = self.read_string()?;
             let _comment = self.read_string()?;
@@ -521,7 +479,7 @@ impl <R: Read> Reader<R> {
             fold_line_hide_angle: hide_almost_flat.then_some(fold_line_hide_angle),
         };
         // eof!
-        let eof = self.read_u32()?;
+        let eof = read_u32(self.rdr)?;
         assert!(eof == 9999);
         Ok(Pdo {
             objs,

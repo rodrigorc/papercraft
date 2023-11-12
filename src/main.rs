@@ -20,8 +20,6 @@ use imgui_glow_renderer::TextureMap;
 
 
 mod imgui_filedialog;
-mod waveobj;
-mod pepakura;
 mod paper;
 mod glr;
 mod util_3d;
@@ -35,7 +33,7 @@ static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
 static ICONS_PNG: &[u8] = include_bytes!("icons.png");
 const FONT_SIZE: f32 = 3.0;
 
-use paper::{Papercraft, TabStyle, FoldStyle, EdgeIdPosition, PaperOptions, IslandKey};
+use paper::{Papercraft, TabStyle, FoldStyle, EdgeIdPosition, PaperOptions, IslandKey, import::import_model_file};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
@@ -1994,27 +1992,14 @@ impl GlobalContext {
         Ok(())
     }
     fn import_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
-        //TODO: do proper file format detection
-        let papercraft = if file_name.extension() == Some(std::ffi::OsStr::new("pdo")) {
-            Papercraft::import::<paper::PepakuraImporter>(file_name)
-                .with_context(|| format!("Error reading Pepakura file {}", file_name.display()))?
-        } else {
-            Papercraft::import::<paper::WaveObjImporter>(file_name)
-                .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?
-        };
+        let papercraft = import_model_file(file_name)?;
         self.data = PapercraftContext::from_papercraft(papercraft);
         self.data.reset_views(self.sz_scene, self.sz_paper);
         self.rebuild = RebuildFlags::all();
         Ok(())
     }
     fn update_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
-        let mut new_papercraft = if file_name.extension() == Some(std::ffi::OsStr::new("pdo")) {
-            Papercraft::import::<paper::PepakuraImporter>(file_name)
-                .with_context(|| format!("Error reading Pepakura file {}", file_name.display()))?
-        } else {
-            Papercraft::import::<paper::WaveObjImporter>(file_name)
-                .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?
-        };
+        let mut new_papercraft = import_model_file(file_name)?;
         new_papercraft.update_from_obj(self.data.papercraft());
 
         // Preserve the main user visible settings

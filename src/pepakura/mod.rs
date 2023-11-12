@@ -27,6 +27,9 @@ impl Pdo {
     pub fn materials(&self) -> &[Material] {
         &self.mats
     }
+    pub fn materials_mut(&mut self) -> &mut [Material] {
+        &mut self.mats
+    }
     pub fn unfold(&self) -> Option<&Unfold> {
         self.unfold.as_ref()
     }
@@ -456,7 +459,7 @@ impl <R: Read> Reader<R> {
         } else {
             None
         };
-        if self.version >= 6 && !unfold.as_ref().is_some_and(|u| !u.parts.is_empty()) {
+        if self.version >= 6 && unfold.as_ref().is_some_and(|u| !u.parts.is_empty()) {
             let n_unk = self.read_u32()?;
             for _ in 0 .. n_unk {
                 let n_parts = self.read_u32()?;

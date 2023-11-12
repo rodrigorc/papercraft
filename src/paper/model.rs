@@ -1,15 +1,18 @@
 use std::marker::PhantomData;
 use std::cell::Cell;
+use std::path::Path;
 use fxhash::{FxHashMap, FxHashSet};
 use cgmath::{InnerSpace, Rad, Angle, Zero};
 use image::{DynamicImage, ImageBuffer};
 use serde::{Serialize, Deserialize};
-use anyhow::Result;
+use anyhow::{anyhow, Result, Context};
 
 use crate::{waveobj, pepakura};
 use crate::util_3d::{self, Vector2, Vector3, TransparentType};
 
-#[derive(Debug, Serialize, Deserialize)]
+use super::{EdgeStatus, TabSide, Island, PaperOptions, PageOffset};
+
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Texture {
     file_name: String,
     #[serde(skip)]
@@ -168,104 +171,51 @@ impl Model {
         }
     }
 
-    pub fn from_waveobj(obj: &waveobj::Model, mut texture_map: FxHashMap<String, (String, DynamicImage)>) -> (Model, FxHashMap<FaceIndex, u32>) {
-        // Remove duplicated vertices by adding them into a set
-        let all_vertices: FxHashSet<waveobj::FaceVertex> =
-            obj.faces()
-                .iter()
-                .flat_map(|f| f.vertices())
-                .copied()
-                .collect();
+    pub fn from_importer<I: Importer>(obj: &mut I) -> (Model, Vec<I::FaceId>, Vec<(I::VertexId, I::VertexId)>) {
+        let (has_normals, mut vertices) = obj.build_vertices();
 
-        //Fix the order into a vector
-        let all_vertices = Vec::from_iter(all_vertices);
+        let num_faces = obj.face_count();
+        let mut faces: Vec<Face> = Vec::with_capacity(num_faces);
+        let mut face_map: Vec<I::FaceId> = Vec::with_capacity(num_faces);
+        let mut edges: Vec<Edge> = Vec::with_capacity(num_faces * 3 / 2);
+        let mut edge_map: Vec<(I::VertexId, I::VertexId)> = Vec::with_capacity(num_faces * 3 / 2);
 
-        // TODO: iterate all_vertices only once
-        let idx_vertices: FxHashMap<waveobj::FaceVertex, u32> =
-            all_vertices
-                .iter()
-                .enumerate()
-                .map(|(i, v)| (*v, i as u32))
-                .collect();
-        let mut recompute_normals = false;
-        let mut vertices: Vec<Vertex> =
-            all_vertices
-                .iter()
-                .map(|fv| {
-                    let uv = if let Some(t) = fv.t() {
-                        Vector2::from(*obj.texcoord_by_index(t))
-                    } else {
-                        // If there is no texture coordinates there will be no textures so this value does not matter.
-                        // A zero is easier to work with than an Option<Vector2>.
-                        Vector2::zero()
-                    };
-                    let normal = if let Some(n) = fv.n() {
-                        Vector3::from(*obj.normal_by_index(n))
-                    } else {
-                        // If the model does not have normals, compute them after building the faces
-                        recompute_normals = true;
-                        Vector3::zero()
-                    };
-                    Vertex {
-                        pos: Vector3::from(*obj.vertex_by_index(fv.v())),
-                        normal,
-                        uv: Vector2::new(uv.x, 1.0 - uv.y),
-                    }
-                })
-                .collect();
-
-        let mut faces: Vec<Face> = Vec::with_capacity(obj.faces().len());
-        let mut edges: Vec<Edge> = Vec::with_capacity(obj.faces().len() * 3 / 2);
-        //TODO: index idx_edges?
-        let mut idx_edges = Vec::with_capacity(obj.faces().len() * 3 / 2);
-        //TODO: should be a Vec<u32>
-        let mut facemap: FxHashMap<FaceIndex, u32> = FxHashMap::with_capacity_and_hasher(obj.faces().len(), Default::default());
-
-        'faces:
-        for (index, face) in obj.faces().iter().enumerate() {
-            let face_verts: Vec<_> = face
-                .vertices()
-                .iter()
-                .map(|idx| VertexIndex(idx_vertices[idx]))
-                .collect();
-            let face_verts_orig: Vec<_> = face
-                .vertices()
-                .iter()
-                .map(|idx| idx.v())
-                .collect();
-
+        obj.for_each_face(|face_id, face_verts, face_mat| {
             let to_tess: Vec<_> = face_verts
                 .iter()
                 .map(|v| vertices[usize::from(*v)].pos)
                 .collect();
             let (tris, _) = util_3d::tessellate(&to_tess);
-
             for tri in tris {
-                let i_face = FaceIndex(faces.len() as u32);
+                let i_face = FaceIndex::from(faces.len());
 
                 // Some faces may be degenerate and have to be skipped, and we must not modify the model structure, so be sure it is correct before we accept it
-                enum EdgeCreation {
+                enum EdgeCreation<I:Importer> {
                     Existing(usize),
-                    New(Edge, (u32, u32)),
+                    New(Edge, (I::VertexId, I::VertexId)),
                 }
                 // dummy values, will be filled later
-                let mut face_edges = [EdgeCreation::Existing(0), EdgeCreation::Existing(0), EdgeCreation::Existing(0)];
-                let mut face_vertices = [VertexIndex(0); 3];
+                let mut face_edges = [EdgeCreation::<I>::Existing(0), EdgeCreation::Existing(0), EdgeCreation::Existing(0)];
+                let mut face_vertices = [VertexIndex::from(0); 3];
 
                 for ((i, face_edge), face_vertex) in (0 .. 3).zip(&mut face_edges).zip(&mut face_vertices) {
                     *face_vertex = face_verts[tri[i]];
-                    let v0 = face_verts_orig[tri[i]];
-                    let v1 = face_verts_orig[tri[(i + 1) % 3]];
-                    let mut i_edge_candidate = idx_edges.iter().position(|&(p0, p1)| (p0, p1) == (v0, v1) || (p0, p1) == (v1, v0));
+                    //let v0 = face_verts_orig[tri[i]];
+                    //let v1 = face_verts_orig[tri[(i + 1) % 3]];
+                    let v0 = face_verts[tri[i]];
+                    let v1 = face_verts[tri[(i + 1) % 3]];
+                    let v0 = obj.vertex_map(v0);
+                    let v1 = obj.vertex_map(v1);
+                    let mut i_edge_candidate = edge_map.iter().position(|(p0, p1)| (p0, p1) == (&v0, &v1) || (p0, p1) == (&v1, &v0));
 
                     if let Some(i_edge) = i_edge_candidate {
                         if edges[i_edge].f1.is_some() {
                             // Maximum 2 faces per edge, additional faces will clone the edge and be disconnected
                             println!("Warning: three-faced edge #{i_edge}");
                             i_edge_candidate = None;
-                        } else if idx_edges[i_edge] != (v1, v0) {
+                        } else if edge_map[i_edge] != (v1, v0) {
                             // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird. This is mostly harmless, though.
-                            println!("Warning: inverted edge #{i_edge}: {v0}-{v1}");
+                            println!("Warning: inverted edge #{i_edge}: {v0:?}-{v1:?}");
                         }
                     }
 
@@ -289,7 +239,7 @@ impl Model {
                     [_, EdgeCreation::Existing(a), EdgeCreation::Existing(b)]
                         if a == b =>
                     {
-                        continue 'faces;
+                        return;
                     }
                     _ => {}
                 }
@@ -297,7 +247,7 @@ impl Model {
                 let edges = face_edges.map(|face_edge| {
                     let e = match face_edge {
                         EdgeCreation::New(edge, idxs) => {
-                            idx_edges.push(idxs);
+                            edge_map.push(idxs);
                             let e = edges.len();
                             edges.push(edge);
                             e
@@ -310,13 +260,7 @@ impl Model {
                     EdgeIndex::from(e)
                 });
 
-                facemap.insert(i_face, index as u32);
-                faces.push(Face {
-                    material: MaterialIndex::from(face.material()),
-                    vertices: face_vertices,
-                    edges,
-                });
-                if recompute_normals {
+                if !has_normals {
                     let v0 = vertices[usize::from(face_vertices[0])].pos;
                     let v1 = vertices[usize::from(face_vertices[1])].pos;
                     let v2 = vertices[usize::from(face_vertices[2])].pos;
@@ -327,234 +271,53 @@ impl Model {
                     vertices[usize::from(face_vertices[1])].normal += normal;
                     vertices[usize::from(face_vertices[2])].normal += normal;
                 }
-            }
-        }
 
-        let mut textures: Vec<_> = obj.materials().map(|s| {
-            let tex = texture_map.remove(s);
-            let (file_name, pixbuf) = match tex {
-                Some((n, p)) => (n, Some(p)),
-                None => (String::new(), None)
-            };
-
-            Texture {
-                file_name,
-                pixbuf,
-            }
-        }).collect();
-        //Ensure that there is at least a blank material
-        if textures.is_empty() {
-            textures.push(Texture {
-                file_name: String::new(),
-                pixbuf: None,
-            });
-        }
-
-        let model = Model {
-            textures,
-            vertices,
-            edges,
-            faces,
-        };
-        (model, facemap)
-    }
-    pub fn from_pepakura(pdo: &pepakura::Pdo) -> (Model, FxHashMap<FaceIndex, (u32, u32)>, Vec<((u32, u32), (u32, u32))>, Vec<(u32, u32, u32)>) {
-        // Fix the order into a vector
-        // (object, face, vert_in_face)
-        let all_vertices: Vec<(u32, u32, u32)> = pdo
-            .objects()
-            .iter()
-            .enumerate()
-            .flat_map(|(i_o, obj)| {
-                obj.faces
-                    .iter()
-                    .enumerate()
-                    .flat_map(move |(i_f, f)| {
-                        (0 .. f.verts.len()).map(move |i_vf| (i_o as u32, i_f as u32, i_vf as u32))
-                    })
-            })
-            .collect();
-        let vertices: Vec<_> = all_vertices
-            .iter()
-            .map(|&(i_o, i_f, i_vf)| {
-                let obj = &pdo.objects()[i_o as usize];
-                let f = &obj.faces[i_f as usize];
-                let v_f = &f.verts[i_vf as usize];
-                let v = &obj.vertices[v_f.i_v as usize];
-
-                Vertex {
-                    pos: v.v,
-                    normal: f.normal,
-                    uv: v_f.uv,
-                }
-            })
-            .collect();
-        // (object, face, vert_in_face) -> VertexIndex
-        let idx_vertices: FxHashMap<(u32, u32, u32), u32> =
-            all_vertices
-                .iter()
-                .enumerate()
-                .map(|(i, v)| (*v, i as u32))
-                .collect();
-
-        let num_faces = pdo.objects().iter().map(|obj| obj.faces.len()).sum();
-        let mut faces: Vec<Face> = Vec::with_capacity(num_faces);
-        let mut edges: Vec<Edge> = Vec::with_capacity(num_faces * 3 / 2);
-        // ((object, vertex), (object, vertex))
-        let mut idx_edges: Vec<((u32, u32), (u32, u32))> = Vec::with_capacity(num_faces * 3 / 2);
-        // FaceIndex -> (object, face)
-        let mut facemap: FxHashMap<FaceIndex, (u32, u32)> = FxHashMap::with_capacity_and_hasher(num_faces, Default::default());
-
-        'faces:
-        for (i_o, obj) in pdo.objects().iter().enumerate() {
-            for (i_f, face) in obj.faces.iter().enumerate() {
-                let index = (i_o as u32, i_f as u32);
-                let face_verts: Vec<VertexIndex> = (0 .. face.verts.len())
-                    .map(|i_v| VertexIndex(idx_vertices[&(i_o as u32, i_f as u32, i_v as u32)]))
-                    .collect();
-                // (object, vertex)
-                let face_verts_orig: Vec<(u32, u32)> = face.verts
-                    .iter()
-                    .map(|v_f| (i_o as u32, v_f.i_v))
-                    .collect();
-                let to_tess: Vec<_> = face_verts
-                    .iter()
-                    .map(|v| vertices[usize::from(*v)].pos)
-                    .collect();
-
-                let (tris, _) = util_3d::tessellate(&to_tess);
-
-                for tri in tris {
-                    let i_face = FaceIndex(faces.len() as u32);
-
-                    // Some faces may be degenerate and have to be skipped, and we must not modify the model structure, so be sure it is correct before we accept it
-                    enum EdgeCreation {
-                        Existing(usize),
-                        New(Edge, ((u32, u32), (u32, u32))),
-                    }
-                    // dummy values, will be filled later
-                    let mut face_edges = [EdgeCreation::Existing(0), EdgeCreation::Existing(0), EdgeCreation::Existing(0)];
-                    let mut face_vertices = [VertexIndex(0); 3];
-
-                    for ((i, face_edge), face_vertex) in (0 .. 3).zip(&mut face_edges).zip(&mut face_vertices) {
-                        *face_vertex = face_verts[tri[i]];
-                        let v0 = face_verts_orig[tri[i]];
-                        let v1 = face_verts_orig[tri[(i + 1) % 3]];
-                        let mut i_edge_candidate = idx_edges.iter().position(|&(p0, p1)| (p0, p1) == (v0, v1) || (p0, p1) == (v1, v0));
-
-                        if let Some(i_edge) = i_edge_candidate {
-                            if edges[i_edge].f1.is_some() {
-                                // Maximum 2 faces per edge, additional faces will clone the edge and be disconnected
-                                println!("Warning: three-faced edge #{i_edge}");
-                                i_edge_candidate = None;
-                            } else if idx_edges[i_edge] != (v1, v0) {
-                                // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird. This is mostly harmless, though.
-                                println!("Warning: inverted edge #{i_edge}: {v0:?}-{v1:?}");
-                            }
-                        }
-
-                        *face_edge = match i_edge_candidate {
-                            Some(i_edge) => {
-                                EdgeCreation::Existing(i_edge)
-                            }
-                            None => {
-                                EdgeCreation::New(Edge {
-                                    f0: i_face,
-                                    f1: None,
-                                }, (v0, v1))
-                            }
-                        }
-                    }
-
-                    // If the face uses the same egde twice, it is invalid
-                    match face_edges {
-                        [EdgeCreation::Existing(a), EdgeCreation::Existing(b), _] |
-                        [EdgeCreation::Existing(a), _, EdgeCreation::Existing(b)] |
-                        [_, EdgeCreation::Existing(a), EdgeCreation::Existing(b)]
-                            if a == b =>
-                        {
-                            continue 'faces;
-                        }
-                        _ => {}
-                    }
-
-                    let edges = face_edges.map(|face_edge| {
-                        let e = match face_edge {
-                            EdgeCreation::New(edge, idxs) => {
-                                idx_edges.push(idxs);
-                                let e = edges.len();
-                                edges.push(edge);
-                                e
-                            }
-                            EdgeCreation::Existing(e) => {
-                                edges[e].f1 = Some(i_face);
-                                e
-                            }
-                        };
-                        EdgeIndex::from(e)
-                    });
-
-                    facemap.insert(i_face, index);
-                    faces.push(Face {
-                        material: MaterialIndex::from(face.mat_index as usize),
-                        vertices: face_vertices,
-                        edges,
-                    });
-                }
-            }
-        }
-
-        let textures = pdo.materials()
-            .iter()
-            .map(|mat| {
-                let pixbuf = mat.texture.as_ref().and_then(|t| {
-                    let img = ImageBuffer::from_raw(t.width, t.height, t.data.clone());
-                    img.map(|b| DynamicImage::ImageRgb8(b))
+                face_map.push(face_id);
+                faces.push(Face {
+                    material: face_mat,
+                    vertices: face_vertices,
+                    edges,
                 });
-                Texture {
-                    file_name: mat.name.clone() + ".png",
-                    pixbuf,
-                }
-            })
-            .collect();
-        //let textures = vec![Texture { file_name: String::new(), pixbuf: None }];
+            }
+        });
 
+        let textures = obj.build_textures();
         let model = Model {
             textures,
             vertices,
             edges,
             faces,
         };
-        (model, facemap, idx_edges, all_vertices)
+        (model, face_map, edge_map)
     }
     pub fn vertices(&self) -> impl Iterator<Item = (VertexIndex, &Vertex)> {
         self.vertices
             .iter()
             .enumerate()
-            .map(|(i, v)| (VertexIndex(i as u32), v))
+            .map(|(i, v)| (VertexIndex::from(i), v))
     }
     pub fn faces(&self) -> impl Iterator<Item = (FaceIndex, &Face)> + '_ {
         self.faces
             .iter()
             .enumerate()
-            .map(|(i, f)| (FaceIndex(i as u32), f))
+            .map(|(i, f)| (FaceIndex::from(i), f))
     }
     pub fn edges(&self) -> impl Iterator<Item = (EdgeIndex, &Edge)> + '_ {
         self.edges
             .iter()
             .enumerate()
-            .map(|(i, e)| (EdgeIndex(i as u32), e))
+            .map(|(i, e)| (EdgeIndex::from(i), e))
     }
     // These are a bit hacky...
     pub fn edge_index(&self, e: &Edge) -> EdgeIndex {
         let e = e as *const Edge as usize;
         let s = self.edges.as_ptr() as usize;
-        EdgeIndex(((e - s) / std::mem::size_of::<Edge>()) as u32)
+        EdgeIndex::from((e - s) / std::mem::size_of::<Edge>())
     }
     pub fn face_index(&self, f: &Face) -> FaceIndex {
         let e = f as *const Face as usize;
         let s = self.faces.as_ptr() as usize;
-        FaceIndex(((e - s) / std::mem::size_of::<Face>()) as u32)
+        FaceIndex::from((e - s) / std::mem::size_of::<Face>())
     }
     pub fn edge_pos(&self, e: &Edge) -> (Vector3, Vector3) {
         let i_edge = self.edge_index(e);
@@ -704,3 +467,348 @@ impl Edge {
     }
 }
 
+pub trait Importer: Sized {
+    type VertexId: Copy + Eq + std::fmt::Debug;
+    type FaceId: Copy + Eq + std::fmt::Debug;
+
+    fn import(file_name: &Path) -> Result<Self>;
+    fn vertex_map(&self, i_v: VertexIndex) -> Self::VertexId;
+    // return (has_normals, vertices)
+    fn build_vertices(&self) -> (bool, Vec<Vertex>);
+    fn face_count(&self) -> usize;
+    fn for_each_face(&self, f: impl FnMut(Self::FaceId, &[VertexIndex], MaterialIndex));
+    // Returns at least 1 texture, maybe default
+    fn build_textures(&mut self) -> Vec<Texture>;
+
+    fn compute_edge_status(&self, _edge_id: (Self::VertexId, Self::VertexId)) -> Option<EdgeStatus> { None }
+    fn relocate_islands<'a>(&mut self, _model: &Model, _islands: impl Iterator<Item=&'a mut Island>) -> bool { false }
+    fn build_options(&mut self) -> Option<PaperOptions> { None }
+}
+pub struct WaveObjImporter {
+    obj: waveobj::Model,
+    texture_map: FxHashMap<String, (String, DynamicImage)>,
+    // VertexIndex -> FaceVertex
+    all_vertices: Vec<waveobj::FaceVertex>,
+}
+
+impl Importer for WaveObjImporter {
+    type VertexId = u32;
+    type FaceId = u32;
+
+    fn import(file_name: &Path) -> Result<Self> {
+        let f = std::fs::File::open(file_name)?;
+        let f = std::io::BufReader::new(f);
+        let (matlib, obj) = waveobj::Model::from_reader(f)?;
+        let matlib = match matlib {
+            Some(matlib) => {
+                Some(waveobj::solve_find_matlib_file(matlib.as_ref(), file_name)
+                    .ok_or_else(|| anyhow!("{} matlib not found", matlib))?)
+            }
+            None => None,
+        };
+        let mut texture_map = FxHashMap::default();
+
+        if let Some(matlib) = matlib {
+            // Textures are read from the .mtl file
+            let err_mtl = || format!("Error reading matlib file {}", matlib.display());
+            let f = std::fs::File::open(&matlib)
+                .with_context(err_mtl)?;
+            let f = std::io::BufReader::new(f);
+
+            for lib in waveobj::Material::from_reader(f)
+                .with_context(err_mtl)?
+            {
+                if let Some(map) = lib.map() {
+                    let err_map = || format!("Error reading texture file {map}");
+                    if let Some(map) = waveobj::solve_find_matlib_file(map.as_ref(), &matlib) {
+                        let img = image::io::Reader::open(&map)
+                            .with_context(err_map)?
+                            .with_guessed_format()
+                            .with_context(err_map)?
+                            .decode()
+                            .with_context(err_map)?;
+                        let map_name = map.file_name().and_then(|f| f.to_str())
+                            .ok_or_else(|| anyhow!("Invalid texture name"))?;
+                        texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
+                    } else {
+                        return Err(anyhow!("{} texture from {} matlib not found", map, matlib.display()));
+                    }
+                }
+            }
+        }
+
+        // Remove duplicated vertices by adding them into a set
+        let all_vertices: FxHashSet<waveobj::FaceVertex> =
+            obj.faces()
+                .iter()
+                .flat_map(|f| f.vertices())
+                .copied()
+                .collect();
+        //Fix the order into a vector, indexed by VertexIndex
+        let all_vertices = Vec::from_iter(all_vertices);
+
+        Ok(WaveObjImporter {
+            obj,
+            texture_map,
+            all_vertices,
+        })
+    }
+    fn vertex_map(&self, i_v: VertexIndex) -> Self::VertexId {
+        self.all_vertices[usize::from(i_v)].v()
+    }
+    fn build_vertices(&self) -> (bool, Vec<Vertex>) {
+        let mut has_normals = true;
+        let vs = self.all_vertices
+            .iter()
+            .map(|fv| {
+                let uv = if let Some(t) = fv.t() {
+                    Vector2::from(*self.obj.texcoord_by_index(t))
+                } else {
+                    // If there is no texture coordinates there will be no textures so this value does not matter.
+                    // A zero is easier to work with than an Option<Vector2>.
+                    Vector2::zero()
+                };
+                let normal = if let Some(n) = fv.n() {
+                    Vector3::from(*self.obj.normal_by_index(n))
+                } else {
+                    has_normals = false;
+                    Vector3::zero()
+                };
+                Vertex {
+                    pos: Vector3::from(*self.obj.vertex_by_index(fv.v())),
+                    normal,
+                    uv: Vector2::new(uv.x, 1.0 - uv.y),
+                }
+            })
+            .collect();
+        (has_normals, vs)
+    }
+    fn face_count(&self) -> usize {
+        self.obj.faces().len()
+    }
+    fn for_each_face(&self, mut f: impl FnMut(Self::FaceId, &[VertexIndex], MaterialIndex)) {
+        for (face_id, face) in self.obj.faces().iter().enumerate() {
+            let verts: Vec<_> = face
+                .vertices()
+                .iter()
+                .map(|fv| VertexIndex::from(self.all_vertices.iter().position(|v| v == fv).unwrap()))
+                .collect();
+            let mat = MaterialIndex::from(face.material());
+            f(face_id as u32, &verts, mat)
+        }
+    }
+    fn build_textures(&mut self) -> Vec<Texture> {
+        let mut textures: Vec<_> = self.obj.materials().map(|s| {
+            let tex = self.texture_map.remove(s);
+            let (file_name, pixbuf) = match tex {
+                Some((n, p)) => (n, Some(p)),
+                None => (String::new(), None)
+            };
+
+            Texture {
+                file_name,
+                pixbuf,
+            }
+        }).collect();
+        if textures.is_empty() {
+            textures.push(Texture::default());
+        }
+        textures
+    }
+}
+
+////////////
+pub struct PepakuraImporter {
+    pdo: pepakura::Pdo,
+    //VertexIndex -> (obj_id, face_id, vert_in_face)
+    vertex_map: Vec<(u32, u32, u32)>,
+    options: Option<PaperOptions>,
+}
+
+impl Importer for PepakuraImporter {
+    // (obj_id, vertex_id)
+    type VertexId = (u32, u32);
+    // (obj_id, face_id)
+    type FaceId = (u32, u32);
+
+    fn import(file_name: &Path) -> Result<Self> {
+        let f = std::fs::File::open(file_name)?;
+        let f = std::io::BufReader::new(f);
+        let pdo = pepakura::Pdo::from_reader(f)?;
+
+        let vertex_map: Vec<(u32, u32, u32)> = pdo
+            .objects()
+            .iter()
+            .enumerate()
+            .flat_map(|(i_o, obj)| {
+                obj.faces
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(i_f, f)| {
+                        (0 .. f.verts.len()).map(move |i_vf| (i_o as u32, i_f as u32, i_vf as u32))
+                    })
+            })
+            .collect();
+
+        Ok(PepakuraImporter {
+            pdo,
+            vertex_map,
+            options: None,
+        })
+    }
+    fn build_vertices(&self) -> (bool, Vec<Vertex>) {
+        let vs = self.vertex_map
+            .iter()
+            .map(|&(i_o, i_f, i_vf)| {
+                let obj = &self.pdo.objects()[i_o as usize];
+                let f = &obj.faces[i_f as usize];
+                let v_f = &f.verts[i_vf as usize];
+                let v = &obj.vertices[v_f.i_v as usize];
+
+                Vertex {
+                    pos: v.v,
+                    normal: f.normal,
+                    uv: v_f.uv,
+                }
+            })
+            .collect();
+        (true, vs)
+    }
+    fn vertex_map(&self, i_v: VertexIndex) -> Self::VertexId {
+        let (i_o, i_f, i_vf) = self.vertex_map[usize::from(i_v)];
+        let i_v = self.pdo.objects()[i_o as usize].faces[i_f as usize].verts[i_vf as usize].i_v;
+        (i_o, i_v)
+    }
+    fn face_count(&self) -> usize {
+        self.pdo.objects()
+            .iter()
+            .map(|o| o.faces.len())
+            .sum()
+    }
+    fn for_each_face(&self, mut f: impl FnMut(Self::FaceId, &[VertexIndex], MaterialIndex)) {
+        for (obj_id, obj) in self.pdo.objects().iter().enumerate() {
+            let obj_id = obj_id as u32;
+            for (face_id, face) in obj.faces.iter().enumerate() {
+                let face_id = face_id as u32;
+                let verts: Vec<VertexIndex> = (0 .. face.verts.len())
+                    .map(|v_f| {
+                        let id = (obj_id, face_id, v_f as u32);
+                        let i = self.vertex_map.iter().position(|x| x == &id).unwrap();
+                        VertexIndex::from(i)
+                    })
+                    .collect();
+                // We will add a default material at the end of the textures, so map any out-of bounds to that
+                let mat_index = face.mat_index.min(self.pdo.materials().len() as u32);
+                let mat = MaterialIndex(mat_index);
+                f((obj_id, face_id), &verts, mat)
+            }
+        }
+    }
+    fn build_textures(&mut self) -> Vec<Texture> {
+        let mut textures: Vec<_> = self.pdo.materials_mut()
+            .iter_mut()
+            .map(|mat| {
+                let pixbuf = mat.texture.take().and_then(|t| {
+                    let img = ImageBuffer::from_raw(t.width, t.height, t.data);
+                    img.map(|b| DynamicImage::ImageRgb8(b))
+                });
+                Texture {
+                    file_name: mat.name.clone() + ".png",
+                    pixbuf,
+                }
+            })
+            .collect();
+        textures.push(Texture::default());
+        textures
+    }
+    fn compute_edge_status(&self, edge_id: (Self::VertexId, Self::VertexId)) -> Option<EdgeStatus> {
+        let ((obj_id, v0_id), (_, v1_id)) = edge_id;
+        let vv = (v0_id, v1_id);
+        let obj = &self.pdo.objects()[obj_id as usize];
+        let Some(edge) = obj.edges
+            .iter()
+            .find(|&e| vv == (e.i_v1, e.i_v2) || vv == (e.i_v2, e.i_v1))
+            else { return None };
+        if edge.connected {
+            Some(EdgeStatus::Joined)
+        } else {
+            let v_f = obj.faces[edge.i_f1 as usize].verts.iter().find(|v_f| v_f.i_v == edge.i_v1).unwrap();
+            if v_f.flap {
+                Some(EdgeStatus::Cut(TabSide::True))
+            } else {
+                None
+            }
+        }
+    }
+    fn relocate_islands<'a>(&mut self, model: &Model, islands: impl Iterator<Item=&'a mut Island>) -> bool {
+        let Some(unfold) = self.pdo.unfold() else { return false; };
+
+        let margin = Vector2::new(self.pdo.settings().margin_side as f32, self.pdo.settings().margin_top as f32);
+        let page_size = self.pdo.settings().page_size;
+        let area_size = page_size - 2.0 * margin;
+
+        let mut options = PaperOptions::default();
+        options.scale = unfold.scale;
+        options.page_size = (page_size.x, page_size.y);
+        options.margin = (margin.y, margin.x, margin.x, margin.y);
+
+        let mut n_cols = 0;
+        let mut max_page = (0, 0);
+        for island in islands {
+            let face = &model[island.root_face()];
+            let [i_v0, i_v1, _] = face.index_vertices();
+            let (ip_obj, ip_face, ip_v0) = self.vertex_map[usize::from(i_v0)];
+            let (_, _, ip_v1) = self.vertex_map[usize::from(i_v1)];
+            let p_face = &self.pdo.objects()[ip_obj as usize].faces[ip_face as usize];
+            let vf0 = p_face.verts[ip_v0 as usize].pos2d;
+            let vf1 = p_face.verts[ip_v1 as usize].pos2d;
+            let i_part = p_face.part_index;
+
+            let normal = model.face_plane(face);
+            let pv0 = normal.project(&model[i_v0].pos(), options.scale);
+            let pv1 = normal.project(&model[i_v1].pos(), options.scale);
+
+            let part = &unfold.parts[i_part as usize];
+
+            let rot = (pv1 - pv0).angle(vf1 - vf0);
+            let loc = vf0 - pv0 + part.bb.v0;
+
+            let mut col = loc.x.div_euclid(area_size.x) as i32;
+            let mut row = loc.y.div_euclid(area_size.y) as i32;
+            let loc = Vector2::new(loc.x.rem_euclid(area_size.x), loc.y.rem_euclid(area_size.y));
+            let loc = loc + margin;
+
+            // Some models use negative pages to hide pieces
+            if col < 0 || row < 0 {
+                col = -1;
+                row = 0;
+            } else {
+                let row = row as u32;
+                let col = col as u32;
+                n_cols = n_cols.max(col);
+                if row > max_page.0 || (row == max_page.0 && col > max_page.1) {
+                    max_page = (row, col);
+                }
+            }
+
+            let loc = options.page_to_global(PageOffset { row, col, offset: loc });
+            island.reset_transformation(island.root_face(), rot, loc);
+        }
+        // 0-based
+        options.page_cols = n_cols + 1;
+        options.pages = max_page.0 * options.page_cols + max_page.1 + 1;
+
+        self.options = Some(options);
+        true
+    }
+    fn build_options(&mut self) -> Option<PaperOptions> {
+        self.options
+            .take()
+            .map(|mut options| {
+                if let Some(a) = self.pdo.settings().fold_line_hide_angle {
+                    options.hidden_line_angle = (180 - a) as f32;
+                }
+                options
+            })
+    }
+}

@@ -167,9 +167,9 @@ impl Default for PaperOptions {
 
 #[derive(Debug, Copy, Clone)]
 pub struct PageOffset {
-    row: i32,
-    col: i32,
-    offset: Vector2,
+    pub row: i32,
+    pub col: i32,
+    pub offset: Vector2,
 }
 
 const PAGE_SEP: f32 = 10.0; // Currently not configurable

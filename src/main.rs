@@ -1994,16 +1994,27 @@ impl GlobalContext {
         Ok(())
     }
     fn import_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
-        let papercraft = Papercraft::import_waveobj(file_name)
-            .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?;
+        //TODO: do proper file format detection
+        let papercraft = if file_name.extension() == Some(std::ffi::OsStr::new("pdo")) {
+            Papercraft::import::<paper::PepakuraImporter>(file_name)
+                .with_context(|| format!("Error reading Pepakura file {}", file_name.display()))?
+        } else {
+            Papercraft::import::<paper::WaveObjImporter>(file_name)
+                .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?
+        };
         self.data = PapercraftContext::from_papercraft(papercraft);
         self.data.reset_views(self.sz_scene, self.sz_paper);
         self.rebuild = RebuildFlags::all();
         Ok(())
     }
     fn update_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
-        let mut new_papercraft = Papercraft::import_waveobj(file_name)
-            .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?;
+        let mut new_papercraft = if file_name.extension() == Some(std::ffi::OsStr::new("pdo")) {
+            Papercraft::import::<paper::PepakuraImporter>(file_name)
+                .with_context(|| format!("Error reading Pepakura file {}", file_name.display()))?
+        } else {
+            Papercraft::import::<paper::WaveObjImporter>(file_name)
+                .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?
+        };
         new_papercraft.update_from_obj(self.data.papercraft());
 
         // Preserve the main user visible settings

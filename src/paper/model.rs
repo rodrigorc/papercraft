@@ -28,15 +28,26 @@ impl Texture {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct Model {
     textures: Vec<Texture>,
-    #[serde(rename="vs")]
     vertices: Vec<Vertex>,
-    #[serde(rename="es")]
     edges: Vec<Edge>,
-    #[serde(rename="fs")]
     faces: Vec<Face>,
+}
+
+use maybe_owned::MaybeOwned;
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename="Model")]
+struct ModelSer<'s> {
+    textures: MaybeOwned<'s, Vec<Texture>>,
+    #[serde(rename="vs")]
+    vertices: MaybeOwned<'s, Vec<Vertex>>,
+    #[serde(rename="es")]
+    edges: MaybeOwned<'s, Vec<Edge>>,
+    #[serde(rename="fs")]
+    faces: MaybeOwned<'s, Vec<Face>>,
 }
 
 // Hack to pass a serialization context to the Edges, it will be removed, eventually
@@ -66,15 +77,38 @@ impl Serialize for Model {
     fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
         where S: serde::Serializer
     {
+        use MaybeOwned::Borrowed;
         let _ctx = SetSerModel::new(self);
 
-        use serde::ser::SerializeStruct;
-        let mut x = ser.serialize_struct("Model", 4)?;
-        x.serialize_field("textures", &self.textures)?;
-        x.serialize_field("vs", &self.vertices)?;
-        x.serialize_field("es", &self.edges)?;
-        x.serialize_field("fs", &self.faces)?;
-        x.end()
+        let se = ModelSer {
+            textures: Borrowed(&self.textures),
+            vertices: Borrowed(&self.vertices),
+            edges: Borrowed(&self.edges),
+            faces: Borrowed(&self.faces),
+        };
+        se.serialize(ser)
+    }
+}
+impl<'de> Deserialize<'de> for Model {
+    fn deserialize<D>(des: D) -> Result<Model, D::Error>
+        where D: serde::Deserializer<'de>
+    {
+        use MaybeOwned::Owned;
+        let ModelSer {
+            textures: Owned(textures),
+            vertices: Owned(vertices),
+            edges: Owned(edges),
+            faces: Owned(faces),
+        } = ModelSer::deserialize(des)?
+            else { unreachable!() };
+        let mut model = Model {
+            textures,
+            vertices,
+            edges,
+            faces,
+        };
+        model.post_create();
+        Ok(model)
     }
 }
 
@@ -128,6 +162,12 @@ pub struct Face {
 pub struct Edge {
     f0: FaceIndex,
     f1: Option<FaceIndex>,
+    #[serde(skip, default="default_angle")]
+    angle: Rad<f32>,
+}
+
+fn default_angle() -> Rad<f32> {
+    Rad::full_turn() / 2.0 //180 degree
 }
 
 impl Serialize for Edge {
@@ -195,7 +235,8 @@ impl Model {
             for tri in tris {
                 let i_face = FaceIndex::from(faces.len());
 
-                // Some faces may be degenerate and have to be skipped, and we must not modify the model structure, so be sure it is correct before we accept it
+                // Some faces may be degenerate and have to be skipped, and we must not modify the model structure,
+                // so be sure it is correct before we accept it.
                 enum EdgeCreation<I: Importer> {
                     Existing(usize),
                     New(Edge, (I::VertexId, I::VertexId)),
@@ -218,7 +259,8 @@ impl Model {
                             println!("Warning: three-faced edge #{i_edge}");
                             i_edge_candidate = None;
                         } else if edge_map[i_edge] != (v1, v0) {
-                            // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird. This is mostly harmless, though.
+                            // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird.
+                            // This is mostly harmless, though.
                             println!("Warning: inverted edge #{i_edge}: {v0:?}-{v1:?}");
                         }
                     }
@@ -231,6 +273,7 @@ impl Model {
                             EdgeCreation::New(Edge {
                                 f0: i_face,
                                 f1: None,
+                                angle: default_angle(),
                             }, (v0, v1))
                         }
                     }
@@ -286,13 +329,38 @@ impl Model {
         });
 
         let textures = obj.build_textures();
-        let model = Model {
+        let mut model = Model {
             textures,
             vertices,
             edges,
             faces,
         };
+        model.post_create();
         (model, face_map, edge_map)
+    }
+    fn post_create(&mut self) {
+        for i_edge in 0 .. self.edges.len() {
+            let i_edge = EdgeIndex::from(i_edge);
+            let edge = &self[i_edge];
+            let angle = match edge.faces() {
+                (fa, Some(fb)) => {
+                    let fa = &self[fa];
+                    let fb = &self[fb];
+                    let na = self.face_plane(fa).normal();
+                    let nb = self.face_plane(fb).normal();
+
+                    let i_va = fa.opposite_edge(i_edge);
+                    let pos_va = &self[i_va].pos();
+                    let i_vb = fb.opposite_edge(i_edge);
+                    let pos_vb = &self[i_vb].pos();
+
+                    let sign = na.dot(pos_vb - pos_va).signum();
+                    Rad(sign * nb.angle(na).0)
+                }
+                _ => default_angle(),
+            };
+            self.edges[usize::from(i_edge)].angle = angle;
+        }
     }
     pub fn vertices(&self) -> impl Iterator<Item = (VertexIndex, &Vertex)> {
         self.vertices
@@ -357,26 +425,6 @@ impl Model {
             self[face.vertices[1]].pos(),
             self[face.vertices[2]].pos(),
         ])
-    }
-    pub fn edge_angle(&self, i_edge: EdgeIndex) -> Rad<f32> {
-        let edge = &self[i_edge];
-        match edge.faces() {
-            (fa, Some(fb)) => {
-                let fa = &self[fa];
-                let fb = &self[fb];
-                let na = self.face_plane(fa).normal();
-                let nb = self.face_plane(fb).normal();
-
-                let i_va = fa.opposite_edge(i_edge);
-                let pos_va = &self[i_va].pos();
-                let i_vb = fb.opposite_edge(i_edge);
-                let pos_vb = &self[i_vb].pos();
-
-                let sign = na.dot(pos_vb - pos_va).signum();
-                Rad(sign * nb.angle(na).0)
-            }
-            _ => Rad::full_turn() / 2.0, //180 degrees
-        }
     }
     pub fn face_area(&self, i_face: FaceIndex) -> f32 {
         let face = &self[i_face];
@@ -468,5 +516,8 @@ impl Edge {
             // Model is inconsistent
             panic!();
         }
+    }
+    pub fn angle(&self) -> Rad<f32> {
+        self.angle
     }
 }

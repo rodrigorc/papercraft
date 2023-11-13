@@ -543,7 +543,7 @@ impl PapercraftContext {
             //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
             //cut with a tab
             let crease_kind = if edge_status == EdgeStatus::Joined || draw_tab.is_visible() {
-                let angle_3d = self.papercraft.model().edge_angle(i_edge);
+                let angle_3d = edge.angle();
                 if edge_status == EdgeStatus::Joined && Rad(angle_3d.0.abs()) < Rad::from(Deg(options.hidden_line_angle)) {
                     continue;
                 }
@@ -924,19 +924,28 @@ impl PapercraftContext {
         let mut edges_cut = Vec::new();
         for (i_edge, edge) in self.papercraft.model().edges() {
             let status = self.papercraft.edge_status(i_edge);
-            if status == EdgeStatus::Hidden {
-                continue;
-            }
-            let cut = matches!(self.papercraft.edge_status(i_edge), EdgeStatus::Cut(_));
-            let (p0, p1) = self.papercraft.model().edge_pos(edge);
 
-            let (edges, color) = if cut {
-                (&mut edges_cut, Rgba::new(1.0, 1.0, 1.0, 1.0))
-            } else {
-                (&mut edges_joint, Rgba::new(0.0, 0.0, 0.0, 1.0))
-            };
-            edges.push(MVertex3DLine { pos: p0, color });
-            edges.push(MVertex3DLine { pos: p1, color });
+            let ( edges, color);
+            match status {
+                EdgeStatus::Hidden => continue,
+                EdgeStatus::Joined => {
+                    let angle_3d = edge.angle();
+                    if Rad(angle_3d.0.abs()) < Rad::from(Deg(self.papercraft().options().hidden_line_angle)) {
+                        continue;
+                    }
+                    edges = &mut edges_joint;
+                    color = Rgba::new(0.0, 0.0, 0.0, 1.0);
+                }
+                EdgeStatus::Cut(_) => {
+                    edges = &mut edges_cut;
+                    color = Rgba::new(1.0, 1.0, 1.0, 1.0);
+                }
+            }
+            let (p0, p1) = self.papercraft.model().edge_pos(edge);
+            edges.extend_from_slice(&[
+                MVertex3DLine { pos: p0, color },
+                MVertex3DLine { pos: p1, color },
+            ]);
         }
         self.gl_objs.vertices_edge_joint.set(edges_joint);
         self.gl_objs.vertices_edge_cut.set(edges_cut);

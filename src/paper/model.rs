@@ -161,6 +161,10 @@ pub struct Vertex {
     uv: Vector2,
 }
 
+// To check if two faces originate from the same face in an imported model
+#[derive(Debug, PartialEq, Eq)]
+pub struct FaceSource(u32);
+
 impl Model {
     pub fn empty() -> Model {
         Model {
@@ -171,18 +175,18 @@ impl Model {
         }
     }
 
-    pub fn from_importer<I: Importer>(obj: &mut I) -> (Model, Vec<u32>, Vec<(I::VertexId, I::VertexId)>) {
+    pub fn from_importer<I: Importer>(obj: &mut I) -> (Model, Vec<FaceSource>, Vec<(I::VertexId, I::VertexId)>) {
         let (has_normals, mut vertices) = obj.build_vertices();
 
         let num_faces = obj.face_count();
         let mut faces: Vec<Face> = Vec::with_capacity(num_faces);
-        let mut face_map: Vec<u32> = Vec::with_capacity(num_faces);
+        let mut face_map: Vec<FaceSource> = Vec::with_capacity(num_faces);
         let mut edges: Vec<Edge> = Vec::with_capacity(num_faces * 3 / 2);
         let mut edge_map: Vec<(I::VertexId, I::VertexId)> = Vec::with_capacity(num_faces * 3 / 2);
 
-        let mut face_id = 0;
+        let mut face_source_id = 0;
         obj.for_each_face(|face_verts, face_mat| {
-            face_id += 1;
+            face_source_id += 1;
             let to_tess: Vec<_> = face_verts
                 .iter()
                 .map(|v| vertices[usize::from(*v)].pos)
@@ -272,7 +276,7 @@ impl Model {
                     vertices[usize::from(face_vertices[2])].normal += normal;
                 }
 
-                face_map.push(face_id);
+                face_map.push(FaceSource(face_source_id));
                 faces.push(Face {
                     material: face_mat,
                     vertices: face_vertices,

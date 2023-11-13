@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use super::super::*;
 use super::data;
 use cgmath::Zero;
@@ -7,7 +9,7 @@ use image::DynamicImage;
 
 pub struct WaveObjImporter {
     obj: data::Model,
-    texture_map: FxHashMap<String, (String, DynamicImage)>,
+    texture_map: FxHashMap<String, Cell<(String, DynamicImage)>>,
     // VertexIndex -> FaceVertex
     all_vertices: Vec<data::FaceVertex>,
 }
@@ -45,7 +47,7 @@ impl WaveObjImporter {
                             .with_context(err_map)?;
                         let map_name = map.file_name().and_then(|f| f.to_str())
                             .ok_or_else(|| anyhow!("Invalid texture name"))?;
-                        texture_map.insert(lib.name().to_owned(), (map_name.to_owned(), img));
+                        texture_map.insert(lib.name().to_owned(), Cell::new((map_name.to_owned(), img)));
                     } else {
                         return Err(anyhow!("{} texture from {} matlib not found", map, matlib.display()));
                     }
@@ -73,7 +75,6 @@ impl WaveObjImporter {
 
 impl Importer for WaveObjImporter {
     type VertexId = u32;
-    type FaceId = u32;
 
     fn vertex_map(&self, i_v: VertexIndex) -> Self::VertexId {
         self.all_vertices[usize::from(i_v)].v()
@@ -108,28 +109,29 @@ impl Importer for WaveObjImporter {
     fn face_count(&self) -> usize {
         self.obj.faces().len()
     }
-    fn for_each_face(&self, mut f: impl FnMut(Self::FaceId, &[VertexIndex], MaterialIndex)) {
-        for (face_id, face) in self.obj.faces().iter().enumerate() {
+    fn for_each_face(&self, mut f: impl FnMut(&[VertexIndex], MaterialIndex)) {
+        for face in self.obj.faces() {
             let verts: Vec<_> = face
                 .vertices()
                 .iter()
                 .map(|fv| VertexIndex::from(self.all_vertices.iter().position(|v| v == fv).unwrap()))
                 .collect();
             let mat = MaterialIndex::from(face.material());
-            f(face_id as u32, &verts, mat)
+            f(&verts, mat)
         }
     }
-    fn build_textures(&mut self) -> Vec<Texture> {
+    fn build_textures(&self) -> Vec<Texture> {
         let mut textures: Vec<_> = self.obj.materials().map(|s| {
-            let tex = self.texture_map.remove(s);
-            let (file_name, pixbuf) = match tex {
-                Some((n, p)) => (n, Some(p)),
-                None => (String::new(), None)
-            };
-
-            Texture {
-                file_name,
-                pixbuf,
+            let tex = &self.texture_map.get(s);
+            match tex {
+                Some(tex) => {
+                    let (file_name, pixbuf) = tex.take();
+                    Texture {
+                        file_name,
+                        pixbuf: Some(pixbuf),
+                    }
+                }
+                None => Texture::default(),
             }
         }).collect();
         if textures.is_empty() {

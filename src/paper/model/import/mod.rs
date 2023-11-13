@@ -69,22 +69,28 @@ fn read_vector3_f32(rdr: &mut impl Read) -> Result<Vector3> {
 
 pub trait Importer: Sized {
     type VertexId: Copy + Eq + std::fmt::Debug;
-    type FaceId: Copy + Eq + std::fmt::Debug;
 
     fn vertex_map(&self, i_v: VertexIndex) -> Self::VertexId;
     // return (has_normals, vertices)
     fn build_vertices(&self) -> (bool, Vec<Vertex>);
     fn face_count(&self) -> usize;
-    fn for_each_face(&self, f: impl FnMut(Self::FaceId, &[VertexIndex], MaterialIndex));
-    // Returns at least 1 texture, maybe default
-    fn build_textures(&mut self) -> Vec<Texture>;
 
+    // Ideally I'd like to write: fn faces<'s>(&'s self) -> impl Iterator<Item = (&'s [VertexIndex], MaterialIndex)> + 's;
+    // but that can't be done yet in stable Rust.
+    // We could return a `Box<dyn Iterator>`, if really needed, but for now the callback is good enough
+    fn for_each_face(&self, f: impl FnMut(&[VertexIndex], MaterialIndex));
+
+    // Returns at least 1 texture, maybe default.
+    // As a risky optimization, it can consume the texture data, call only once
+    fn build_textures(&self) -> Vec<Texture>;
+
+    // Optional functions
     fn compute_edge_status(&self, _edge_id: (Self::VertexId, Self::VertexId)) -> Option<EdgeStatus> { None }
-    fn relocate_islands<'a>(&mut self, _model: &Model, _islands: impl Iterator<Item=&'a mut Island>) -> bool { false }
-    fn build_options(&mut self) -> Option<PaperOptions> { None }
+    fn relocate_islands<'a>(&self, _model: &Model, _islands: impl Iterator<Item=&'a mut Island>) -> bool { false }
+    fn build_options(&self) -> Option<PaperOptions> { None }
 }
 
-pub fn import_model_file(file_name: &Path) -> Result<super::super::Papercraft> {
+pub fn import_model_file(file_name: &Path) -> Result<Papercraft> {
     let ext = match file_name.extension() {
         None => String::new(),
         Some(ext) => {

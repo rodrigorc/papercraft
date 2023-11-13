@@ -171,16 +171,18 @@ impl Model {
         }
     }
 
-    pub fn from_importer<I: Importer>(obj: &mut I) -> (Model, Vec<I::FaceId>, Vec<(I::VertexId, I::VertexId)>) {
+    pub fn from_importer<I: Importer>(obj: &mut I) -> (Model, Vec<u32>, Vec<(I::VertexId, I::VertexId)>) {
         let (has_normals, mut vertices) = obj.build_vertices();
 
         let num_faces = obj.face_count();
         let mut faces: Vec<Face> = Vec::with_capacity(num_faces);
-        let mut face_map: Vec<I::FaceId> = Vec::with_capacity(num_faces);
+        let mut face_map: Vec<u32> = Vec::with_capacity(num_faces);
         let mut edges: Vec<Edge> = Vec::with_capacity(num_faces * 3 / 2);
         let mut edge_map: Vec<(I::VertexId, I::VertexId)> = Vec::with_capacity(num_faces * 3 / 2);
 
-        obj.for_each_face(|face_id, face_verts, face_mat| {
+        let mut face_id = 0;
+        obj.for_each_face(|face_verts, face_mat| {
+            face_id += 1;
             let to_tess: Vec<_> = face_verts
                 .iter()
                 .map(|v| vertices[usize::from(*v)].pos)
@@ -199,10 +201,8 @@ impl Model {
                 let mut face_vertices = [VertexIndex::from(0); 3];
 
                 for ((i, face_edge), face_vertex) in (0 .. 3).zip(&mut face_edges).zip(&mut face_vertices) {
-                    *face_vertex = face_verts[tri[i]];
-                    //let v0 = face_verts_orig[tri[i]];
-                    //let v1 = face_verts_orig[tri[(i + 1) % 3]];
                     let v0 = face_verts[tri[i]];
+                    *face_vertex = v0;
                     let v1 = face_verts[tri[(i + 1) % 3]];
                     let v0 = obj.vertex_map(v0);
                     let v1 = obj.vertex_map(v1);

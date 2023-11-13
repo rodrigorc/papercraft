@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::{io::Read, cell::Cell};
 use anyhow::{anyhow, Result};
 
 use super::super::*;
@@ -28,9 +28,6 @@ impl Pdo {
     }
     pub fn materials(&self) -> &[Material] {
         &self.mats
-    }
-    pub fn materials_mut(&mut self) -> &mut [Material] {
-        &mut self.mats
     }
     pub fn unfold(&self) -> Option<&Unfold> {
         self.unfold.as_ref()
@@ -101,7 +98,7 @@ pub struct Material {
 pub struct Texture {
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u8>,
+    pub data: Cell<Vec<u8>>,
 }
 impl std::fmt::Debug for Texture {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -174,7 +171,7 @@ impl <'r, R: Read> Reader<'r, R> {
         Ok(Texture {
             width,
             height,
-            data,
+            data: Cell::new(data),
         })
     }
     fn read_face(&mut self) -> Result<Face> {

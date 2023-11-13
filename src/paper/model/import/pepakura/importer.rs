@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::io::BufRead;
 
 use super::data;
@@ -9,7 +10,10 @@ pub struct PepakuraImporter {
     pdo: data::Pdo,
     //VertexIndex -> (obj_id, face_id, vert_in_face)
     vertex_map: Vec<(u32, u32, u32)>,
-    options: Option<PaperOptions>,
+    options: PaperOptions,
+
+    // We won't know the page layout until after computing the islands
+    pages: Cell<(u32, u32)>,
 }
 
 impl PepakuraImporter {
@@ -30,18 +34,31 @@ impl PepakuraImporter {
             })
             .collect();
 
+        let settings = pdo.settings();
+        let margin = Vector2::new(settings.margin_side as f32, settings.margin_top as f32);
+        let page_size = settings.page_size;
+
+        let mut options = PaperOptions::default();
+        options.page_size = (page_size.x, page_size.y);
+        options.margin = (margin.y, margin.x, margin.x, margin.y);
+        if let Some(a) = settings.fold_line_hide_angle {
+            options.hidden_line_angle = (180 - a) as f32;
+        }
+        if let Some(unfold) = pdo.unfold() {
+            options.scale = unfold.scale;
+        }
+
         Ok(PepakuraImporter {
             pdo,
             vertex_map,
-            options: None,
+            options,
+            pages: Cell::new((1, 1)),
         })
     }
 }
 impl Importer for PepakuraImporter {
     // (obj_id, vertex_id)
     type VertexId = (u32, u32);
-    // (obj_id, face_id)
-    type FaceId = (u32, u32);
 
     fn build_vertices(&self) -> (bool, Vec<Vertex>) {
         let vs = self.vertex_map
@@ -72,7 +89,7 @@ impl Importer for PepakuraImporter {
             .map(|o| o.faces.len())
             .sum()
     }
-    fn for_each_face(&self, mut f: impl FnMut(Self::FaceId, &[VertexIndex], MaterialIndex)) {
+    fn for_each_face(&self, mut f: impl FnMut(&[VertexIndex], MaterialIndex)) {
         for (obj_id, obj) in self.pdo.objects().iter().enumerate() {
             let obj_id = obj_id as u32;
             for (face_id, face) in obj.faces.iter().enumerate() {
@@ -87,16 +104,16 @@ impl Importer for PepakuraImporter {
                 // We will add a default material at the end of the textures, so map any out-of bounds to that
                 let mat_index = face.mat_index.min(self.pdo.materials().len() as u32);
                 let mat = MaterialIndex::from(mat_index as usize);
-                f((obj_id, face_id), &verts, mat)
+                f(&verts, mat)
             }
         }
     }
-    fn build_textures(&mut self) -> Vec<Texture> {
-        let mut textures: Vec<_> = self.pdo.materials_mut()
-            .iter_mut()
+    fn build_textures(&self) -> Vec<Texture> {
+        let mut textures: Vec<_> = self.pdo.materials()
+            .iter()
             .map(|mat| {
-                let pixbuf = mat.texture.take().and_then(|t| {
-                    let img = ImageBuffer::from_raw(t.width, t.height, t.data);
+                let pixbuf = mat.texture.as_ref().and_then(|t| {
+                    let img = ImageBuffer::from_raw(t.width, t.height, t.data.take());
                     img.map(|b| DynamicImage::ImageRgb8(b))
                 });
                 Texture {
@@ -127,17 +144,11 @@ impl Importer for PepakuraImporter {
             }
         }
     }
-    fn relocate_islands<'a>(&mut self, model: &Model, islands: impl Iterator<Item=&'a mut Island>) -> bool {
+    fn relocate_islands<'a>(&self, model: &Model, islands: impl Iterator<Item=&'a mut Island>) -> bool {
         let Some(unfold) = self.pdo.unfold() else { return false; };
 
-        let margin = Vector2::new(self.pdo.settings().margin_side as f32, self.pdo.settings().margin_top as f32);
-        let page_size = self.pdo.settings().page_size;
-        let area_size = page_size - 2.0 * margin;
-
-        let mut options = PaperOptions::default();
-        options.scale = unfold.scale;
-        options.page_size = (page_size.x, page_size.y);
-        options.margin = (margin.y, margin.x, margin.x, margin.y);
+        let margin = Vector2::new(self.options.margin.1, self.options.margin.0);
+        let area_size = Vector2::from(self.options.page_size) - 2.0 * margin;
 
         let mut n_cols = 0;
         let mut max_page = (0, 0);
@@ -152,8 +163,8 @@ impl Importer for PepakuraImporter {
             let i_part = p_face.part_index;
 
             let normal = model.face_plane(face);
-            let pv0 = normal.project(&model[i_v0].pos(), options.scale);
-            let pv1 = normal.project(&model[i_v1].pos(), options.scale);
+            let pv0 = normal.project(&model[i_v0].pos(), self.options.scale);
+            let pv1 = normal.project(&model[i_v1].pos(), self.options.scale);
 
             let part = &unfold.parts[i_part as usize];
 
@@ -178,24 +189,21 @@ impl Importer for PepakuraImporter {
                 }
             }
 
-            let loc = options.page_to_global(PageOffset { row, col, offset: loc });
+            let loc = self.options.page_to_global(PageOffset { row, col, offset: loc });
             island.reset_transformation(island.root_face(), rot, loc);
         }
         // 0-based
-        options.page_cols = n_cols + 1;
-        options.pages = max_page.0 * options.page_cols + max_page.1 + 1;
+        let page_cols = n_cols + 1;
+        let pages = max_page.0 * page_cols + max_page.1 + 1;
 
-        self.options = Some(options);
+        self.pages.set((page_cols, pages));
         true
     }
-    fn build_options(&mut self) -> Option<PaperOptions> {
-        self.options
-            .take()
-            .map(|mut options| {
-                if let Some(a) = self.pdo.settings().fold_line_hide_angle {
-                    options.hidden_line_angle = (180 - a) as f32;
-                }
-                options
-            })
+    fn build_options(&self) -> Option<PaperOptions> {
+        let mut options = self.options.clone();
+        let (page_cols, pages) = self.pages.get();
+        options.page_cols = page_cols;
+        options.pages = pages;
+        Some(options)
     }
 }

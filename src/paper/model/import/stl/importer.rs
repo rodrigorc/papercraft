@@ -19,7 +19,6 @@ impl StlImporter {
 impl Importer for StlImporter {
     // STL doesn't have vertex identity, we consider them the same if they are bitwise identical
     type VertexId = [u32; 3];
-    type FaceId = u32;
 
     fn build_vertices(&self) -> (bool, Vec<Vertex>) {
         // The VertexIndex is {3*nface, +1, +2}
@@ -54,14 +53,14 @@ impl Importer for StlImporter {
         self.stl.triangles().len()
     }
 
-    fn for_each_face(&self, mut f: impl FnMut(Self::FaceId, &[VertexIndex], MaterialIndex)) {
+    fn for_each_face(&self, mut f: impl FnMut(&[VertexIndex], MaterialIndex)) {
         for i_face in 0 .. self.stl.triangles().len() as u32 {
             let i_v0 = 3 * i_face;
-            f(i_face as u32, &[VertexIndex(i_v0), VertexIndex(i_v0 + 1), VertexIndex(i_v0 + 2)], MaterialIndex(0))
+            f(&[VertexIndex(i_v0), VertexIndex(i_v0 + 1), VertexIndex(i_v0 + 2)], MaterialIndex(0))
         }
     }
 
-    fn build_textures(&mut self) -> Vec<Texture> {
+    fn build_textures(&self) -> Vec<Texture> {
         vec![Texture::default()]
     }
 }

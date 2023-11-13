@@ -1764,6 +1764,7 @@ impl GlobalContext {
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
             gl::Enable(gl::BLEND);
             gl::Enable(gl::DEPTH_TEST);
+            gl::DepthFunc(gl::LEQUAL);
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
 
             gl::BindVertexArray(gl_fixs.vao.id());

@@ -11,9 +11,10 @@ out vec4 v_color;
 void main(void) {
     v_color = color;
     gl_Position = m * vec4(pos, 1.0);
-    if (line_top != 0) {
+    if (line_top == 1)
         gl_Position.z = 0.0;
-    }
+    else
+        gl_Position.z -= 0.01;
 }
 
 ###

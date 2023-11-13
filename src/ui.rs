@@ -1251,7 +1251,8 @@ impl PapercraftContext {
 
         // Edge has priority
         match (hit_edge, hit_face) {
-            (Some((e, _, _)), _) => ClickResult::Edge(e, None),
+            (Some((e, _, _)), Some((f,_))) => ClickResult::Edge(e, Some(f)),
+            (Some((e, _, _)), None) => ClickResult::Edge(e, None),
             (None, Some((f, _))) => ClickResult::Face(f),
             (None, None) => ClickResult::None,
         }
@@ -1425,7 +1426,8 @@ impl PapercraftContext {
             (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
                 self.do_tab_action(i_edge, shift_action)
             }
-            (_, ClickResult::Face(f)) => {
+            (_, ClickResult::Face(f)) |
+            (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
                 self.set_selection(ClickResult::Face(f), true, add_to_sel, false)
             }
             (_, ClickResult::None) => {
@@ -1524,7 +1526,8 @@ impl PapercraftContext {
             (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
                 self.do_tab_action(i_edge, shift_action)
             }
-            (_, ClickResult::Face(f)) => {
+            (_, ClickResult::Face(f)) |
+            (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
                 let flags = self.set_selection(ClickResult::Face(f), true, add_to_sel, false);
                 if modifiable {
                     let undo_action: Vec<_> = self.selected_islands

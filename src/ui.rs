@@ -447,6 +447,13 @@ impl PapercraftContext {
         self.papercraft.set_options(options)
     }
 
+    fn make_dash_line(size: f32, p0: MVertex2DLine, p1: &mut MVertex2DLine) {
+        if size == 0.0 {
+            return;
+        }
+        let line_dash = ((p1.pos - p0.pos).magnitude() / size).round() + 0.5;
+        p1.line_dash = p0.line_dash + line_dash;
+    }
     fn paper_draw_face(
         &self,
         face: &Face,
@@ -625,15 +632,23 @@ impl PapercraftContext {
                     }
                 };
             } else {
-                // This is a naked edge, without a flap
+                // Weird cuts are drawn differently:
+                // * cuts with hidden flaps
+                // * rims
+                let line_dash = if edge_status == EdgeStatus::Cut(FlapSide::Hidden) {
+                    5.0
+                } else {
+                    0.0
+                };
                 let v0 = MVertex2DLine {
                     pos: pos0,
                     .. v2d
                 };
-                let v1 = MVertex2DLine {
+                let mut v1 = MVertex2DLine {
                     pos: pos1,
                     .. v0
                 };
+                Self::make_dash_line(line_dash, v0, &mut v1);
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
                 if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, draw_flap.face()) {
                     extra.cut_index.push(CutIndex::new(v0.pos, v1.pos, None, i_face_b, edge_id, &options));
@@ -683,14 +698,19 @@ impl PapercraftContext {
                         width_right: 0.0,
                     },
                 ];
-                let p = if triangular {
+                // Weird flaps are drawn differently:
+                // * forced flap in a rim
+                if edge.faces().1.is_none() {
+                    Self::make_dash_line(5.0, p[0], &mut p[1]);
+                    Self::make_dash_line(5.0, p[1], &mut p[2]);
+                    Self::make_dash_line(5.0, p[2], &mut p[3]);
+                }
+                if triangular {
                     //The unneeded vertex is actually [2], so remove that copying the [3] over
                     p[2] = p[3];
                     args.vertices_flap_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
-                    &mut p[..3]
                 } else {
                     args.vertices_flap_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
-                    &mut p[..]
                 };
                 if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, maybe_i_face_b) {
                     extra.cut_index.push(CutIndex::new(pos0, pos1, Some(n), i_face_b, edge_id, options));
@@ -1059,7 +1079,7 @@ impl PapercraftContext {
                 } else {
                     // If there is no face_b it is a rim, highlight it specially
                     // This line_dash will create a 4.5 repetition pattern (- - - -)
-                    edge_sel_2d[idx_2d + 1].line_dash = ((edge_sel_2d[idx_2d + 1].pos - edge_sel_2d[idx_2d + 0].pos).magnitude() / 5.0).round() + 0.5;
+                    Self::make_dash_line(5.0, edge_sel_2d[idx_2d], &mut edge_sel_2d[idx_2d + 1]);
                 }
             }
             self.gl_objs.vertices_edge_sel.set(edges_sel_3d);

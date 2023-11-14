@@ -33,7 +33,7 @@ static KARLA_TTF_Z: &[u8] = include_bytes!("Karla-Regular.ttf.z");
 static ICONS_PNG: &[u8] = include_bytes!("icons.png");
 const FONT_SIZE: f32 = 3.0;
 
-use paper::{Papercraft, TabStyle, FoldStyle, EdgeIdPosition, PaperOptions, IslandKey, import::import_model_file};
+use paper::{Papercraft, FlapStyle, FoldStyle, EdgeIdPosition, PaperOptions, IslandKey, import::import_model_file};
 use glr::Rgba;
 use util_3d::{Matrix3, Vector2, Vector3};
 use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
@@ -773,13 +773,13 @@ impl GlobalContext {
                     self.set_mouse_mode(MouseMode::Edge);
                 }
                 ui.same_line();
-                if ui.image_button_config("Tab", self.icons_tex, [btn_sz, btn_sz])
+                if ui.image_button_config("Flap", self.icons_tex, [btn_sz, btn_sz])
                     .uv0([0.0, n])
                     .uv1([n, 2.0*n])
-                    .background_col(if self.data.ui.mode == MouseMode::Tab { color_active } else { color_trans })
+                    .background_col(if self.data.ui.mode == MouseMode::Flap { color_active } else { color_trans })
                     .build()
                 {
-                    self.set_mouse_mode(MouseMode::Tab);
+                    self.set_mouse_mode(MouseMode::Flap);
                 }
             }
         }
@@ -901,7 +901,7 @@ impl GlobalContext {
         let status_text = match self.data.ui.mode {
             MouseMode::Face => "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it.",
             MouseMode::Edge => "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads.",
-            MouseMode::Tab => "Tab mode. Click on an edge to swap the side of a tab. Shift-click to hide a tab.",
+            MouseMode::Flap => "Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide a flap.",
             MouseMode::ReadOnly => "View mode. Click to highlight a piece. Move the mouse over an edge to highlight the matching pair.",
         };
         ui.text(status_text);
@@ -954,7 +954,7 @@ impl GlobalContext {
 
     fn build_read_only_options_inner_dialog(&self, ui: &imgui::Ui, options: &PaperOptions) {
         let n_pieces = self.data.papercraft().num_islands();
-        let n_tabs = self.data.papercraft().model().edges()
+        let n_flaps = self.data.papercraft().model().edges()
             .filter(|(e, _)| matches!(self.data.papercraft().edge_status(*e), paper::EdgeStatus::Cut(_)))
             .count();
         let bbox = util_3d::bounding_box_3d(
@@ -964,7 +964,7 @@ impl GlobalContext {
             );
         let model_size = (bbox.1 - bbox.0) * options.scale;
         let Vector3 { x, y, z } = model_size;
-        ui.text(format!("Number of pieces: {n_pieces}\nNumber of tabs: {n_tabs}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
+        ui.text(format!("Number of pieces: {n_pieces}\nNumber of flaps: {n_flaps}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
     }
 
     fn build_full_options_inner_dialog(&mut self, ui: &imgui::Ui, mut options: PaperOptions) -> (Option<PaperOptions>, Option<PaperOptions>) {
@@ -983,44 +983,44 @@ impl GlobalContext {
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
                 ui.checkbox("Texture filter", &mut options.tex_filter);
 
-                if let Some(_t) = ui.tree_node_config("Tabs")
+                if let Some(_t) = ui.tree_node_config("Flaps")
                     //.flags(imgui::TreeNodeFlags::DEFAULT_OPEN)
                     .push()
                 {
-                    static TAB_STYLES: &[TabStyle] = &[
-                        TabStyle::Textured,
-                        TabStyle::HalfTextured,
-                        TabStyle::White,
-                        TabStyle::None,
+                    static FLAP_STYLES: &[FlapStyle] = &[
+                        FlapStyle::Textured,
+                        FlapStyle::HalfTextured,
+                        FlapStyle::White,
+                        FlapStyle::None,
                     ];
-                    fn fmt_tab_style(s: TabStyle) -> &'static str {
+                    fn fmt_flap_style(s: FlapStyle) -> &'static str {
                         match s {
-                            TabStyle::Textured => "Textured",
-                            TabStyle::HalfTextured => "Half textured",
-                            TabStyle::White => "White",
-                            TabStyle::None => "None",
+                            FlapStyle::Textured => "Textured",
+                            FlapStyle::HalfTextured => "Half textured",
+                            FlapStyle::White => "White",
+                            FlapStyle::None => "None",
                         }
                     }
-                    let mut i_tab_style = TAB_STYLES.iter().position(|s| *s == options.tab_style).unwrap_or(0);
+                    let mut i_flap_style = FLAP_STYLES.iter().position(|s| *s == options.flap_style).unwrap_or(0);
                     ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    if ui.combo("Style", &mut i_tab_style, TAB_STYLES, |s| fmt_tab_style(*s).into()) {
-                        options.tab_style = TAB_STYLES[i_tab_style];
+                    if ui.combo("Style", &mut i_flap_style, FLAP_STYLES, |s| fmt_flap_style(*s).into()) {
+                        options.flap_style = FLAP_STYLES[i_flap_style];
                     }
                     ui.same_line_with_spacing(ui.current_font_size() * 12.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 8.0);
                     ui.slider_config("Shadow", 0.0, 1.0)
                         .display_format("%.2f")
-                        .build(&mut options.shadow_tab_alpha);
+                        .build(&mut options.shadow_flap_alpha);
 
                     ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    ui.input_float("Width", &mut options.tab_width).display_format("%g").build();
-                    options.tab_width = options.tab_width.max(0.0);
+                    ui.input_float("Width", &mut options.flap_width).display_format("%g").build();
+                    options.flap_width = options.flap_width.max(0.0);
 
                     ui.same_line_with_spacing(ui.current_font_size() * 12.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 8.0);
-                    ui.input_float("Angle", &mut options.tab_angle)
+                    ui.input_float("Angle", &mut options.flap_angle)
                         .display_format("%g").build();
-                    options.tab_angle = options.tab_angle.clamp(0.0, 180.0);
+                    options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
                 }
                 if let Some(_t) = ui.tree_node("Folds") {
                     static FOLD_STYLES: &[FoldStyle] = &[
@@ -1289,11 +1289,11 @@ impl GlobalContext {
                     {
                         self.set_mouse_mode(MouseMode::Edge);
                     }
-                    if ui.menu_item_config("Tabs")
+                    if ui.menu_item_config("Flaps")
                         .shortcut("F7")
-                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Tab))
+                        .build_with_ref(&mut (self.data.ui.mode == MouseMode::Flap))
                     {
-                        self.set_mouse_mode(MouseMode::Tab);
+                        self.set_mouse_mode(MouseMode::Flap);
                     }
                 }
 
@@ -1321,9 +1321,9 @@ impl GlobalContext {
                 {
                     self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 }
-                if ui.menu_item_config("Tabs")
+                if ui.menu_item_config("Flaps")
                     .shortcut("B")
-                    .build_with_ref(&mut self.data.ui.show_tabs)
+                    .build_with_ref(&mut self.data.ui.show_flaps)
                 {
                     self.add_rebuild(RebuildFlags::PAPER);
                 }
@@ -1362,7 +1362,7 @@ impl GlobalContext {
                     self.set_mouse_mode(MouseMode::Edge);
                 }
                 if ui.is_key_pressed(imgui::Key::F7) {
-                    self.set_mouse_mode(MouseMode::Tab);
+                    self.set_mouse_mode(MouseMode::Flap);
                 }
                 if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::Z) {
                     menu_actions.undo = true;
@@ -1394,7 +1394,7 @@ impl GlobalContext {
                 self.add_rebuild(RebuildFlags::SCENE_REDRAW);
             }
             if ui.is_key_pressed(imgui::Key::B) {
-                self.data.ui.show_tabs = !self.data.ui.show_tabs;
+                self.data.ui.show_flaps = !self.data.ui.show_flaps;
                 self.add_rebuild(RebuildFlags::PAPER);
             }
         }
@@ -1863,18 +1863,18 @@ impl GlobalContext {
 
             u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
 
-            // Line Tabs
-            if self.data.ui.show_tabs {
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_tab_edge, gl::LINES);
+            // Line Flaps
+            if self.data.ui.show_flaps {
+                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, gl::LINES);
             }
 
             gl::Enable(gl::STENCIL_TEST);
             gl::StencilOp(gl::KEEP, gl::KEEP, gl::INCR);
 
 
-            // Solid Tabs
-            if self.data.ui.show_tabs {
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_tab, gl::TRIANGLES);
+            // Solid Flaps
+            if self.data.ui.show_flaps {
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, gl::TRIANGLES);
             }
             gl::Disable(gl::STENCIL_TEST);
 
@@ -1888,11 +1888,11 @@ impl GlobalContext {
 
             gl::Disable(gl::STENCIL_TEST);
 
-            // Shadow tabs
+            // Shadow Flaps
             u.texturize = 0;
-            if self.data.ui.show_tabs {
+            if self.data.ui.show_flaps {
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_tab, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, gl::TRIANGLES);
                 u.notex_color = Rgba::new(0.75, 0.75, 0.75, 1.0);
             }
 
@@ -2329,7 +2329,7 @@ impl GlobalContext {
             let ortho = util_3d::ortho2d_zero(page_size_mm.x, -page_size_mm.y);
 
             let page_count = options.pages;
-            let tab_style = options.tab_style;
+            let flap_style = options.flap_style;
             let edge_id_position = options.edge_id_position;
 
             let island_names = if edge_id_position != EdgeIdPosition::None {
@@ -2354,14 +2354,14 @@ impl GlobalContext {
                     texturize,
                     notex_color: Rgba::new(1.0, 1.0, 1.0, 1.0),
                 };
-                // Line Tabs
-                if tab_style != TabStyle::None {
-                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_tab_edge, gl::LINES);
+                // Line Flaps
+                if flap_style != FlapStyle::None {
+                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, gl::LINES);
                 }
 
-                // Solid Tabs
-                if tab_style != TabStyle::None && tab_style != TabStyle::White {
-                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_tab, gl::TRIANGLES);
+                // Solid Flaps
+                if flap_style != FlapStyle::None && flap_style != FlapStyle::White {
+                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, gl::TRIANGLES);
                 }
 
                 // Borders
@@ -2371,10 +2371,10 @@ impl GlobalContext {
                 gl::VertexAttrib4f(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
                 gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices, gl::TRIANGLES);
 
-                // Shadow tabs
+                // Shadow Flaps
                 u.texturize = 0;
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_tab, gl::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, gl::TRIANGLES);
                 u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
 
                 // Creases

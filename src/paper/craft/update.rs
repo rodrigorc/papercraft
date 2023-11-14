@@ -105,12 +105,12 @@ impl Papercraft {
                     self.edge_cut(i_edge, None);
                     if let EdgeStatus::Cut(new_c) = self.edge_status(i_edge) {
                         match c {
-                            TabSide::Hidden => {
-                                self.edge_toggle_tab(i_edge, EdgeToggleTabAction::Hide);
+                            FlapSide::Hidden => {
+                                self.edge_toggle_flap(i_edge, EdgeToggleFlapAction::Hide);
                             }
                             c => {
                                 if !crossed && c != new_c || crossed && c == new_c {
-                                    self.edge_toggle_tab(i_edge, EdgeToggleTabAction::Toggle);
+                                    self.edge_toggle_flap(i_edge, EdgeToggleFlapAction::Toggle);
                                 }
                             }
                         }

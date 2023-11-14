@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow, Context};
 
 use super::{PaperOptions, Vertex, VertexIndex, Texture, EdgeStatus, Model, Island, MaterialIndex};
-use crate::paper::{PageOffset, TabSide, Papercraft};
+use crate::paper::{PageOffset, FlapSide, Papercraft};
 use crate::util_3d::{Vector2, Vector3};
 
 pub mod waveobj;

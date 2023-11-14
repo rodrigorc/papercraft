@@ -59,9 +59,9 @@ If the Shift key is pressed while an open edge is clicked, then it will join a w
 
 With this tool you can create the pieces to be cut as big as you want.
 
-### Tab mode
+### Flap mode
 
-In this mode, if you click an open edge the tab will switch to the other side. Press the Shift key while clicking to hide the tab.
+In this mode, if you click an open edge the flap will switch to the other side. Press the Shift key while clicking to hide the flap.
 
 #### Face mode
 
@@ -79,13 +79,13 @@ In the menu Edit / Document properties you can edit many options related to the 
   You can check the final size of the model in the information box below.
 * Textured: you can disable the texture images so that in the 2D output you get only the outline of the pieces. Useful if you intend to paint it by hand.
 * Texture filter: whether you want to apply a bilinear filter to the texture image. You can unset if you prefer a pixelated minecraft-ly look, particularly with very low-resolution textures.
-* Tab style: how are the tabs (those paper flaps here the glue goes) generated:
+* Flap style: how are the flaps (those paper flaps here the glue goes) generated:
     * Textured: they get the texture of the neighboring face, so that small imperfections when gluing them together are not so noticeable.
     * Half-textured: as textured but fading to white at the far edge. It makes them more easy to see, particularly if there are many small faces.
-    * White: tabs are colorless.
-    * None: no tabs. How will you glue the pieces together?
-* Tab width: the maximum with of the tab, in millimeters. The may be smaller if the neighbor face is smaller.
-* Tab angle: the angle of the sides of the tab, in degrees. 90 will make them rectangles. 45 is a more useful value.
+    * White: flaps are colorless.
+    * None: no flaps. How will you glue the pieces together?
+* Flap width: the maximum with of the flap, in millimeters. The may be smaller if the neighbor face is smaller.
+* Flap angle: the angle of the sides of the flap, in degrees. 90 will make them rectangles. 45 is a more useful value.
   Real angles may be smaller depending on the shape of the neighbor face.
 * Fold style: how the fold lines that instruct you where to fold are drawn:
     * Full line: a full line is drawn. The line will be solid when it is a _mountain_, dashed when it is a _valley_.
@@ -97,7 +97,7 @@ In the menu Edit / Document properties you can edit many options related to the 
     * None: No fold line. How to fold them is up to you. You you use very thin paper you can even try to glue the model without folding.
 * Fold length: when using in or out segments, the length of the segment.
 * Line width: with of the folded printed lines, in millimeters.
-* Hidden fold angle: edges that separate faces with an angle below this one will not be drawn. It is 0 by default meaning that all edges will be printed. It affects only angles between faces of the model, it will never hide the fold line for a tab; if you want to hide those set the "Fold style" to "None" instead.
+* Hidden fold angle: edges that separate faces with an angle below this one will not be drawn. It is 0 by default meaning that all edges will be printed. It affects only angles between faces of the model, it will never hide the fold line for a flap; if you want to hide those set the "Fold style" to "None" instead.
 * Pages: the number of pages of the output printable document.
 * Columns: how many columns are used to order the pages in the 2D view. It does not have any effect in the final printable file.
 * Print Papercraft signature. You can disable the signature that is printed in the printable document linking to this Internet page.
@@ -118,7 +118,7 @@ These options do the expected thing:
 * File/Quit: closes this program.
 * Edit/Undo: undoes the last action.
 * Edit/Document properties: opens the "Document properties" dialog.
-* Edit/Face,Edge,Tabs: switches to the given mode.
+* Edit/Face,Edge,Flaps: switches to the given mode.
 * Edit/Repack pieces: If you have all the pieces overlapping each other, this option will tidy them up a bit.
 * View/Reset views: If you move the 2D or 3D view too much and you lose yourself, this option will get you back to the initial view.
 
@@ -155,9 +155,9 @@ Hides/shows the texture from 3D and 2D views. It may be easier to see the geomet
 
 Hides/shows the lines from the 3D view. It makes the model look nicer.
 
-### View/Tabs
+### View/Flaps
 
-Hides/shows the tabs in the 2D view. It may be easier to see the geometry, particularly with small pieces. It will not affect the printable document.
+Hides/shows the flaps in the 2D view. It may be easier to see the geometry, particularly with small pieces. It will not affect the printable document.
 
 ### View/X-ray selection
 
@@ -169,7 +169,7 @@ but sometimes it may get confusing. This option can be used to disable that beha
 When two pieces overlap, or even one piece overlaps with itself, it may not be obvious. This option will highlight in pink any overlapping pixels.
 It will also highlight pieces that are outside of the paper, although that is easier to see.
 
-Note that some overlapping in tabs is perfectly acceptable, you just cut through them, but overlapping in real faces is not nice.
+Note that some overlapping in flaps is perfectly acceptable, you just cut through them, but overlapping in real faces is not nice.
 
 [LIC]: LICENSE
 [ISSUE]: https://github.com/rodrigorc/papercraft/issues

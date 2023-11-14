@@ -13,39 +13,39 @@ use super::*;
 mod file;
 mod update;
 
-// Which side of a cut will the tab be drawn, compare with face_sign
+// Which side of a cut will the flap be drawn, compare with face_sign
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum TabSide {
+pub enum FlapSide {
     False,
     True,
     Hidden,
 }
 
-pub enum EdgeToggleTabAction {
+pub enum EdgeToggleFlapAction {
     Toggle,
     Hide,
-    Set(TabSide),
+    Set(FlapSide),
 }
 
-impl TabSide {
-    pub fn apply(self, action: EdgeToggleTabAction, rim: bool) -> TabSide {
-        use TabSide::*;
+impl FlapSide {
+    pub fn apply(self, action: EdgeToggleFlapAction, rim: bool) -> FlapSide {
+        use FlapSide::*;
         match (self, action) {
-            (_, EdgeToggleTabAction::Set(next)) => next,
+            (_, EdgeToggleFlapAction::Set(next)) => next,
             // toggle
-            (False, EdgeToggleTabAction::Toggle) => if rim { Hidden } else { True },
-            (True, EdgeToggleTabAction::Toggle) => False,
-            (Hidden, EdgeToggleTabAction::Toggle) => False,
+            (False, EdgeToggleFlapAction::Toggle) => if rim { Hidden } else { True },
+            (True, EdgeToggleFlapAction::Toggle) => False,
+            (Hidden, EdgeToggleFlapAction::Toggle) => False,
 
             // hide
-            (False, EdgeToggleTabAction::Hide) => Hidden,
-            (True, EdgeToggleTabAction::Hide) => Hidden,
-            (Hidden, EdgeToggleTabAction::Hide) => False,
+            (False, EdgeToggleFlapAction::Hide) => Hidden,
+            (True, EdgeToggleFlapAction::Hide) => Hidden,
+            (Hidden, EdgeToggleFlapAction::Hide) => False,
         }
     }
-    pub fn tab_visible(self, face_sign: bool) -> bool {
+    pub fn flap_visible(self, face_sign: bool) -> bool {
         match (self, face_sign) {
-            (TabSide::False, false) | (TabSide::True, true) => true,
+            (FlapSide::False, false) | (FlapSide::True, true) => true,
             _ => false,
         }
     }
@@ -55,11 +55,11 @@ impl TabSide {
 pub enum EdgeStatus {
     Hidden,
     Joined,
-    Cut(TabSide),
+    Cut(FlapSide),
 }
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum TabStyle {
+pub enum FlapStyle {
     #[default]
     Textured,
     HalfTextured,
@@ -115,15 +115,17 @@ pub struct PaperOptions {
     pub texture: bool,
     #[serde(default="my_true")]
     pub tex_filter: bool,
-    #[serde(default)]
-    pub tab_style: TabStyle,
+    #[serde(default, rename="tab_style")]
+    pub flap_style: FlapStyle,
     #[serde(default)]
     pub fold_style: FoldStyle,
-    pub tab_width: f32,
-    pub tab_angle: f32, //degrees
+    #[serde(rename="tab_width")]
+    pub flap_width: f32,
+    #[serde(rename="tab_angle")]
+    pub flap_angle: f32, //degrees
     pub fold_line_len: f32, //only for folds in & out
-    #[serde(default)]
-    pub shadow_tab_alpha: f32, //0.0 - 1.0
+    #[serde(default, rename="shadow_tab_alpha")]
+    pub shadow_flap_alpha: f32, //0.0 - 1.0
     #[serde(default="default_fold_line_width")]
     pub fold_line_width: f32, //only for folds in & out
     #[serde(default)]
@@ -149,12 +151,12 @@ impl Default for PaperOptions {
             margin: (10.0, 10.0, 10.0, 10.0),
             texture: true,
             tex_filter: true,
-            tab_style: TabStyle::Textured,
+            flap_style: FlapStyle::Textured,
             fold_style: FoldStyle::Full,
-            tab_width: 5.0,
-            tab_angle: 45.0,
+            flap_width: 5.0,
+            flap_angle: 45.0,
             fold_line_len: 4.0,
-            shadow_tab_alpha: 0.0,
+            shadow_flap_alpha: 0.0,
             fold_line_width: default_fold_line_width(),
             hidden_line_angle: 0.0,
             show_self_promotion: true,
@@ -262,7 +264,7 @@ impl std::fmt::Display for EdgeId {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct TabGeom {
+pub struct FlapGeom {
     pub tan_0: f32,
     pub tan_1: f32,
     pub width: f32,
@@ -272,7 +274,7 @@ pub struct TabGeom {
 #[derive(Default)]
 struct Memoization {
     // These depend on the options, but not on the islands
-    flat_face_tab_dimensions: RefCell<FxHashMap<(FaceIndex, EdgeIndex), TabGeom>>,
+    flat_face_flap_dimensions: RefCell<FxHashMap<(FaceIndex, EdgeIndex), FlapGeom>>,
     face_to_face_edge_matrix: RefCell<FxHashMap<(EdgeIndex, FaceIndex, FaceIndex), Matrix3>>,
 
     // This depends on the islands, but not on the options
@@ -282,7 +284,7 @@ struct Memoization {
 
 impl Memoization {
     fn invalidate_options(&self) {
-        self.flat_face_tab_dimensions.borrow_mut().clear();
+        self.flat_face_flap_dimensions.borrow_mut().clear();
         self.face_to_face_edge_matrix.borrow_mut().clear();
     }
     fn invalidate_islands(&self) {
@@ -360,7 +362,7 @@ impl Papercraft {
         );
 
         let (a, b) = util_3d::bounding_box_2d(vx);
-        let m = self.options.tab_width;
+        let m = self.options.flap_width;
         let mm = Vector2::new(m, m);
         (a - mm, b + mm)
     }
@@ -470,7 +472,7 @@ impl Papercraft {
         self.edge_ids[usize::from(edge)]
     }
 
-    pub fn edge_toggle_tab(&mut self, i_edge: EdgeIndex, action: EdgeToggleTabAction) -> Option<TabSide> {
+    pub fn edge_toggle_flap(&mut self, i_edge: EdgeIndex, action: EdgeToggleFlapAction) -> Option<FlapSide> {
         let rim = matches!(self.model()[i_edge].faces(), (_, None));
         if let EdgeStatus::Cut(ref mut x) = self.edges[usize::from(i_edge)] {
             Some(std::mem::replace(x, x.apply(action, rim)))
@@ -493,7 +495,7 @@ impl Papercraft {
         //one of the edge faces will be the root of the new island, but we do not know which one, yet
         let i_island = self.island_by_face(i_face_a);
 
-        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(TabSide::False);
+        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(FlapSide::False);
 
         let mut data_found = None;
         self.traverse_faces(&self.islands[i_island],
@@ -674,16 +676,16 @@ impl Papercraft {
         let mabt1 = Matrix3::from_translation(a0);
         mabt1 * mabr * mabt0
     }
-    // Returns the max. angles of the tab sides, actually their cotangent, and the max. width.
-    // Ideally it should return all the tab metrics
-    pub fn flat_face_tab_dimensions(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> TabGeom {
+    // Returns the max. angles of the flap sides, actually their cotangent, and the max. width.
+    // Ideally it should return all the flap metrics
+    pub fn flat_face_flap_dimensions(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> FlapGeom {
         // Try to use a memoized value
-        let mut memo = self.memo.flat_face_tab_dimensions.borrow_mut();
+        let mut memo = self.memo.flat_face_flap_dimensions.borrow_mut();
         use std::collections::hash_map::Entry::*;
         let res = match memo.entry((i_face_b, i_edge)) {
             Occupied(o) => *o.get(),
             Vacant(v) => {
-                let value = self.flat_face_tab_dimensions_internal(i_face_b, i_edge);
+                let value = self.flat_face_flap_dimensions_internal(i_face_b, i_edge);
                 *v.insert(value)
             }
         };
@@ -697,7 +699,7 @@ impl Papercraft {
         });
         res
     }
-    fn flat_face_tab_dimensions_internal(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> TabGeom {
+    fn flat_face_flap_dimensions_internal(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> FlapGeom {
         #[derive(Debug)]
         struct EData {
             i_edge: EdgeIndex,
@@ -744,7 +746,7 @@ impl Papercraft {
             .find(|d| the_edge.i_v1 == d.i_v0)
             .unwrap();
 
-        // ** Compute max tab angles **
+        // ** Compute max flap angles **
         let e0 = d0.p1 - d0.p0;
         let e1 = d1.p0 - d0.p1;
         let e2 = d1.p1 - d1.p0;
@@ -753,17 +755,17 @@ impl Papercraft {
         let a0 = Rad::turn_div_2() - a0;
         let a1 = Rad::turn_div_2() - a1;
 
-        let tab_angle = Rad::from(Deg(self.options.tab_angle));
-        let a0 = Rad(a0.0.min(tab_angle.0));
-        let a1 = Rad(a1.0.min(tab_angle.0));
+        let flap_angle = Rad::from(Deg(self.options.flap_angle));
+        let a0 = Rad(a0.0.min(flap_angle.0));
+        let a1 = Rad(a1.0.min(flap_angle.0));
 
-        // ** Compute max tab width **
+        // ** Compute max flap width **
         //
-        // Maximum width is computed with a tab angle of 90°, that is not exact, but the difference
+        // Maximum width is computed with a flap angle of 90°, that is not exact, but the difference
         // should be quite small and always to the safe side.
         // We look in the flat_contour of the face B for the nearest point to the selected edge, that falls inside
-        // an imaginary tab of 90° angle and infinite width.
-        // This nearest point must be either a vertex or the intersection of an edge with the sides of the tab.
+        // an imaginary flap of 90° angle and infinite width.
+        // This nearest point must be either a vertex or the intersection of an edge with the sides of the flap.
 
         let base = (d0.p1, d1.p0);
 
@@ -772,16 +774,16 @@ impl Papercraft {
 
         // (a0,a1) are the biggest angles that fit, and usually smaller angles will result in
         // smaller width too, but in some edge cases a smaller angle will result in a larger width,
-        // and the user will probably prefer the biggest tab area, so we try with some extra angles and see
+        // and the user will probably prefer the biggest flap area, so we try with some extra angles and see
         // what happens
 
         let compute_width = |a0: Rad<f32>, a1: Rad<f32>| -> f32 {
-            let mut minimum_width = self.options.tab_width;
-            let (tab_sin_0, tab_cos_0) = a0.sin_cos();
-            let normal_0 = Vector2::new(n.x * tab_sin_0 - n.y * tab_cos_0, n.x * tab_cos_0 + n.y * tab_sin_0);
+            let mut minimum_width = self.options.flap_width;
+            let (flap_sin_0, flap_cos_0) = a0.sin_cos();
+            let normal_0 = Vector2::new(n.x * flap_sin_0 - n.y * flap_cos_0, n.x * flap_cos_0 + n.y * flap_sin_0);
             //90° is the original normal so switch the sin/cos in these rotations
-            let (tab_sin_1, tab_cos_1) = a1.sin_cos();
-            let normal_1 = Vector2::new(n.x * tab_sin_1 + n.y * tab_cos_1, -n.x * tab_cos_1 + n.y * tab_sin_1);
+            let (flapsin_1, flap_cos_1) = a1.sin_cos();
+            let normal_1 = Vector2::new(n.x * flapsin_1 + n.y * flap_cos_1, -n.x * flap_cos_1 + n.y * flapsin_1);
 
             let side_0 = (base.0, base.0 + normal_0);
             let side_1 = (base.1, base.1 + normal_1);
@@ -794,16 +796,16 @@ impl Papercraft {
 
             for other in &flat_contour {
                 // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
-                // tab to avoid crossing those.
+                // flap to avoid crossing those.
                 if other.i_edge == i_edge || other.i_edge == d0.i_edge || other.i_edge == d1.i_edge {
                     continue;
                 }
 
-                // Check the intersections with the edges of the imaginary tab:
-                for (tab_sin, side) in [(tab_sin_0, side_0), (tab_sin_1, side_1)] {
+                // Check the intersections with the edges of the imaginary flap:
+                for (flap_sin, side) in [(flap_sin_0, side_0), (flapsin_1, side_1)] {
                     let (_, o1, o2) = util_3d::line_line_intersection((other.p0, other.p1), side);
                     if (ZERO..=ONE).contains(&o1) && ZERO <= o2 {
-                        minimum_width = minimum_width.min(o2 * tab_sin);
+                        minimum_width = minimum_width.min(o2 * flap_sin);
                     }
                 }
 
@@ -825,7 +827,7 @@ impl Papercraft {
             minimum_width
         };
         let base_len = e1.magnitude();
-        let tab_area = |a0: Rad<f32>, a1: Rad<f32>, width: f32| -> f32 {
+        let flap_area = |a0: Rad<f32>, a1: Rad<f32>, width: f32| -> f32 {
             if a0.0 <= 0.0 || a1.0 <= 0.0 {
                 return 0.0;
             }
@@ -845,7 +847,7 @@ impl Papercraft {
         let mut a0 = a0;
         let mut a1 = a1;
         let mut width = compute_width(a0, a1);
-        let mut area = tab_area(a0, a1, width);
+        let mut area = flap_area(a0, a1, width);
         let (mut doing0, mut doing1) = (true, true);
         let step = Rad::from(Deg(5.0));
         while doing0 || doing1 {
@@ -853,7 +855,7 @@ impl Papercraft {
                 let a0x = a0 - step;
                 if a0x > Rad(0.0) {
                     let w = compute_width(a0x, a1);
-                    let a = tab_area(a0x, a1, w);
+                    let a = flap_area(a0x, a1, w);
                     if a > area {
                         width = w;
                         area = a;
@@ -870,7 +872,7 @@ impl Papercraft {
                 let a1x = a1 - step;
                 if a1x > Rad(0.0) {
                     let w = compute_width(a0, a1x);
-                    let a = tab_area(a0, a1x, w);
+                    let a = flap_area(a0, a1x, w);
                     if a > area {
                         width = w;
                         area = a;
@@ -885,8 +887,8 @@ impl Papercraft {
             }
         }
         if a0.0 <= 0.0 || a1.0 <= 0.0 {
-            // Invalid tab
-            TabGeom::default()
+            // Invalid flap
+            FlapGeom::default()
         } else {
             let tan_0 = a0.cot();
             let tan_1 = a1.cot();
@@ -895,7 +897,7 @@ impl Papercraft {
             if triangular {
                 width = base_len / (tan_0 + tan_1);
             }
-            TabGeom {
+            FlapGeom {
                 tan_0,
                 tan_1,
                 width,
@@ -903,9 +905,9 @@ impl Papercraft {
             }
         }
     }
-    pub fn flat_face_rim_tab_dimensions(&self, i_face: FaceIndex, i_edge: EdgeIndex) -> TabGeom {
-        let tab_angle = Rad::from(Deg(self.options.tab_angle));
-        let tan = tab_angle.cot();
+    pub fn flat_face_rim_flap_dimensions(&self, i_face: FaceIndex, i_edge: EdgeIndex) -> FlapGeom {
+        let flap_angle = Rad::from(Deg(self.options.flap_angle));
+        let tan = flap_angle.cot();
         let face = &self.model[i_face];
         let plane = self.model.face_plane(face);
         let edge = &self.model[i_edge];
@@ -914,13 +916,13 @@ impl Papercraft {
         let p0 = plane.project(&v0, scale);
         let p1 = plane.project(&v1, scale);
         let base_len = (p1 - p0).magnitude();
-        let mut width = self.options.tab_width;
+        let mut width = self.options.flap_width;
         let base2 = base_len - 2.0 * tan * width;
         let triangular = base2 <= 0.0;
         if triangular {
             width = base_len / (2.0 * tan);
         }
-        TabGeom {
+        FlapGeom {
             tan_0: tan,
             tan_1: tan,
             width,
@@ -1254,9 +1256,9 @@ impl Serialize for EdgeStatus {
         let is = match self {
             EdgeStatus::Hidden => 0,
             EdgeStatus::Joined => 1,
-            EdgeStatus::Cut(TabSide::False) => 2,
-            EdgeStatus::Cut(TabSide::True) => 3,
-            EdgeStatus::Cut(TabSide::Hidden) => 4,
+            EdgeStatus::Cut(FlapSide::False) => 2,
+            EdgeStatus::Cut(FlapSide::True) => 3,
+            EdgeStatus::Cut(FlapSide::Hidden) => 4,
         };
         serializer.serialize_i32(is)
     }
@@ -1269,38 +1271,38 @@ impl<'de> Deserialize<'de> for EdgeStatus {
         let res = match d {
             0 => EdgeStatus::Hidden,
             1 => EdgeStatus::Joined,
-            2 => EdgeStatus::Cut(TabSide::False),
-            3 => EdgeStatus::Cut(TabSide::True),
-            4 => EdgeStatus::Cut(TabSide::Hidden),
+            2 => EdgeStatus::Cut(FlapSide::False),
+            3 => EdgeStatus::Cut(FlapSide::True),
+            4 => EdgeStatus::Cut(FlapSide::Hidden),
             _ => return Err(serde::de::Error::missing_field("invalid edge status")),
         };
         Ok(res)
     }
 }
 
-impl Serialize for TabStyle {
+impl Serialize for FlapStyle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: serde::Serializer
     {
         let is = match self {
-            TabStyle::Textured => 0,
-            TabStyle::HalfTextured => 1,
-            TabStyle::White => 2,
-            TabStyle::None => 3,
+            FlapStyle::Textured => 0,
+            FlapStyle::HalfTextured => 1,
+            FlapStyle::White => 2,
+            FlapStyle::None => 3,
         };
         serializer.serialize_i32(is)
     }
 }
-impl<'de> Deserialize<'de> for TabStyle {
+impl<'de> Deserialize<'de> for FlapStyle {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where D: serde::Deserializer<'de>
     {
         let d = u32::deserialize(deserializer)?;
         let res = match d {
-            0 => TabStyle::Textured,
-            1 => TabStyle::HalfTextured,
-            2 => TabStyle::White,
-            3 => TabStyle::None,
+            0 => FlapStyle::Textured,
+            1 => FlapStyle::HalfTextured,
+            2 => FlapStyle::White,
+            3 => FlapStyle::None,
             _ => return Err(serde::de::Error::missing_field("invalid tab_style value")),
         };
         Ok(res)

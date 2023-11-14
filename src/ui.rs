@@ -9,13 +9,13 @@ use cgmath::{
 };
 use image::DynamicImage;
 
-use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, TabStyle, FoldStyle, EdgeIdPosition, TabGeom, TabSide, EdgeToggleTabAction, EdgeId};
+use crate::paper::{Papercraft, Model, PaperOptions, Face, EdgeStatus, JoinResult, IslandKey, FaceIndex, MaterialIndex, EdgeIndex, FlapStyle, FoldStyle, EdgeIdPosition, FlapGeom, FlapSide, EdgeToggleFlapAction, EdgeId};
 use crate::util_3d::{self, Matrix3, Matrix4, Quaternion, Vector2, Point2, Point3, Vector3, Matrix2};
 use crate::util_gl::{MVertex3D, MVertex2D, MStatus3D, MSTATUS_UNSEL, MSTATUS_SEL, MSTATUS_HI, MVertex3DLine, MVertex2DColor, MVertex2DLine, MStatus2D};
 use crate::glr::{self, Rgba};
 
 // In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
-const TAB_LINE_WIDTH: f32 = 0.2;
+const FLAP_LINE_WIDTH: f32 = 0.2;
 const BORDER_LINE_WIDTH: f32 = 0.1;
 
 // In pixels
@@ -35,10 +35,10 @@ pub struct GLObjects {
     pub paper_vertices_sel: glr::DynamicVertexArray<MStatus2D>,
     pub paper_vertices_edge_cut: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_crease: glr::DynamicVertexArray<MVertex2DLine>,
-    pub paper_vertices_tab: glr::DynamicVertexArray<MVertex2DColor>,
-    pub paper_vertices_tab_edge: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_flap: glr::DynamicVertexArray<MVertex2DColor>,
+    pub paper_vertices_flap_edge: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
-    pub paper_vertices_shadow_tab: glr::DynamicVertexArray<MVertex2DColor>,
+    pub paper_vertices_shadow_flap: glr::DynamicVertexArray<MVertex2DColor>,
 
     // Maps a FaceIndex to the index into paper_vertices
     pub paper_face_index: Vec<u32>,
@@ -51,14 +51,14 @@ pub struct GLObjects {
 pub enum MouseMode {
     Face,
     Edge,
-    Tab,
+    Flap,
     ReadOnly,
 }
 
 pub fn color_edge(mode: MouseMode) -> Rgba {
     match mode {
         MouseMode::Edge => Rgba::new(0.5, 0.5, 1.0, 1.0),
-        MouseMode::Tab => Rgba::new(0.0, 0.5, 0.0, 1.0),
+        MouseMode::Flap => Rgba::new(0.0, 0.5, 0.0, 1.0),
         MouseMode::Face |
         MouseMode::ReadOnly => Rgba::new(0.5, 0.5, 0.5, 1.0),
     }
@@ -68,7 +68,7 @@ pub fn color_edge(mode: MouseMode) -> Rgba {
 #[derive(Debug)]
 pub enum UndoAction {
     IslandMove { i_root: FaceIndex, prev_rot: Rad<f32>, prev_loc: Vector2 },
-    TabToggle { i_edge: EdgeIndex, tab_side: TabSide },
+    FlapToggle { i_edge: EdgeIndex, flap_side: FlapSide },
     EdgeCut { i_edge: EdgeIndex },
     EdgeJoin { join_result: JoinResult },
     DocConfig { options: PaperOptions, island_pos: FxHashMap<FaceIndex, (Rad<f32>, Vector2)> },
@@ -119,7 +119,7 @@ pub struct UiSettings {
 
     // These shouldn't really be here but in main.rs
     pub show_textures: bool,
-    pub show_tabs: bool,
+    pub show_flaps: bool,
     pub show_3d_lines: bool,
     pub xray_selection: bool,
     pub highlight_overlaps: bool,
@@ -242,9 +242,9 @@ pub struct PaperDrawFaceArgs {
     vertices: Vec<MVertex2D>,
     vertices_edge_cut: Vec<MVertex2DLine>,
     vertices_edge_crease: Vec<MVertex2DLine>,
-    vertices_tab: Vec<MVertex2DColor>,
-    vertices_tab_edge: Vec<MVertex2DLine>,
-    vertices_shadow_tab: Vec<MVertex2DColor>,
+    vertices_flap: Vec<MVertex2DColor>,
+    vertices_flap_edge: Vec<MVertex2DLine>,
+    vertices_shadow_flap: Vec<MVertex2DColor>,
 
     // Maps a FaceIndex to the index into vertices
     face_index: Vec<u32>,
@@ -264,15 +264,15 @@ impl PaperDrawFaceArgs {
             vertices: Vec::new(),
             vertices_edge_cut: Vec::new(),
             vertices_edge_crease: Vec::new(),
-            vertices_tab: Vec::new(),
-            vertices_tab_edge: Vec::new(),
-            vertices_shadow_tab: Vec::new(),
+            vertices_flap: Vec::new(),
+            vertices_flap_edge: Vec::new(),
+            vertices_shadow_flap: Vec::new(),
             face_index: vec![0; model.num_faces()],
         }
     }
 
     pub fn iter_cut(&self) -> Vec<(&MVertex2DLine, &MVertex2DLine)> {
-        self.vertices_tab_edge
+        self.vertices_flap_edge
             .chunks_exact(2)
             .chain(self.vertices_edge_cut
                 .chunks_exact(2)
@@ -315,22 +315,22 @@ pub struct CutIndex {
 impl CutIndex {
     /// This struct stores the position and content of an edge-id
     /// (a, b): coordinates of the edge on paper
-    /// n_tab: if there is a tab, a vector normal to the edge with the length of the tab width
+    /// n_flap: if there is a flap, a vector normal to the edge with the length of the flap width
     /// i_face_b: the face index of the _other _ face (_this_ face is not needed)
     /// id: the edge id
     /// options: the PaperOptions
-    fn new(a: Vector2, b: Vector2, n_tab: Option<Vector2>, i_face_b: FaceIndex, id: EdgeId, options: &PaperOptions) -> CutIndex {
+    fn new(a: Vector2, b: Vector2, n_flap: Option<Vector2>, i_face_b: FaceIndex, id: EdgeId, options: &PaperOptions) -> CutIndex {
         let mut center = (a + b) / 2.0;
 
         // Where does the edge-id go?
-        let factor = match (options.edge_id_position, n_tab) {
+        let factor = match (options.edge_id_position, n_flap) {
             // inside the face
             (EdgeIdPosition::Inside, None) => -0.2,
-            // in the tab, next to the face
+            // in the flap, next to the face
             (EdgeIdPosition::Inside, Some(_)) => 1.1,
             // outside the face
             (EdgeIdPosition::Outside, None) => 1.1,
-            // outside the tab
+            // outside the flap
             (EdgeIdPosition::Outside, Some(n)) => {
                 center += n;
                 1.1
@@ -408,7 +408,7 @@ impl PapercraftContext {
                 trans_scene,
                 trans_paper,
                 show_textures,
-                show_tabs: true,
+                show_flaps: true,
                 show_3d_lines: true,
                 xray_selection: true,
                 highlight_overlaps: false,
@@ -453,14 +453,14 @@ impl PapercraftContext {
         i_face: FaceIndex,
         m: &Matrix3,
         args: &mut PaperDrawFaceArgs,
-        mut tab_cache: Option<&mut Vec<(FaceIndex, TabVertices)>>,
+        mut flap_cache: Option<&mut Vec<(FaceIndex, FlapVertices)>>,
         mut extra: Option<&mut PaperDrawFaceArgsExtra>,
     )
     {
         args.face_index[usize::from(i_face)] = args.vertices.len() as u32 / 3;
         let options = self.papercraft.options();
         let scale = options.scale;
-        let tab_style = options.tab_style;
+        let flap_style = options.flap_style;
         let fold_line_width = options.fold_line_width;
 
         for i_v in face.index_vertices() {
@@ -480,29 +480,29 @@ impl PapercraftContext {
             let edge_status = self.papercraft.edge_status(i_edge);
             let edge_id = self.papercraft.edge_id(i_edge);
 
-            // `draw_tab`` references the adjacent face, and tells if it has to be drawn
+            // `draw_flap`` references the adjacent face, and tells if it has to be drawn
             #[derive(Copy, Clone)]
-            enum DrawTab {
+            enum DrawFlap {
                 Visible(Option<FaceIndex>),
                 Invisible(Option<FaceIndex>),
             }
-            impl DrawTab {
+            impl DrawFlap {
                 fn is_visible(&self) -> bool {
-                    matches!(self, DrawTab::Visible(_))
+                    matches!(self, DrawFlap::Visible(_))
                 }
                 fn face(self) -> Option<FaceIndex> {
                     match self {
-                        DrawTab::Visible(x) | DrawTab::Invisible(x) => x,
+                        DrawFlap::Visible(x) | DrawFlap::Invisible(x) => x,
                     }
                 }
             }
-            let draw_tab = match edge_status {
+            let draw_flap = match edge_status {
                 EdgeStatus::Hidden => {
                     // hidden edges are never drawn
                     continue;
                 }
                 EdgeStatus::Cut(c) => {
-                    // cut edges are always drawn, the tab depends on the value of c and the face_sign
+                    // cut edges are always drawn, the flap depends on the value of c and the face_sign
                     let maybe_i_face_b = match edge.faces() {
                         (fa, Some(fb)) if i_face == fb => Some(fa),
                         (fa, Some(fb)) if i_face == fa => Some(fb),
@@ -511,14 +511,14 @@ impl PapercraftContext {
                         // should not happen
                         _ => continue,
                     };
-                    if tab_style == TabStyle::None {
-                        // User doesn't want tabs
-                        DrawTab::Invisible(maybe_i_face_b)
-                    } else if !c.tab_visible(edge.face_sign(i_face)) {
-                        // The tab is in the other face
-                        DrawTab::Invisible(maybe_i_face_b)
+                    if flap_style == FlapStyle::None {
+                        // User doesn't want flaps
+                        DrawFlap::Invisible(maybe_i_face_b)
+                    } else if !c.flap_visible(edge.face_sign(i_face)) {
+                        // The flap is in the other face
+                        DrawFlap::Invisible(maybe_i_face_b)
                     } else {
-                        DrawTab::Visible(maybe_i_face_b)
+                        DrawFlap::Visible(maybe_i_face_b)
                     }
                 }
                 EdgeStatus::Joined => {
@@ -526,8 +526,8 @@ impl PapercraftContext {
                     if !edge.face_sign(i_face) {
                         continue;
                     }
-                    // but never with a tab or a tab-id
-                    DrawTab::Invisible(None)
+                    // but never with a flap or a flap-id
+                    DrawFlap::Invisible(None)
                 }
             };
 
@@ -541,8 +541,8 @@ impl PapercraftContext {
             let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
 
             //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
-            //cut with a tab
-            let crease_kind = if edge_status == EdgeStatus::Joined || draw_tab.is_visible() {
+            //cut with a flap
+            let crease_kind = if edge_status == EdgeStatus::Joined || draw_flap.is_visible() {
                 let angle_3d = edge.angle();
                 if edge_status == EdgeStatus::Joined && Rad(angle_3d.0.abs()) < Rad::from(Deg(options.hidden_line_angle)) {
                     continue;
@@ -557,7 +557,7 @@ impl PapercraftContext {
             let v2d = MVertex2DLine {
                 pos: pos0,
                 line_dash: 0.0,
-                width_left: if edge_status == EdgeStatus::Joined { fold_line_width / 2.0 } else if draw_tab.is_visible() { fold_line_width } else { BORDER_LINE_WIDTH },
+                width_left: if edge_status == EdgeStatus::Joined { fold_line_width / 2.0 } else if draw_flap.is_visible() { fold_line_width } else { BORDER_LINE_WIDTH },
                 width_right: if edge_status == EdgeStatus::Joined { fold_line_width / 2.0 } else { 0.0 },
             };
 
@@ -625,7 +625,7 @@ impl PapercraftContext {
                     }
                 };
             } else {
-                // This is a naked edge, without a tab
+                // This is a naked edge, without a flap
                 let v0 = MVertex2DLine {
                     pos: pos0,
                     .. v2d
@@ -635,23 +635,23 @@ impl PapercraftContext {
                     .. v0
                 };
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
-                if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, draw_tab.face()) {
+                if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, draw_flap.face()) {
                     extra.cut_index.push(CutIndex::new(v0.pos, v1.pos, None, i_face_b, edge_id, &options));
                 }
             }
 
-            // Draw the tab?
-            if let DrawTab::Visible(maybe_i_face_b) = draw_tab {
-                let tab_geom = match maybe_i_face_b {
-                    Some(i_face_b) => self.papercraft.flat_face_tab_dimensions(i_face_b, i_edge),
-                    None => self.papercraft.flat_face_rim_tab_dimensions(i_face, i_edge),
+            // Draw the flap?
+            if let DrawFlap::Visible(maybe_i_face_b) = draw_flap {
+                let flap_geom = match maybe_i_face_b {
+                    Some(i_face_b) => self.papercraft.flat_face_flap_dimensions(i_face_b, i_edge),
+                    None => self.papercraft.flat_face_rim_flap_dimensions(i_face, i_edge),
                 };
-                let TabGeom {
+                let FlapGeom {
                     tan_0,
                     tan_1,
                     width,
                     triangular,
-                } = tab_geom;
+                } = flap_geom;
 
                 let vn = v * (width / v_len);
                 let v_0 = vn * tan_0;
@@ -661,35 +661,35 @@ impl PapercraftContext {
                     MVertex2DLine {
                         pos: pos0,
                         line_dash: 0.0,
-                        width_left: TAB_LINE_WIDTH,
+                        width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
                     },
                     MVertex2DLine {
                         pos: pos0 + n + v_1,
                         line_dash: 0.0,
-                        width_left: TAB_LINE_WIDTH,
+                        width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
                     },
                     MVertex2DLine {
                         pos: pos1 + n - v_0,
                         line_dash: 0.0,
-                        width_left: TAB_LINE_WIDTH,
+                        width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
                     },
                     MVertex2DLine {
                         pos: pos1,
                         line_dash: 0.0,
-                        width_left: TAB_LINE_WIDTH,
+                        width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
                     },
                 ];
                 let p = if triangular {
                     //The unneeded vertex is actually [2], so remove that copying the [3] over
                     p[2] = p[3];
-                    args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
+                    args.vertices_flap_edge.extend_from_slice(&[p[0], p[1], p[1], p[2]]);
                     &mut p[..3]
                 } else {
-                    args.vertices_tab_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
+                    args.vertices_flap_edge.extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
                     &mut p[..]
                 };
                 if let (Some(extra), Some(edge_id), Some(i_face_b)) = (extra.as_mut(), edge_id, maybe_i_face_b) {
@@ -703,7 +703,7 @@ impl PapercraftContext {
 
                 // helper function for the two cases below
                 let compute_uvs = |face_b: &Face, mx_b: &Matrix3| -> Vec<Vector2> {
-                    if tab_style == TabStyle::White {
+                    if flap_style == FlapStyle::White {
                         vec![Vector2::zero(); 4]
                     } else {
                         //Now we have to compute the texture coordinates of `p` in the adjacent face
@@ -741,24 +741,24 @@ impl PapercraftContext {
                     None => {
                         // There is no adjacent face to copy the texture from, so use the current
                         // face but mirrored.
-                        // N shadow tabs.
+                        // N shadow flaps.
                         geom_b = None;
                         mat = face.material();
                         uvs = compute_uvs(face, &m);
                     }
                 }
-                let (root_alpha, tip_alpha) = match tab_style {
-                    TabStyle::Textured => (0.0, 0.0),
-                    TabStyle::HalfTextured => (0.0, 1.0),
-                    TabStyle::White => (1.0, 1.0),
-                    TabStyle::None => (0.0, 0.0), //should not happen
+                let (root_alpha, tip_alpha) = match flap_style {
+                    FlapStyle::Textured => (0.0, 0.0),
+                    FlapStyle::HalfTextured => (0.0, 1.0),
+                    FlapStyle::White => (1.0, 1.0),
+                    FlapStyle::None => (0.0, 0.0), //should not happen
                 };
                 let root_color = Rgba::new(1.0, 1.0, 1.0, root_alpha);
                 let tip_color = Rgba::new(1.0, 1.0, 1.0, tip_alpha);
                 if triangular {
-                    args.vertices_tab.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color });
-                    args.vertices_tab.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color });
-                    args.vertices_tab.push(MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: root_color });
+                    args.vertices_flap.push(MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color });
+                    args.vertices_flap.push(MVertex2DColor { pos: p[1].pos, uv: uvs[1], mat, color: tip_color });
+                    args.vertices_flap.push(MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: root_color });
                 } else {
                     let pp = [
                         MVertex2DColor { pos: p[0].pos, uv: uvs[0], mat, color: root_color },
@@ -766,20 +766,20 @@ impl PapercraftContext {
                         MVertex2DColor { pos: p[2].pos, uv: uvs[2], mat, color: tip_color },
                         MVertex2DColor { pos: p[3].pos, uv: uvs[3], mat, color: root_color },
                     ];
-                    args.vertices_tab.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
+                    args.vertices_flap.extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
                 }
-                if let (Some(tabs), Some((mx_b_inv, i_face_b))) = (&mut tab_cache, geom_b) {
-                    let mut tab_vs = if triangular {
-                        TabVertices::Tri([p[0].pos, p[1].pos, p[2].pos])
+                if let (Some(flaps), Some((mx_b_inv, i_face_b))) = (&mut flap_cache, geom_b) {
+                    let mut flap_vs = if triangular {
+                        FlapVertices::Tri([p[0].pos, p[1].pos, p[2].pos])
                     } else {
-                        TabVertices::Quad([p[0].pos, p[2].pos, p[1].pos, p[0].pos, p[3].pos, p[2].pos])
+                        FlapVertices::Quad([p[0].pos, p[2].pos, p[1].pos, p[0].pos, p[3].pos, p[2].pos])
                     };
                     // Undo the mx_b transformation becase the shadow will be drawn over another
                     // face, the right matrix will be applied afterwards.
-                    for sp in tab_vs.iter_mut() {
+                    for sp in flap_vs.iter_mut() {
                         *sp = mx_b_inv.transform_point(Point2::from_vec(*sp)).to_vec();
                     }
-                    tabs.push((i_face_b, tab_vs));
+                    flaps.push((i_face_b, flap_vs));
                 }
             }
         }
@@ -789,12 +789,12 @@ impl PapercraftContext {
         //Maps VertexIndex in the model to index in vertices
         let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
 
-        // Shadow tabs have to be drawn the the face adjacent to the one being drawn, but we do not
+        // Shadow flaps have to be drawn the the face adjacent to the one being drawn, but we do not
         // now its coordinates yet.
-        // So we store the tab vertices and the face matrixes in temporary storage and draw the
-        // shadow tabs later.
-        let shadow_tab_alpha = self.papercraft.options().shadow_tab_alpha;
-        let mut shadow_cache = if shadow_tab_alpha > 0.0 {
+        // So we store the flap vertices and the face matrixes in temporary storage and draw the
+        // shadow flaps later.
+        let shadow_flap_alpha = self.papercraft.options().shadow_flap_alpha;
+        let mut shadow_cache = if shadow_flap_alpha > 0.0 {
             Some((HashMap::new(), Vec::new()))
         } else {
             None
@@ -811,15 +811,15 @@ impl PapercraftContext {
             );
         }
 
-        if let Some((mx_face, tab_cache)) = &shadow_cache {
+        if let Some((mx_face, flap_cache)) = &shadow_cache {
             let uv = Vector2::zero();
             let mat = MaterialIndex::from(0);
-            let color = Rgba::new(0.0, 0.0, 0.0, shadow_tab_alpha);
-            for (i_face_b, ps) in tab_cache {
+            let color = Rgba::new(0.0, 0.0, 0.0, shadow_flap_alpha);
+            for (i_face_b, ps) in flap_cache {
                 let Some(mx) = mx_face.get(i_face_b) else {
                     continue; // should not happen
                 };
-                args.vertices_shadow_tab.extend(ps
+                args.vertices_shadow_flap.extend(ps
                     .iter()
                     .map(|p| {
                         let pos = mx.transform_point(Point2::from_vec(*p)).to_vec();
@@ -832,10 +832,10 @@ impl PapercraftContext {
         self.gl_objs.paper_vertices.set(args.vertices);
         self.gl_objs.paper_vertices_edge_cut.set(args.vertices_edge_cut);
         self.gl_objs.paper_vertices_edge_crease.set(args.vertices_edge_crease);
-        self.gl_objs.paper_vertices_tab.set(args.vertices_tab);
-        self.gl_objs.paper_vertices_tab_edge.set(args.vertices_tab_edge);
+        self.gl_objs.paper_vertices_flap.set(args.vertices_flap);
+        self.gl_objs.paper_vertices_flap_edge.set(args.vertices_flap_edge);
         self.gl_objs.paper_face_index = args.face_index;
-        self.gl_objs.paper_vertices_shadow_tab.set(args.vertices_shadow_tab);
+        self.gl_objs.paper_vertices_shadow_flap.set(args.vertices_shadow_flap);
     }
 
     fn pages_rebuild(&mut self) {
@@ -1132,7 +1132,7 @@ impl PapercraftContext {
         match self.papercraft.edge_status(i_edge) {
             EdgeStatus::Hidden => { None }
             EdgeStatus::Joined => {
-                let offset = self.papercraft.options().tab_width * 2.0;
+                let offset = self.papercraft.options().flap_width * 2.0;
                 self.papercraft.edge_cut(i_edge, Some(offset));
                 Some(vec![UndoAction::EdgeCut { i_edge }])
             }
@@ -1215,7 +1215,7 @@ impl PapercraftContext {
         for (i_edge, edge) in self.papercraft.model().edges() {
             match (self.papercraft.edge_status(i_edge), mode) {
                 (EdgeStatus::Hidden, _) => continue,
-                (EdgeStatus::Joined, MouseMode::Tab) => continue,
+                (EdgeStatus::Joined, MouseMode::Flap) => continue,
                 _ => (),
             }
             let (v1, v2) = self.papercraft.model().edge_pos(edge);
@@ -1282,11 +1282,11 @@ impl PapercraftContext {
                     }
                     match mode {
                         MouseMode::Face => { }
-                        MouseMode::Edge | MouseMode::Tab | MouseMode::ReadOnly => {
+                        MouseMode::Edge | MouseMode::Flap | MouseMode::ReadOnly => {
                             for i_edge in face.index_edges() {
                                 match (self.papercraft.edge_status(i_edge), mode) {
                                     (EdgeStatus::Hidden, _) => continue,
-                                    (EdgeStatus::Joined, MouseMode::Tab) => continue,
+                                    (EdgeStatus::Joined, MouseMode::Flap) => continue,
                                     _ => (),
                                 }
                                 let edge = &self.papercraft.model()[i_edge];
@@ -1402,14 +1402,14 @@ impl PapercraftContext {
         RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
     }
     #[must_use]
-    fn do_tab_action(&mut self, i_edge: EdgeIndex, shift_action: bool) -> RebuildFlags {
+    fn do_flap_action(&mut self, i_edge: EdgeIndex, shift_action: bool) -> RebuildFlags {
         let action = if shift_action {
-            EdgeToggleTabAction::Hide
+            EdgeToggleFlapAction::Hide
         } else {
-            EdgeToggleTabAction::Toggle
+            EdgeToggleFlapAction::Toggle
         };
-        if let Some(tab_side) = self.papercraft.edge_toggle_tab(i_edge, action) {
-            self.push_undo_action(vec![UndoAction::TabToggle { i_edge, tab_side } ]);
+        if let Some(flap_side) = self.papercraft.edge_toggle_flap(i_edge, action) {
+            self.push_undo_action(vec![UndoAction::FlapToggle { i_edge, flap_side } ]);
             RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
         } else {
             RebuildFlags::empty()
@@ -1423,8 +1423,8 @@ impl PapercraftContext {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 self.do_edge_action(i_edge, i_face, shift_action)
             }
-            (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                self.do_tab_action(i_edge, shift_action)
+            (MouseMode::Flap, ClickResult::Edge(i_edge, _)) => {
+                self.do_flap_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) |
             (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
@@ -1523,8 +1523,8 @@ impl PapercraftContext {
                 self.grabbed_island = None;
                 self.do_edge_action(i_edge, i_face, shift_action)
             }
-            (MouseMode::Tab, ClickResult::Edge(i_edge, _)) => {
-                self.do_tab_action(i_edge, shift_action)
+            (MouseMode::Flap, ClickResult::Edge(i_edge, _)) => {
+                self.do_flap_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) |
             (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
@@ -1602,8 +1602,8 @@ impl PapercraftContext {
                     let island = self.papercraft.island_by_key_mut(i_island).unwrap();
                     island.reset_transformation(i_root, prev_rot, prev_loc);
                 }
-                UndoAction::TabToggle { i_edge, tab_side } => {
-                    self.papercraft.edge_toggle_tab(i_edge, EdgeToggleTabAction::Set(tab_side));
+                UndoAction::FlapToggle { i_edge, flap_side } => {
+                    self.papercraft.edge_toggle_flap(i_edge, EdgeToggleFlapAction::Set(flap_side));
                 }
                 UndoAction::EdgeCut { i_edge } => {
                     self.papercraft.edge_join(i_edge, None);
@@ -1765,10 +1765,10 @@ impl GLObjects {
         let paper_vertices_sel = glr::DynamicVertexArray::from(vec![MStatus2D { color: MSTATUS_UNSEL.color }; 3 * model.num_faces()]);
         let paper_vertices_edge_cut = glr::DynamicVertexArray::new();
         let paper_vertices_edge_crease = glr::DynamicVertexArray::new();
-        let paper_vertices_tab = glr::DynamicVertexArray::new();
-        let paper_vertices_tab_edge = glr::DynamicVertexArray::new();
+        let paper_vertices_flap = glr::DynamicVertexArray::new();
+        let paper_vertices_flap_edge = glr::DynamicVertexArray::new();
         let paper_vertices_edge_sel = glr::DynamicVertexArray::new();
-        let paper_vertices_shadow_tab = glr::DynamicVertexArray::new();
+        let paper_vertices_shadow_flap = glr::DynamicVertexArray::new();
 
         let paper_vertices_page = glr::DynamicVertexArray::new();
         let paper_vertices_margin = glr::DynamicVertexArray::new();
@@ -1785,10 +1785,10 @@ impl GLObjects {
             paper_vertices_sel,
             paper_vertices_edge_cut,
             paper_vertices_edge_crease,
-            paper_vertices_tab,
-            paper_vertices_tab_edge,
+            paper_vertices_flap,
+            paper_vertices_flap_edge,
             paper_vertices_edge_sel,
-            paper_vertices_shadow_tab,
+            paper_vertices_shadow_flap,
 
             paper_face_index: Vec::new(),
 
@@ -1802,26 +1802,26 @@ pub fn signature() -> &'static str {
     "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 }
 
-enum TabVertices {
+enum FlapVertices {
     Tri([Vector2; 3]),
     Quad([Vector2; 6]),
 }
 
-impl std::ops::Deref for TabVertices {
+impl std::ops::Deref for FlapVertices {
     type Target = [Vector2];
 
     fn deref(&self) -> &Self::Target {
         match self {
-            TabVertices::Tri(s) => s,
-            TabVertices::Quad(s) => s,
+            FlapVertices::Tri(s) => s,
+            FlapVertices::Quad(s) => s,
         }
     }
 }
-impl std::ops::DerefMut for TabVertices {
+impl std::ops::DerefMut for FlapVertices {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            TabVertices::Tri(s) => s,
-            TabVertices::Quad(s) => s,
+            FlapVertices::Tri(s) => s,
+            FlapVertices::Quad(s) => s,
         }
     }
 }

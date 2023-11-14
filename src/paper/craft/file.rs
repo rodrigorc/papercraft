@@ -94,17 +94,17 @@ impl Papercraft {
                     }
                     // Rim
                     (_, None) => {
-                        // edges in the rim (without adjacent face) usually do not have a tab, but if it does,
-                        // the TabSide is false, no matter what the loader says
+                        // edges in the rim (without adjacent face) usually do not have a flap, but if it does,
+                        // the FlapSide is false, no matter what the loader says
                         match importer.compute_edge_status(*edge_id) {
-                            Some(EdgeStatus::Cut(TabSide::False | TabSide::True)) => EdgeStatus::Cut(TabSide::False),
-                            _ => EdgeStatus::Cut(TabSide::Hidden),
+                            Some(EdgeStatus::Cut(FlapSide::False | FlapSide::True)) => EdgeStatus::Cut(FlapSide::False),
+                            _ => EdgeStatus::Cut(FlapSide::Hidden),
                         }
                     }
                     // Normal edge
                     _ => {
                         importer.compute_edge_status(*edge_id)
-                            .unwrap_or(EdgeStatus::Cut(TabSide::False))
+                            .unwrap_or(EdgeStatus::Cut(FlapSide::False))
                     }
                 }
             })

@@ -138,7 +138,7 @@ impl Importer for PepakuraImporter {
         } else {
             let v_f = obj.faces[edge.i_f1 as usize].verts.iter().find(|v_f| v_f.i_v == edge.i_v1).unwrap();
             if v_f.flap.is_some() {
-                Some(EdgeStatus::Cut(TabSide::True))
+                Some(EdgeStatus::Cut(FlapSide::True))
             } else {
                 None
             }
@@ -221,10 +221,10 @@ impl Importer for PepakuraImporter {
             }
         }
         if flap_count > 0 {
-            let tab_width = flap_width / flap_count as f32;
-            let tab_angle = Deg::from(Rad(flap_angle / 2.0 / flap_count as f32)).0;
-            options.tab_width = tab_width.round();
-            options.tab_angle = tab_angle.round();
+            let flap_width = flap_width / flap_count as f32;
+            let flap_angle = Deg::from(Rad(flap_angle / 2.0 / flap_count as f32)).0;
+            options.flap_width = flap_width.round();
+            options.flap_angle = flap_angle.round();
         }
 
         Some(options)

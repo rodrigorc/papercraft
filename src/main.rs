@@ -1229,15 +1229,17 @@ impl GlobalContext {
                 {
                     menu_actions.open = self.check_modified();
                 }
-                if ui.menu_item_config("Save")
-                    .shortcut("Ctrl+S")
-                    .build()
-                {
-                    menu_actions.save = true;
-                }
-                if ui.menu_item("Save as...") {
-                    menu_actions.save_as = true;
-                }
+                ui.enabled(!self.data.papercraft().model().is_empty(), || {
+                    if ui.menu_item_config("Save")
+                        .shortcut("Ctrl+S")
+                        .build()
+                    {
+                        menu_actions.save = true;
+                    }
+                    if ui.menu_item("Save as...") {
+                        menu_actions.save_as = true;
+                    }
+                });
                 if self.modifiable() {
                     if ui.menu_item("Import model...") {
                         menu_actions.import_model = self.check_modified();

@@ -408,6 +408,9 @@ impl Model {
     pub fn has_textures(&self) -> bool {
         self.textures.iter().any(|t| t.pixbuf.is_some())
     }
+    pub fn is_empty(&self) -> bool {
+        self.vertices.is_empty()
+    }
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()
     }

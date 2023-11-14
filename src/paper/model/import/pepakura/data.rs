@@ -1,9 +1,14 @@
+// Pepakura PDO format is documented, by reverse engeneering, I presume, at:
+// * https://github.com/dpethes/pdo-tools.git/doc/pdo_spec_draft.txt
+// Many thanks to "dpethes" for the work!
+
 use std::{io::Read, cell::Cell};
 use anyhow::{anyhow, Result};
 
 use super::super::*;
 type Vector2 = cgmath::Vector2<f32>;
 type Vector3 = cgmath::Vector3<f32>;
+use cgmath::Rad;
 
 #[derive(Debug)]
 pub struct Pdo {
@@ -77,7 +82,14 @@ pub struct VertInFace {
     pub i_v: u32,
     pub pos2d: Vector2,
     pub uv: Vector2,
-    pub flap: bool,
+    pub flap: Option<Flap>,
+}
+
+#[derive(Debug)]
+pub struct Flap {
+    pub width: f32,
+    pub angle1: Rad<f32>,
+    pub angle2: Rad<f32>,
 }
 
 #[derive(Debug)]
@@ -186,9 +198,16 @@ impl <'r, R: Read> Reader<'r, R> {
             let pos2d = read_vector2_f64(self.rdr)?;
             let uv = read_vector2_f64(self.rdr)?;
             let flap = read_bool(self.rdr)?;
-            let _h = read_f64(self.rdr)?;
-            let _a1 = read_f64(self.rdr)?;
-            let _a2 = read_f64(self.rdr)?;
+            let width = read_f64(self.rdr)?;
+            let a1 = read_f64(self.rdr)?;
+            let a2 = read_f64(self.rdr)?;
+            let flap = flap.then(|| {
+                Flap {
+                    width: width as f32,
+                    angle1: Rad(a1 as f32),
+                    angle2: Rad(a2 as f32),
+                }
+            });
 
             let mut _fold_info = [0; 24];
             self.rdr.read_exact(&mut _fold_info)?;

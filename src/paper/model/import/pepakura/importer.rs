@@ -3,7 +3,7 @@ use std::io::BufRead;
 
 use super::data;
 use super::super::*;
-use cgmath::InnerSpace;
+use cgmath::{InnerSpace, Deg, Rad};
 use image::{DynamicImage, ImageBuffer};
 
 pub struct PepakuraImporter {
@@ -137,7 +137,7 @@ impl Importer for PepakuraImporter {
             Some(EdgeStatus::Joined)
         } else {
             let v_f = obj.faces[edge.i_f1 as usize].verts.iter().find(|v_f| v_f.i_v == edge.i_v1).unwrap();
-            if v_f.flap {
+            if v_f.flap.is_some() {
                 Some(EdgeStatus::Cut(TabSide::True))
             } else {
                 None
@@ -204,6 +204,29 @@ impl Importer for PepakuraImporter {
         let (page_cols, pages) = self.pages.get();
         options.page_cols = page_cols;
         options.pages = pages;
+
+        // We don't have options per flap, yet. Do an average instead.
+        let mut flap_count = 0;
+        let mut flap_width = 0.0;
+        let mut flap_angle = 0.0;
+        for obj in self.pdo.objects() {
+            for face in &obj.faces {
+                for vert in &face.verts {
+                    if let Some(flap) = &vert.flap {
+                        flap_width += flap.width;
+                        flap_count += 1;
+                        flap_angle += flap.angle1.0 + flap.angle2.0;
+                    }
+                }
+            }
+        }
+        if flap_count > 0 {
+            let tab_width = flap_width / flap_count as f32;
+            let tab_angle = Deg::from(Rad(flap_angle / 2.0 / flap_count as f32)).0;
+            options.tab_width = tab_width.round();
+            options.tab_angle = tab_angle.round();
+        }
+
         Some(options)
     }
 }

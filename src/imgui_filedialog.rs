@@ -78,6 +78,10 @@ impl<'a> Builder<'a> {
         self.path = path;
         self
     }
+    pub fn file(mut self, file: &'a str) -> Self {
+        self.file = file;
+        self
+    }
     pub fn flags(mut self, flags: Flags) -> Self {
         self.flags = flags;
         self

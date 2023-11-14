@@ -222,6 +222,7 @@ fn main() {
             file_dialog: None,
             file_action: None,
             last_path,
+            last_export: String::new(),
             error_message: None,
             confirmable_action: None,
             popup_time_start: Instant::now(),
@@ -557,6 +558,7 @@ struct GlobalContext {
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
     file_action: Option<(FileAction, PathBuf)>,
     last_path: String,
+    last_export: String,
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
     popup_time_start: Instant,
@@ -1604,9 +1606,22 @@ impl GlobalContext {
             open_file_dialog = true;
         }
         if menu_actions.generate_printable {
+            use std::borrow::Cow::{Borrowed, Owned};
+
+            let (last_path, last_file) = if self.last_export.is_empty() {
+                (Borrowed(&self.last_path), Borrowed(""))
+            } else {
+                let path = PathBuf::from(&self.last_export);
+                let last_path = path.parent()
+                    .map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(String::new);
+                let last_file = path.file_name()
+                    .map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(String::new);
+                (Owned(last_path), Owned(last_file))
+            };
             let fd = imgui_filedialog::Builder::new("fd")
                 .filter("PDF document (*.pdf) {.pdf},SVG documents (*.svg) {.svg},PNG documents (*.png) {.png},All files {.*}")
-                .path(&self.last_path)
+                .path(&last_path)
+                .file(&last_file)
                 .flags(imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG)
                 .open();
             self.file_dialog = Some((fd, "Generate Printable...", FileAction::GeneratePrintable));
@@ -1975,7 +1990,10 @@ impl GlobalContext {
                 self.data.modified = true;
             }
             FileAction::ExportObj => self.export_obj(file_name)?,
-            FileAction::GeneratePrintable => self.generate_printable(file_name)?,
+            FileAction::GeneratePrintable => {
+                self.generate_printable(file_name)?;
+                self.last_export = file_name.to_string_lossy().into_owned();
+            }
         }
         Ok(())
     }

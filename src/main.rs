@@ -924,7 +924,7 @@ impl GlobalContext {
         let modifiable = self.modifiable();
         let mut options_opened = true;
         if let Some(_options) = ui.window("Document properties###options")
-            .size(if modifiable {[600.0, 400.0]} else {[300.0, 100.0]}, imgui::Condition::Once)
+            .size(if modifiable {[650.0, 400.0]} else {[300.0, 100.0]}, imgui::Condition::Once)
             .resizable(true)
             .scroll_bar(false)
             .movable(true)
@@ -974,14 +974,16 @@ impl GlobalContext {
             .horizontal_scrollbar(true)
             .begin()
         {
-            if ui.collapsing_header("Model", imgui::TreeNodeFlags::empty()) {
+            if let Some(_tok) = ui.tree_node_config("Model").framed(true).push() {
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
                 ui.input_float("Scale", &mut options.scale).display_format("%g").build();
                 options.scale = options.scale.max(0.0);
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
-                ui.checkbox("Textured", &mut options.texture);
-                ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
-                ui.checkbox("Texture filter", &mut options.tex_filter);
+                ui.enabled(self.data.papercraft().model().has_textures(), || {
+                    ui.checkbox("Textured", &mut options.texture);
+                    ui.same_line_with_spacing(0.0, ui.current_font_size() * 3.0);
+                    ui.checkbox("Texture filter", &mut options.tex_filter);
+                });
 
                 if let Some(_t) = ui.tree_node_config("Flaps")
                     //.flags(imgui::TreeNodeFlags::DEFAULT_OPEN)
@@ -1048,12 +1050,16 @@ impl GlobalContext {
                     }
                     ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
-                    ui.input_float("Length", &mut options.fold_line_len).display_format("%g").build();
-                    options.fold_line_len = options.fold_line_len.max(0.0);
+                    ui.enabled(!matches!(options.fold_style, FoldStyle::None | FoldStyle::Full) , || {
+                        ui.input_float("Length", &mut options.fold_line_len).display_format("%g").build();
+                        options.fold_line_len = options.fold_line_len.max(0.0);
+                    });
                     ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
-                    ui.input_float("Line width", &mut options.fold_line_width).display_format("%g").build();
-                    options.fold_line_width = options.fold_line_width.max(0.0);
+                    ui.enabled(!matches!(options.fold_style, FoldStyle::None) , || {
+                        ui.input_float("Line width", &mut options.fold_line_width).display_format("%g").build();
+                        options.fold_line_width = options.fold_line_width.max(0.0);
+                    });
 
                     ui.set_next_item_width(ui.current_font_size() * 5.5);
                     ui.input_float("Hidden fold angle", &mut options.hidden_line_angle).display_format("%g").build();
@@ -1063,7 +1069,7 @@ impl GlobalContext {
                     self.build_read_only_options_inner_dialog(ui, &options);
                 }
             }
-            if ui.collapsing_header("Page layout", imgui::TreeNodeFlags::empty()) {
+            if let Some(_tok) = ui.tree_node_config("Page layout").framed(true).push() {
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
 
                 let mut i = options.pages as _;
@@ -1105,11 +1111,13 @@ impl GlobalContext {
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);
 
                 ui.set_next_item_width(ui.current_font_size() * 3.0);
-                ui.input_float("Edge id font size (pt)", &mut options.edge_id_font_size).display_format("%g").build();
-                options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
+                ui.enabled(options.edge_id_position != EdgeIdPosition::None, || {
+                    ui.input_float("Edge id font size (pt)", &mut options.edge_id_font_size).display_format("%g").build();
+                    options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
+                });
 
             }
-            if ui.collapsing_header("Paper size", imgui::TreeNodeFlags::empty()) {
+            if let Some(_tok) = ui.tree_node_config("Paper size").framed(true).push() {
                 ui.set_next_item_width(ui.current_font_size() * 5.5);
                 ui.input_float("Width", &mut options.page_size.0).display_format("%g").build();
                 options.page_size.0 = options.page_size.0.max(1.0);
@@ -1165,7 +1173,7 @@ impl GlobalContext {
                     std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
                 }
             }
-            if ui.collapsing_header("Margins", imgui::TreeNodeFlags::empty()) {
+            if let Some(_tok) = ui.tree_node_config("Margins").framed(true).push() {
                 ui.set_next_item_width(ui.current_font_size() * 4.0);
                 ui.input_float("Top", &mut options.margin.0).display_format("%g").build();
                 ui.same_line_with_spacing(0.0, ui.current_font_size() * 1.5);

@@ -405,6 +405,9 @@ impl Model {
     pub fn num_textures(&self) -> usize {
         self.textures.len()
     }
+    pub fn has_textures(&self) -> bool {
+        self.textures.iter().any(|t| t.pixbuf.is_some())
+    }
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()
     }

@@ -135,11 +135,14 @@ impl Papercraft {
         let need_packing = !importer.relocate_islands(&model, islands.values_mut());
 
         let mut need_fix_options = false;
-        let options = importer.build_options()
+        let mut options = importer.build_options()
             .unwrap_or_else(|| {
                 need_fix_options = true;
                 PaperOptions::default()
             });
+        if !model.has_textures() {
+            options.texture = false;
+        }
 
         let mut papercraft = Papercraft {
             model,

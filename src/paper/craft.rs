@@ -60,8 +60,8 @@ pub enum EdgeStatus {
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum FlapStyle {
-    #[default]
     Textured,
+    #[default]
     HalfTextured,
     White,
     None,
@@ -151,8 +151,8 @@ impl Default for PaperOptions {
             margin: (10.0, 10.0, 10.0, 10.0),
             texture: true,
             tex_filter: true,
-            flap_style: FlapStyle::Textured,
-            fold_style: FoldStyle::Full,
+            flap_style: FlapStyle::default(),
+            fold_style: FoldStyle::default(),
             flap_width: 5.0,
             flap_angle: 45.0,
             fold_line_len: 4.0,
@@ -162,7 +162,7 @@ impl Default for PaperOptions {
             show_self_promotion: true,
             show_page_number: true,
             edge_id_font_size: default_edge_id_font_size(),
-            edge_id_position: EdgeIdPosition::Outside,
+            edge_id_position: EdgeIdPosition::default(),
         }
     }
 }

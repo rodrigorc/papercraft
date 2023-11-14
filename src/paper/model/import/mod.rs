@@ -90,7 +90,8 @@ pub trait Importer: Sized {
     fn build_options(&self) -> Option<PaperOptions> { None }
 }
 
-pub fn import_model_file(file_name: &Path) -> Result<Papercraft> {
+// Returns (model, is_native_format)
+pub fn import_model_file(file_name: &Path) -> Result<(Papercraft, bool)> {
     let ext = match file_name.extension() {
         None => String::new(),
         Some(ext) => {
@@ -100,10 +101,17 @@ pub fn import_model_file(file_name: &Path) -> Result<Papercraft> {
         }
     };
 
-    let f = std::fs::File::open(file_name)?;
+    let f = std::fs::File::open(file_name)
+        .with_context(|| format!("Error opening file {}", file_name.display()))?;
     let f = std::io::BufReader::new(f);
+    let mut is_native = false;
 
     let papercraft = match ext.as_str() {
+        "craft" => {
+            is_native = true;
+            Papercraft::load(f)
+                .with_context(|| format!("Error reading Papercraft file {}", file_name.display()))?
+        }
         "pdo" => {
             let importer = pepakura::PepakuraImporter::new(f)
                 .with_context(|| format!("Error reading Pepakura file {}", file_name.display()))?;
@@ -124,5 +132,5 @@ pub fn import_model_file(file_name: &Path) -> Result<Papercraft> {
             Papercraft::import(importer)
         }
     };
-    Ok(papercraft)
+    Ok((papercraft, is_native))
 }

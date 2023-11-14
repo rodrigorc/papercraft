@@ -46,11 +46,8 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 /// Long
 struct Cli {
-    #[arg(value_name = "CRAFT_FILE")]
+    #[arg(value_name = "MODEL_FILE")]
     name: Option<PathBuf>,
-
-    #[arg(short, long, value_name = "OBJ_FILE")]
-    import: Option<PathBuf>,
 
     #[arg(long, help = "Uses Dear ImGui light theme instead of the default dark one")]
     light: bool,
@@ -181,15 +178,12 @@ fn main() {
     let mut data = PapercraftContext::from_papercraft(Papercraft::empty());
     let mut cmd_file_action = match cli {
         Cli { name: Some(name), read_only: false, .. }  => {
-            Some((FileAction::OpenCraft, name))
+            Some((FileAction::ImportModel, name))
         }
         Cli { name: Some(name), read_only: true, .. }  => {
             // This will be rewritten when/if the file is loaded, but setting it here avoids a UI flicker
             data.ui.mode = MouseMode::ReadOnly;
             Some((FileAction::OpenCraftReadOnly, name))
-        }
-        Cli { import: Some(import), .. }  => {
-            Some((FileAction::ImportObj, import))
         }
         _ => { None }
     };
@@ -513,7 +507,7 @@ enum FileAction {
     OpenCraft,
     OpenCraftReadOnly,
     SaveAsCraft,
-    ImportObj,
+    ImportModel,
     UpdateObj,
     ExportObj,
     GeneratePrintable,
@@ -525,7 +519,7 @@ impl FileAction {
             FileAction::OpenCraft |
             FileAction::OpenCraftReadOnly => "Opening...",
             FileAction::SaveAsCraft => "Saving...",
-            FileAction::ImportObj => "Importing...",
+            FileAction::ImportModel => "Importing...",
             FileAction::UpdateObj => "Updating...",
             FileAction::ExportObj => "Exporting...",
             FileAction::GeneratePrintable => "Generating...",
@@ -581,8 +575,8 @@ struct MenuActions {
     open: BoolWithConfirm,
     save: bool,
     save_as: bool,
-    import_obj: BoolWithConfirm,
-    update_obj: BoolWithConfirm,
+    import_model: BoolWithConfirm,
+    update_model: BoolWithConfirm,
     export_obj: bool,
     generate_printable: bool,
     quit: BoolWithConfirm,
@@ -1235,11 +1229,11 @@ impl GlobalContext {
                     menu_actions.save_as = true;
                 }
                 if self.modifiable() {
-                    if ui.menu_item("Import OBJ...") {
-                        menu_actions.import_obj = self.check_modified();
+                    if ui.menu_item("Import model...") {
+                        menu_actions.import_model = self.check_modified();
                     }
-                    if ui.menu_item("Update with new OBJ...") {
-                        menu_actions.update_obj = self.check_modified();
+                    if ui.menu_item("Update with new model...") {
+                        menu_actions.update_model = self.check_modified();
                     }
                 }
                 if ui.menu_item("Export OBJ...") {
@@ -1555,36 +1549,43 @@ impl GlobalContext {
             self.file_dialog = Some((fd, "Save as...", FileAction::SaveAsCraft));
             open_file_dialog = true;
         }
-        match menu_actions.import_obj {
+        const LOAD_MODEL_FILTER: &str = "\
+            All models (*.obj *.pdo *.stl) {.obj,.pdo,.stl},\
+            Wavefront (*.obj) {.obj},\
+            Pepakura (*.pdo) {.pdo},\
+            Stl (*.stl) {.stl},\
+            All files {.*}\
+            ";
+        match menu_actions.import_model {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(ui,
                     "Import model",
                     "The model has not been save, continue anyway?",
-                    |a| a.import_obj = BoolWithConfirm::Confirmed
+                    |a| a.import_model = BoolWithConfirm::Confirmed
                 );
             }
             BoolWithConfirm::Confirmed => {
                 let fd = imgui_filedialog::Builder::new("fd")
-                    .filter("Wavefront (*.obj) {.obj},All files {.*}")
+                    .filter(LOAD_MODEL_FILTER)
                     .path(&self.last_path)
                     .flags(imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG)
                     .open();
-                self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportObj));
+                self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportModel));
                 open_file_dialog = true;
             }
             BoolWithConfirm::None => {}
         }
-        match menu_actions.update_obj {
+        match menu_actions.update_model {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(ui,
                     "Update model",
                     "This model is not saved and this operation cannot be undone.\nContinue anyway?",
-                    |a| a.update_obj = BoolWithConfirm::Confirmed
+                    |a| a.update_model = BoolWithConfirm::Confirmed
                 );
             }
             BoolWithConfirm::Confirmed => {
                 let fd = imgui_filedialog::Builder::new("fd")
-                    .filter("Wavefront (*.obj) {.obj},All files {.*}")
+                    .filter(LOAD_MODEL_FILTER)
                     .path(&self.last_path)
                     .flags(imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG)
                     .open();
@@ -1959,10 +1960,15 @@ impl GlobalContext {
                 self.data.modified = false;
                 self.file_name = Some(file_name.to_owned());
             }
-            FileAction::ImportObj => {
-                self.import_obj(file_name)?;
-                self.data.modified = true;
-                self.file_name = None;
+            FileAction::ImportModel => {
+                let is_native = self.import_obj(file_name)?;
+                if is_native {
+                    // just like "open"
+                    self.file_name = Some(file_name.to_owned());
+                } else {
+                    self.data.modified = true;
+                    self.file_name = None;
+                }
             }
             FileAction::UpdateObj => {
                 self.update_obj(file_name)?;
@@ -1992,15 +1998,15 @@ impl GlobalContext {
             .with_context(|| format!("Error saving file {}", file_name.display()))?;
         Ok(())
     }
-    fn import_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
-        let papercraft = import_model_file(file_name)?;
+    fn import_obj(&mut self, file_name: &Path) -> anyhow::Result<bool> {
+        let (papercraft, is_native) = import_model_file(file_name)?;
         self.data = PapercraftContext::from_papercraft(papercraft);
         self.data.reset_views(self.sz_scene, self.sz_paper);
         self.rebuild = RebuildFlags::all();
-        Ok(())
+        Ok(is_native)
     }
     fn update_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
-        let mut new_papercraft = import_model_file(file_name)?;
+        let (mut new_papercraft, _) = import_model_file(file_name)?;
         new_papercraft.update_from_obj(self.data.papercraft());
 
         // Preserve the main user visible settings

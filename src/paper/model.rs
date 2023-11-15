@@ -396,6 +396,9 @@ impl Model {
         let (v0, v1, _) = self[e.f0].vertices_with_edges().find(|&(_, _, e)| e == i_edge).unwrap();
         (self[v0].pos, self[v1].pos)
     }
+    pub fn num_vertices(&self) -> usize {
+        self.vertices.len()
+    }
     pub fn num_edges(&self) -> usize {
         self.edges.len()
     }

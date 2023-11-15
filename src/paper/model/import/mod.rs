@@ -1,6 +1,7 @@
 use std::io::{BufRead, Read};
+use std::panic::catch_unwind;
 use std::path::Path;
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Result, anyhow, Context, bail};
 
 use super::{PaperOptions, Vertex, VertexIndex, Texture, EdgeStatus, Model, Island, MaterialIndex};
 use crate::paper::{PageOffset, FlapSide, Papercraft};
@@ -92,6 +93,19 @@ pub trait Importer: Sized {
 
 // Returns (model, is_native_format)
 pub fn import_model_file(file_name: &Path) -> Result<(Papercraft, bool)> {
+    // Models have a lot of indices and unwraps, a corrupted file could easily panic
+    match catch_unwind(|| { import_model_file_priv(file_name) }) {
+        Ok(res) => res,
+        Err(err) => {
+            if let Some(msg) = err.downcast_ref::<&str>() {
+                bail!("Panic importing the model '{}'!\n{}", file_name.display(), msg);
+            } else {
+                bail!("Panic importing the model '{}'!", file_name.display());
+            }
+        }
+    }
+}
+pub fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
     let ext = match file_name.extension() {
         None => String::new(),
         Some(ext) => {

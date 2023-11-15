@@ -1986,7 +1986,7 @@ impl GlobalContext {
                 self.file_name = Some(file_name.to_owned());
             }
             FileAction::ImportModel => {
-                let is_native = self.import_obj(file_name)?;
+                let is_native = self.import_model(file_name)?;
                 if is_native {
                     // just like "open"
                     self.file_name = Some(file_name.to_owned());
@@ -2026,7 +2026,7 @@ impl GlobalContext {
             .with_context(|| format!("Error saving file {}", file_name.display()))?;
         Ok(())
     }
-    fn import_obj(&mut self, file_name: &Path) -> anyhow::Result<bool> {
+    fn import_model(&mut self, file_name: &Path) -> anyhow::Result<bool> {
         let (papercraft, is_native) = import_model_file(file_name)?;
         self.data = PapercraftContext::from_papercraft(papercraft);
         self.data.reset_views(self.sz_scene, self.sz_paper);

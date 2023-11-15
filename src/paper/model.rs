@@ -180,7 +180,7 @@ impl Serialize for Edge {
         // versions.
         let model = unsafe { &*SER_MODEL.get().unwrap() };
         let i_edge = model.edge_index(self);
-        let (v0, v1, _) = model[self.f0].vertices_with_edges().find(|&(_, _, e)| e == i_edge).unwrap();
+        let (v0, v1) = model[self.f0].vertices_of_edge(i_edge).unwrap();
 
         let mut x = ser.serialize_struct("Edge", 4)?;
         x.serialize_field("f0", &self.f0)?;
@@ -393,7 +393,7 @@ impl Model {
     }
     pub fn edge_pos(&self, e: &Edge) -> (Vector3, Vector3) {
         let i_edge = self.edge_index(e);
-        let (v0, v1, _) = self[e.f0].vertices_with_edges().find(|&(_, _, e)| e == i_edge).unwrap();
+        let (v0, v1) = self[e.f0].vertices_of_edge(i_edge).unwrap();
         (self[v0].pos, self[v1].pos)
     }
     pub fn num_vertices(&self) -> usize {
@@ -492,6 +492,12 @@ impl Face {
                 let v1 = self.vertices[(i + 1) % self.vertices.len()];
                 (v0, v1, e)
             })
+    }
+    pub fn vertices_of_edge(&self, i_edge: EdgeIndex) -> Option<(VertexIndex, VertexIndex)> {
+        let i = self.edges.iter().position(|i_e| *i_e == i_edge)?;
+        let v0 = self.vertices[i];
+        let v1 = self.vertices[(i + 1) % self.vertices.len()];
+        Some((v0, v1))
     }
     pub fn opposite_edge(&self, i_edge: EdgeIndex) -> VertexIndex {
         let i = self.edges.iter().position(|e| *e == i_edge).unwrap();

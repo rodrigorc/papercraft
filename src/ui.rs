@@ -451,7 +451,7 @@ impl PapercraftContext {
         if size == 0.0 {
             return;
         }
-        let line_dash = ((p1.pos - p0.pos).magnitude() / size).round() + 0.5;
+        let line_dash = (p0.pos.distance(p1.pos) / size).round() + 0.5;
         p1.line_dash = p0.line_dash + line_dash;
     }
     fn paper_draw_face(
@@ -1074,7 +1074,7 @@ impl PapercraftContext {
                             width_right: line_width,
                         },
                     ];
-                    link_line[1].line_dash = (link_line[1].pos - link_line[0].pos).magnitude();
+                    link_line[1].line_dash = link_line[0].pos.distance(link_line[1].pos);
                     edge_sel_2d.extend_from_slice(&link_line);
                 } else {
                     // If there is no face_b it is a rim, highlight it specially
@@ -1485,7 +1485,7 @@ impl PapercraftContext {
             // Rotate island
             let center = *self.rotation_center.get_or_insert(pos);
             //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
-            if (pos - center).magnitude() > 10.0 {
+            if center.distance2(pos) > 10.0_f32.powi(2) {
                 let pcenter = self.ui.trans_paper.paper_click(size, center);
                 let ppos_prev = self.ui.trans_paper.paper_click(size, pos - delta);
                 let ppos = self.ui.trans_paper.paper_click(size, pos);

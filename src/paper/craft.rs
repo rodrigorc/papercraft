@@ -915,7 +915,7 @@ impl Papercraft {
         let scale = self.options.scale;
         let p0 = plane.project(&v0, scale);
         let p1 = plane.project(&v1, scale);
-        let base_len = (p1 - p0).magnitude();
+        let base_len = p0.distance(p1);
         let mut width = self.options.flap_width;
         let base2 = base_len - 2.0 * tan * width;
         let triangular = base2 <= 0.0;

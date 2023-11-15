@@ -274,9 +274,8 @@ impl Papercraft {
                     continue;
                 }
                 let face_b = &self.model[i_fb];
-                let (mut i_v0b, mut i_v1b, _) = face_b
-                    .vertices_with_edges()
-                    .find(|(_, _, e)| *e == i_edge)
+                let (mut i_v0b, mut i_v1b) = face_b
+                    .vertices_of_edge(i_edge)
                     .unwrap();
 
                 // Is it a normal or inverted edge?

@@ -1,5 +1,5 @@
 use std::f32::consts::PI;
-use cgmath::{Zero, InnerSpace, Rad};
+use cgmath::{Zero, InnerSpace, MetricSpace, Rad};
 
 pub type Vector2 = cgmath::Vector2<f32>;
 pub type Vector3 = cgmath::Vector3<f32>;
@@ -251,11 +251,11 @@ pub fn line_segment_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3
     if l1_closest < 0.0 {
         l1_closest = 0.0;
         let p = line0.0 + (line0.1 - line0.0) * l0_closest;
-        distance2 = (line1.0 - p).magnitude2();
+        distance2 = p.distance2(line1.0);
     } else if l1_closest > 1.0 {
         l1_closest = 1.0;
         let p = line0.0 + (line0.1 - line0.0) * l0_closest;
-        distance2 = (line1.1 - p).magnitude2();
+        distance2 = p.distance2(line1.1);
     }
     (l0_closest, l1_closest, distance2)
 }
@@ -282,9 +282,9 @@ pub fn point_line_side(p: Vector2, line: (Vector2, Vector2)) -> bool {
 pub fn point_segment_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
     let (o, d) = point_line_distance(p, line);
     if o < 0.0 {
-        (0.0, (p - line.0).magnitude())
+        (0.0, p.distance(line.0))
     } else if o > 1.0 {
-        (1.0, (p - line.1).magnitude())
+        (1.0, p.distance(line.1))
     } else {
         (o, d)
     }

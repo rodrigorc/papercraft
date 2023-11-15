@@ -2704,7 +2704,7 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
         while let Some((next, _)) = cuts
             .iter()
             .enumerate()
-            .map(|(idx, (v0, _))| (idx, (p.1 - v0).magnitude2()))
+            .map(|(idx, (v0, _))| (idx, v0.distance2(p.1)))
             .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
         {
             p = cuts.swap_remove(next);

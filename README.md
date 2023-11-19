@@ -11,6 +11,11 @@ The interface looks like this:
 
 ![UI](https://user-images.githubusercontent.com/1128630/212970567-75e869b7-7024-4d0c-95f7-58fd447fb67b.png)
 
+The printable document will look like this (just a piece):
+
+![PDF](https://github.com/rodrigorc/papercraft/assets/1128630/9cef6e5e-da72-4713-985f-a419faa68f8d)
+
+
 And the final model is:
 
 <img src="https://user-images.githubusercontent.com/1128630/212487900-c4670eb1-1eff-49a3-9843-5ca23b9d5fc7.jpg" width="300">
@@ -73,7 +78,7 @@ You can also move the pieces in any other mode, but this one disables clicking o
 
 In the menu Edit / Document properties you can edit many options related to the document as a whole:
 
-![Document properties](https://github.com/rodrigorc/papercraft/assets/1128630/b85a669b-af9b-4e97-9b99-95d9587ea444)
+![Document properties](https://github.com/rodrigorc/papercraft/assets/1128630/f60aa959-4f23-4383-a6d5-4bb1a4077212)
 
 * Model scale: the units in the original OBJ model are assumed to be millimeters. This value scales up or down that measure to make the final model bigger or smaller.
   You can check the final size of the model in the information box below.
@@ -84,6 +89,7 @@ In the menu Edit / Document properties you can edit many options related to the 
     * Half-textured: as textured but fading to white at the far edge. It makes them more easy to see, particularly if there are many small faces.
     * White: flaps are colorless.
     * None: no flaps. How will you glue the pieces together?
+* Shadow flaps: If it is greater than 0, it indicated the darkness of the _shadow flaps_. These are painted over the opposite side of a flap, and are particularly useful if you glue the tabs on the outside of the model, instead of the traditional inside.
 * Flap width: the maximum with of the flap, in millimeters. The may be smaller if the neighbor face is smaller.
 * Flap angle: the angle of the sides of the flap, in degrees. 90 will make them rectangles. 45 is a more useful value.
   Real angles may be smaller depending on the shape of the neighbor face.
@@ -98,6 +104,7 @@ In the menu Edit / Document properties you can edit many options related to the 
 * Fold length: when using in or out segments, the length of the segment.
 * Line width: with of the folded printed lines, in millimeters.
 * Hidden fold angle: edges that separate faces with an angle below this one will not be drawn. It is 0 by default meaning that all edges will be printed. It affects only angles between faces of the model, it will never hide the fold line for a flap; if you want to hide those set the "Fold style" to "None" instead.
+* Edge id position: Complex models are difficult to build. In order to help the user, each edge to be glued can be annotated with an "edge id". Each edge id is composed by the opposite piece name (one or a few letters), a colon and the edge number. Edges with the same number are to be glued together. With this option you can choose if you want to print the edge ids and piece names outside of the model, to keep your texture untainted, or inside the model, to keep the ids even after you've cut the pieces out. Or you can choose to omit the ids and not to print them.
 * Pages: the number of pages of the output printable document.
 * Columns: how many columns are used to order the pages in the 2D view. It does not have any effect in the final printable file.
 * Print Papercraft signature. You can disable the signature that is printed in the printable document linking to this Internet page.
@@ -114,7 +121,10 @@ These options do the expected thing:
 * File/Open: opens an existing Papercraft file. This program uses the `.craft` extension.
 * File/Save: saves the current project as a `.craft` file.
 * File/Save as: saves the project with a different name.
-* File/Import OBJ: creates a new project using a Wavefront OBJ file as model.
+* File/Import model: creates a new project using by importing an existing 3D model. Currently Papercraft understands the following formats:
+  * Wavefrom OBJ, with textures.
+  * Pepakura PDO, with textures and piece unwrapping.
+  * STL models, no textures here, just the geometry.
 * File/Quit: closes this program.
 * Edit/Undo: undoes the last action.
 * Edit/Document properties: opens the "Document properties" dialog.
@@ -124,9 +134,9 @@ These options do the expected thing:
 
 More interesting are the following:
 
-### File/Update with new object
+### File/Update with new model
 
-If you are unwrapping a model and you realize that there is some part that you don't like, you have to go back to your 3D editing tool and re-export the OBJ file.
+If you are unwrapping a model and you realize that there is some part that you don't like, you have to go back to your 3D editing tool and re-export the model file.
 Then, do you have to start the Papercraft unwrapping from scratch? Of course not! Just use this option to update the current Papercraft projects with an updated 3D model.
 It will try to keep the current work as much as it can.
 

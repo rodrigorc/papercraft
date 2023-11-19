@@ -1,6 +1,6 @@
 [package]
 name = "papercraft"
-version = "2.3.0"
+version = "2.4.0"
 authors = ["Rodrigo Rivas Costa <rodrigorivascosta@gmail.com>"]
 edition = "2021"
 license = "GPL-3.0-or-later"
@@ -14,10 +14,10 @@ lto = true
 
 [build-dependencies]
 cc = "1"
-bindgen = "0.66"
+bindgen = "0.69"
 
 [dependencies]
-cairo-rs = { version = "0.17", features = ["pdf", "png", "v1_16"] }
+cairo-rs = { version = "0.18", features = ["pdf", "png", "v1_16"] }
 gl_loader = "0.1"
 cgmath = "0.18"
 anyhow = "1"

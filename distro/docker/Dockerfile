@@ -7,6 +7,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.rs
 # Ubuntu 18.04 does not ship cairo-1.16 that we need, so compile it locally
 COPY build_cairo ./
 RUN ./build_cairo
+# Rust 1.71
+RUN sh rustup.rs -y --profile minimal
+# Rust 1.74
 RUN sh rustup.rs -y --profile minimal
 COPY linuxdeploy ./
 COPY makeappimage ./

@@ -5,7 +5,7 @@ cd docker
 
 # There is no linuxdeploy here, you have to get it from elsewhere, in this case from the path
 cp "$(which linuxdeploy)" .
-docker build --tag papercraft .
+docker buildx build --tag papercraft .
 rm linuxdeploy
 
 COMMIT="${1:-HEAD}"

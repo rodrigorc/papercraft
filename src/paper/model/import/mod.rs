@@ -76,10 +76,7 @@ pub trait Importer: Sized {
     fn build_vertices(&self) -> (bool, Vec<Vertex>);
     fn face_count(&self) -> usize;
 
-    // Ideally I'd like to write: fn faces<'s>(&'s self) -> impl Iterator<Item = (&'s [VertexIndex], MaterialIndex)> + 's;
-    // but that can't be done yet in stable Rust.
-    // We could return a `Box<dyn Iterator>`, if really needed, but for now the callback is good enough
-    fn for_each_face(&self, f: impl FnMut(&[VertexIndex], MaterialIndex));
+    fn faces<'s>(&'s self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's;
 
     // Returns at least 1 texture, maybe default.
     // As a risky optimization, it can consume the texture data, call only once

@@ -89,10 +89,10 @@ impl Importer for PepakuraImporter {
             .map(|o| o.faces.len())
             .sum()
     }
-    fn for_each_face(&self, mut f: impl FnMut(&[VertexIndex], MaterialIndex)) {
-        for (obj_id, obj) in self.pdo.objects().iter().enumerate() {
+    fn faces<'s>(&'s self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+        self.pdo.objects().iter().enumerate().flat_map(move |(obj_id, obj)| {
             let obj_id = obj_id as u32;
-            for (face_id, face) in obj.faces.iter().enumerate() {
+            obj.faces.iter().enumerate().map(move |(face_id, face)| {
                 let face_id = face_id as u32;
                 let verts: Vec<VertexIndex> = (0 .. face.verts.len())
                     .map(|v_f| {
@@ -104,9 +104,9 @@ impl Importer for PepakuraImporter {
                 // We will add a default material at the end of the textures, so map any out-of bounds to that
                 let mat_index = face.mat_index.min(self.pdo.materials().len() as u32);
                 let mat = MaterialIndex::from(mat_index as usize);
-                f(&verts, mat)
-            }
-        }
+                (verts, mat)
+            })
+        })
     }
     fn build_textures(&self) -> Vec<Texture> {
         let mut textures: Vec<_> = self.pdo.materials()

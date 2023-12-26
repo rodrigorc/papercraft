@@ -109,16 +109,16 @@ impl Importer for WaveObjImporter {
     fn face_count(&self) -> usize {
         self.obj.faces().len()
     }
-    fn for_each_face(&self, mut f: impl FnMut(&[VertexIndex], MaterialIndex)) {
-        for face in self.obj.faces() {
+    fn faces<'s>(&'s self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+        self.obj.faces().iter().map(|face| {
             let verts: Vec<_> = face
                 .vertices()
                 .iter()
                 .map(|fv| VertexIndex::from(self.all_vertices.iter().position(|v| v == fv).unwrap()))
                 .collect();
             let mat = MaterialIndex::from(face.material());
-            f(&verts, mat)
-        }
+            (verts, mat)
+        })
     }
     fn build_textures(&self) -> Vec<Texture> {
         let mut textures: Vec<_> = self.obj.materials().map(|s| {

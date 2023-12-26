@@ -227,7 +227,9 @@ impl Model {
         let mut edge_map: Vec<(I::VertexId, I::VertexId)> = Vec::with_capacity(num_faces * 3 / 2);
 
         let mut face_source_id = 0;
-        obj.for_each_face(|face_verts, face_mat| {
+        'face_loop:
+        for (face_verts, face_mat) in obj.faces() {
+            let face_verts = face_verts.as_ref();
             face_source_id += 1;
             let to_tess: Vec<_> = face_verts
                 .iter()
@@ -288,7 +290,7 @@ impl Model {
                     [_, EdgeCreation::Existing(a), EdgeCreation::Existing(b)]
                         if a == b =>
                     {
-                        return;
+                        continue 'face_loop;
                     }
                     _ => {}
                 }
@@ -328,7 +330,7 @@ impl Model {
                     edges,
                 });
             }
-        });
+        }
 
         let textures = obj.build_textures();
         let mut model = Model {

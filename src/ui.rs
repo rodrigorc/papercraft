@@ -386,7 +386,7 @@ impl PapercraftContext {
                 .map(|(_, v)| v.pos())
         );
         let size = (v_max.x - v_min.x).max(v_max.y - v_min.y).max(v_max.z - v_min.z);
-        let mscale = Matrix4::from_scale(1.0 / size);
+        let mscale = Matrix4::from_scale(if size == 0.0 { 1.0 } else { 1.0 / size });
         let center = (v_min + v_max) / 2.0;
         let mcenter = Matrix4::from_translation(-center);
         let obj = mscale * mcenter;

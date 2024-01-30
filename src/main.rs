@@ -72,8 +72,9 @@ struct Cli {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    env_logger::init();
 
+    let cli = Cli::parse();
     let event_loop = EventLoopBuilder::new().build().unwrap();
     let window = MainWindow::new(&event_loop, "Papercraft").unwrap();
 

@@ -147,8 +147,26 @@ fn main() {
         title: String::new(),
     }));
     unsafe { install_crash_backup(event_loop.create_proxy(), &ctx); }
-
     event_loop.run(move |event, w| {
+        match &event {
+            winit::event::Event::NewEvents(winit::event::StartCause::Init) => {
+                // This fixes "keyboard non-responsive on startup because it doesn't detect FocusGained...":
+                // https://github.com/rust-windowing/winit/issues/1558
+                // https://github.com/rust-windowing/winit/issues/1558
+                //
+                use easy_imgui_window::winit::raw_window_handle::{
+                    HasWindowHandle, RawWindowHandle::{Xcb, Xlib},
+                };
+                let w = window.main_window().window();
+                if let Ok(h) = w.window_handle() {
+                    if matches!(h.as_raw(), Xcb(_) | Xlib(_)) {
+                        w.set_visible(false);
+                        w.set_visible(true);
+                    }
+                }
+            }
+            _ => {}
+        }
         // Main loop, if it panics or somewhat crashes, try to save a backup
         let mut ctx = ctx.borrow_mut();
 

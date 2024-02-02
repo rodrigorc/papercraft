@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use std::ffi::CString;
 use bitflags::bitflags;
 use easy_imgui_window::easy_imgui as imgui;
+use std::ffi::CString;
 
 mod fd {
     #![allow(non_upper_case_globals)]
@@ -50,7 +50,7 @@ pub struct Builder<'a> {
     path: &'a str,
     file: &'a str,
     count_selection_max: i32,
-    flags: Flags
+    flags: Flags,
 }
 impl<'a> Builder<'a> {
     #[must_use]
@@ -103,7 +103,7 @@ impl<'a> Builder<'a> {
                 file.as_ptr(),
                 self.count_selection_max,
                 std::ptr::null_mut(),
-                self.flags.bits() as _
+                self.flags.bits() as _,
             );
         };
         FileDialog { ptr }
@@ -112,11 +112,15 @@ impl<'a> Builder<'a> {
 
 impl FileDialog {
     pub fn is_opened(&self) -> bool {
-        unsafe {
-            fd::IGFD_IsOpened(self.ptr)
-        }
+        unsafe { fd::IGFD_IsOpened(self.ptr) }
     }
-    pub fn display<'a>(&'a mut self, key: &str, flags: imgui::WindowFlags, min_size: imgui::Vector2, max_size: imgui::Vector2) -> Option<DisplayToken<'a>> {
+    pub fn display<'a>(
+        &'a mut self,
+        key: &str,
+        flags: imgui::WindowFlags,
+        min_size: imgui::Vector2,
+        max_size: imgui::Vector2,
+    ) -> Option<DisplayToken<'a>> {
         let key = CString::new(key).unwrap();
         let ok = unsafe {
             fd::IGFD_DisplayDialog(
@@ -137,7 +141,9 @@ impl FileDialog {
 
 impl Drop for FileDialog {
     fn drop(&mut self) {
-        unsafe { fd::IGFD_Destroy(self.ptr); }
+        unsafe {
+            fd::IGFD_Destroy(self.ptr);
+        }
     }
 }
 
@@ -160,20 +166,19 @@ unsafe fn str_from_ptr(sz: *const std::ffi::c_char) -> String {
         String::new()
     } else {
         let cstr = std::ffi::CStr::from_ptr(sz);
-        std::str::from_utf8(cstr.to_bytes()).ok().map(String::from).unwrap_or_default()
+        std::str::from_utf8(cstr.to_bytes())
+            .ok()
+            .map(String::from)
+            .unwrap_or_default()
     }
 }
 
 impl DisplayToken<'_> {
     pub fn ok(&self) -> bool {
-        unsafe {
-            fd::IGFD_IsOk(self.fd.ptr)
-        }
+        unsafe { fd::IGFD_IsOk(self.fd.ptr) }
     }
     pub fn readonly(&self) -> bool {
-        unsafe {
-            fd::IGFD_IsReadonly(self.fd.ptr)
-        }
+        unsafe { fd::IGFD_IsReadonly(self.fd.ptr) }
     }
     pub fn file_path_name(&self, mode: ResultMode) -> Option<String> {
         unsafe {
@@ -200,12 +205,8 @@ impl DisplayToken<'_> {
         }
     }
     pub fn selection(&self, mode: ResultMode) -> Selection {
-        let sel = unsafe {
-            fd::IGFD_GetSelection(self.fd.ptr, mode.bits() as i32)
-        };
-        Selection {
-            sel,
-        }
+        let sel = unsafe { fd::IGFD_GetSelection(self.fd.ptr, mode.bits() as i32) };
+        Selection { sel }
     }
     pub fn close(self) {
         unsafe {
@@ -222,10 +223,7 @@ impl<'a> IntoIterator for &'a Selection {
     type IntoIter = SelectionIterator<'a>;
     type Item = (String, String);
     fn into_iter(self) -> Self::IntoIter {
-        SelectionIterator {
-            sel: self,
-            pos: 0,
-        }
+        SelectionIterator { sel: self, pos: 0 }
     }
 }
 
@@ -258,5 +256,3 @@ impl Iterator for SelectionIterator<'_> {
         }
     }
 }
-
-

@@ -2,8 +2,8 @@
 // * https://github.com/dpethes/pdo-tools.git/doc/pdo_spec_draft.txt
 // Many thanks to "dpethes" for the work!
 
-use std::{io::Read, cell::Cell};
 use anyhow::{anyhow, Result};
+use std::{cell::Cell, io::Read};
 
 use super::super::*;
 type Vector2 = cgmath::Vector2<f32>;
@@ -149,12 +149,12 @@ pub struct Part {
 #[derive(Debug)]
 pub struct Line {
     pub hidden: bool,
-    pub type_: u32, //0: Cut, 1: mountain, 2: valley, >=3: invisible
+    pub type_: u32,        //0: Cut, 1: mountain, 2: valley, >=3: invisible
     pub first: (u32, u32), // (i_face, i_vertex)
     pub second: Option<(u32, u32)>,
 }
 
-impl <'r, R: Read> Reader<'r, R> {
+impl<'r, R: Read> Reader<'r, R> {
     fn read_bounding_box(&mut self) -> Result<BoundingBox> {
         let v0 = read_vector2_f64(self.rdr)?;
         let v1 = read_vector2_f64(self.rdr)?;
@@ -193,7 +193,7 @@ impl <'r, R: Read> Reader<'r, R> {
         let _coord = read_f64(self.rdr)?;
         let n_verts = read_u32(self.rdr)?;
         let mut verts = Vec::with_capacity(n_verts as usize);
-        for _ in 0 .. n_verts {
+        for _ in 0..n_verts {
             let i_v = read_u32(self.rdr)?;
             let pos2d = read_vector2_f64(self.rdr)?;
             let uv = read_vector2_f64(self.rdr)?;
@@ -201,12 +201,10 @@ impl <'r, R: Read> Reader<'r, R> {
             let width = read_f64(self.rdr)?;
             let a1 = read_f64(self.rdr)?;
             let a2 = read_f64(self.rdr)?;
-            let flap = flap.then(|| {
-                Flap {
-                    width: width as f32,
-                    angle1: Rad(a1 as f32),
-                    angle2: Rad(a2 as f32),
-                }
+            let flap = flap.then(|| Flap {
+                width: width as f32,
+                angle1: Rad(a1 as f32),
+                angle2: Rad(a2 as f32),
             });
 
             let mut _fold_info = [0; 24];
@@ -230,19 +228,19 @@ impl <'r, R: Read> Reader<'r, R> {
         let visible = read_bool(self.rdr)?;
         let n_vertices = read_u32(self.rdr)?;
         let mut vertices = Vec::with_capacity(n_vertices as usize);
-        for _ in 0 .. n_vertices {
+        for _ in 0..n_vertices {
             let v = read_vector3_f64(self.rdr)?;
             vertices.push(Vertex { v });
         }
         let n_faces = read_u32(self.rdr)?;
         let mut faces = Vec::with_capacity(n_faces as usize);
-        for _ in 0 .. n_faces {
+        for _ in 0..n_faces {
             let face = self.read_face()?;
             faces.push(face);
         }
         let n_edges = read_u32(self.rdr)?;
         let mut edges = Vec::with_capacity(n_edges as usize);
-        for _ in 0 .. n_edges {
+        for _ in 0..n_edges {
             let i_f1 = read_u32(self.rdr)?;
             let i_f2 = read_u32(self.rdr)?;
             let i_f2 = if i_f2 == u32::MAX { None } else { Some(i_f2) };
@@ -251,8 +249,10 @@ impl <'r, R: Read> Reader<'r, R> {
             let connected = read_u16(self.rdr)? != 0;
             let _nf = read_u32(self.rdr)?;
             edges.push(Edge {
-                i_f1, i_f2,
-                i_v1, i_v2,
+                i_f1,
+                i_f2,
+                i_v1,
+                i_v2,
                 connected,
             });
         }
@@ -266,10 +266,10 @@ impl <'r, R: Read> Reader<'r, R> {
     }
     fn read_material(&mut self) -> Result<Material> {
         let name = self.read_string()?;
-        for _ in 0 .. 16 {
+        for _ in 0..16 {
             let _color3d = read_f32(self.rdr)?;
         }
-        for _ in 0 .. 4 {
+        for _ in 0..4 {
             let _color2d = read_f32(self.rdr)?;
         }
         let textured = read_bool(self.rdr)?;
@@ -279,10 +279,7 @@ impl <'r, R: Read> Reader<'r, R> {
         } else {
             None
         };
-        Ok(Material {
-            name,
-            texture,
-        })
+        Ok(Material { name, texture })
     }
     fn read_part(&mut self) -> Result<Part> {
         let i_obj = read_u32(self.rdr)?;
@@ -294,7 +291,7 @@ impl <'r, R: Read> Reader<'r, R> {
         };
         let n_lines = read_u32(self.rdr)?;
         let mut lines = Vec::with_capacity(n_lines as usize);
-        for _ in 0 .. n_lines {
+        for _ in 0..n_lines {
             let line = self.read_line()?;
             lines.push(line);
         }
@@ -364,7 +361,7 @@ impl <'r, R: Read> Reader<'r, R> {
         if self.version >= 6 {
             let v6_lock = read_u32(self.rdr)?;
             dbg!(v6_lock);
-            for _ in 0 .. v6_lock {
+            for _ in 0..v6_lock {
                 let _ = read_u64(self.rdr)?;
             }
         } else if self.version == 5 {
@@ -380,47 +377,47 @@ impl <'r, R: Read> Reader<'r, R> {
 
         let n_objects = read_u32(self.rdr)?;
         let mut objs = Vec::with_capacity(n_objects as usize);
-        for _ in 0 .. n_objects {
+        for _ in 0..n_objects {
             let obj = self.read_object()?;
             objs.push(obj);
         }
         let n_materials = read_u32(self.rdr)?;
         let mut mats = Vec::with_capacity(n_materials as usize);
-        for _ in 0 .. n_materials {
+        for _ in 0..n_materials {
             let mat = self.read_material()?;
             mats.push(mat);
         }
 
         let has_unfold = read_bool(self.rdr)?;
-        let unfold =  if has_unfold {
+        let unfold = if has_unfold {
             let scale = read_f64(self.rdr)? as f32;
             let padding = read_bool(self.rdr)?;
             let bb = self.read_bounding_box()?;
             let n_parts = read_u32(self.rdr)?;
             let mut parts = Vec::with_capacity(n_parts as usize);
-            for _ in 0 .. n_parts {
+            for _ in 0..n_parts {
                 let part = self.read_part()?;
                 parts.push(part);
             }
             let n_texts = read_u32(self.rdr)?;
-            for _ in 0 .. n_texts {
+            for _ in 0..n_texts {
                 let _bb = self.read_bounding_box()?;
                 let _line_spacing = read_f64(self.rdr)?;
                 let _color = read_u32(self.rdr)?;
                 let _font_size = read_u32(self.rdr)?;
                 let _font_name = self.read_string()?;
                 let n_lines = read_u32(self.rdr)?;
-                for _ in 0 .. n_lines {
+                for _ in 0..n_lines {
                     let _text = self.read_string()?;
                 }
             }
             let n_images = read_u32(self.rdr)?;
-            for _ in 0 .. n_images {
+            for _ in 0..n_images {
                 let _bb = self.read_bounding_box()?;
                 let _tex = self.read_texture()?;
             }
             let n_images2 = read_u32(self.rdr)?;
-            for _ in 0 .. n_images2 {
+            for _ in 0..n_images2 {
                 let _bb = self.read_bounding_box()?;
                 let _tex = self.read_texture()?;
             }
@@ -435,9 +432,9 @@ impl <'r, R: Read> Reader<'r, R> {
         };
         if self.version >= 6 && unfold.as_ref().is_some_and(|u| !u.parts.is_empty()) {
             let n_unk = read_u32(self.rdr)?;
-            for _ in 0 .. n_unk {
+            for _ in 0..n_unk {
                 let n_parts = read_u32(self.rdr)?;
-                for _ in 0 .. n_parts {
+                for _ in 0..n_parts {
                     let _ = read_u32(self.rdr)?;
                 }
             }
@@ -450,7 +447,7 @@ impl <'r, R: Read> Reader<'r, R> {
         let hide_almost_flat = read_bool(self.rdr)?;
         let fold_line_hide_angle = read_u32(self.rdr)?;
         let _draw_white_dot = read_bool(self.rdr)?;
-        for _ in 0 .. 4 {
+        for _ in 0..4 {
             let _mountain_style = read_u32(self.rdr)?;
         }
         let page_type = read_u32(self.rdr)?;
@@ -474,12 +471,13 @@ impl <'r, R: Read> Reader<'r, R> {
             _ /* unk */=> Vector2::new(210.0, 297.0),
         };
         let orientation = read_u32(self.rdr)?;
-        if orientation != 0 && page_size.y > page_size.x { //landscape
+        if orientation != 0 && page_size.y > page_size.x {
+            //landscape
             std::mem::swap(&mut page_size.x, &mut page_size.y);
         }
         let margin_side = read_u32(self.rdr)?;
         let margin_top = read_u32(self.rdr)?;
-        for _ in 0 .. 12 {
+        for _ in 0..12 {
             let _fold_pattern = read_f64(self.rdr)?;
         }
         let _outline_padding = read_bool(self.rdr)?;

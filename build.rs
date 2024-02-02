@@ -1,10 +1,10 @@
-use std::io::Result;
-use std::path::{PathBuf, Path};
 use std::env;
+use std::io::Result;
+use std::path::{Path, PathBuf};
 
 fn main() -> Result<()> {
     build_resource()?;
-	build_imgui_filedialog()?;
+    build_imgui_filedialog()?;
     Ok(())
 }
 
@@ -16,19 +16,25 @@ fn build_resource() -> Result<()> {
         let repo = env!("CARGO_PKG_REPOSITORY");
         let output_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| ".".to_string());
         let header = std::path::PathBuf::from(&output_dir).join("papercraft.h");
-        std::fs::write(&header,
-            format!(r#"
+        std::fs::write(
+            &header,
+            format!(
+                r#"
 #define PC_PROJECT "{name}"
 #define PC_VERSION "{version}"
 #define PC_REPO "{repo}"
-"#)
+"#
+            ),
         )?;
         let output = std::path::PathBuf::from(&output_dir).join("resource.o");
-        let status = std::process::Command::new(option_env!("WINDRES").expect("WINDRES envvar is undefined"))
-            .arg("-I").arg(&output_dir)
-            .arg("res/resource.rc")
-            .arg(&output)
-            .status()?;
+        let status = std::process::Command::new(
+            option_env!("WINDRES").expect("WINDRES envvar is undefined"),
+        )
+        .arg("-I")
+        .arg(&output_dir)
+        .arg("res/resource.rc")
+        .arg(&output)
+        .status()?;
         if !status.success() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -50,8 +56,7 @@ fn build_imgui_filedialog() -> Result<()> {
         dbg!(x);
     }
     let dep_imgui_path =
-        env::var("DEP_IMGUI_THIRD_PARTY")
-            .expect("DEP_IMGUI_THIRD_PARTY not defined");
+        env::var("DEP_IMGUI_THIRD_PARTY").expect("DEP_IMGUI_THIRD_PARTY not defined");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let igfd_path = "thirdparty/ImGuiFileDialog";
 
@@ -93,8 +98,14 @@ fn build_imgui_filedialog() -> Result<()> {
         .define("IGFD_EXIT_KEY", "ImGuiKey_Escape")
         .define("FILTER_COMBO_WIDTH", "200.0f")
         .define("dirNameString", r#""Directory Path:""#)
-        .define("OverWriteDialogTitleString", r#""The file already exists!""#)
-        .define("OverWriteDialogMessageString", r#""Would you like to overwrite it?""#)
+        .define(
+            "OverWriteDialogTitleString",
+            r#""The file already exists!""#,
+        )
+        .define(
+            "OverWriteDialogMessageString",
+            r#""Would you like to overwrite it?""#,
+        )
         .define("okButtonWidth", "100.0f")
         .define("cancelButtonWidth", "100.0f")
         .define("fileSizeBytes", r#""B""#)
@@ -112,4 +123,3 @@ fn build_imgui_filedialog() -> Result<()> {
     }
     Ok(())
 }
-

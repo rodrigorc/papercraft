@@ -42,7 +42,12 @@ fn compute_island_to_faces_map(pc: &Papercraft) -> IslandFaceMap {
     new_faces_map
 }
 
-fn compute_island_map(new: &Papercraft, old: &Papercraft, new_map: &IslandFaceMap, old_map: &IslandFaceMap) -> FxHashMap<IslandKey, IslandKey> {
+fn compute_island_map(
+    new: &Papercraft,
+    old: &Papercraft,
+    new_map: &IslandFaceMap,
+    old_map: &IslandFaceMap,
+) -> FxHashMap<IslandKey, IslandKey> {
     let mut map = FxHashMap::default();
     for (i_island, _) in new.islands() {
         let new_faces = &new_map[&i_island];
@@ -87,8 +92,7 @@ impl Papercraft {
 
             let o_status = old_obj.edge_status(o);
             let i_status = self.edge_status(i);
-            if i_status != EdgeStatus::Hidden &&
-               o_status != EdgeStatus::Hidden {
+            if i_status != EdgeStatus::Hidden && o_status != EdgeStatus::Hidden {
                 edge_status_map.insert(i_edge, (o_status, o_cross));
             }
         }
@@ -96,7 +100,7 @@ impl Papercraft {
         //Apply the old status to the new model
         for (i_edge, (status, crossed)) in edge_status_map {
             match status {
-                EdgeStatus::Hidden => { /* should not happen */},
+                EdgeStatus::Hidden => { /* should not happen */ }
                 EdgeStatus::Joined => {
                     self.edge_join(i_edge, None);
                 }

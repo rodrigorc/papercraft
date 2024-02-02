@@ -6,7 +6,6 @@ use cgmath::Zero;
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
-
 pub struct WaveObjImporter {
     obj: data::Model,
     texture_map: FxHashMap<String, Cell<(String, DynamicImage)>>,
@@ -18,10 +17,10 @@ impl WaveObjImporter {
     pub fn new<R: BufRead>(f: R, file_name: &Path) -> Result<Self> {
         let (matlib, obj) = data::Model::from_reader(f)?;
         let matlib = match matlib {
-            Some(matlib) => {
-                Some(data::solve_find_matlib_file(matlib.as_ref(), file_name)
-                    .ok_or_else(|| anyhow!("{} matlib not found", matlib))?)
-            }
+            Some(matlib) => Some(
+                data::solve_find_matlib_file(matlib.as_ref(), file_name)
+                    .ok_or_else(|| anyhow!("{} matlib not found", matlib))?,
+            ),
             None => None,
         };
         let mut texture_map = FxHashMap::default();
@@ -29,13 +28,10 @@ impl WaveObjImporter {
         if let Some(matlib) = matlib {
             // Textures are read from the .mtl file
             let err_mtl = || format!("Error reading matlib file {}", matlib.display());
-            let f = std::fs::File::open(&matlib)
-                .with_context(err_mtl)?;
+            let f = std::fs::File::open(&matlib).with_context(err_mtl)?;
             let f = std::io::BufReader::new(f);
 
-            for lib in data::Material::from_reader(f)
-                .with_context(err_mtl)?
-            {
+            for lib in data::Material::from_reader(f).with_context(err_mtl)? {
                 if let Some(map) = lib.map() {
                     let err_map = || format!("Error reading texture file {map}");
                     if let Some(map) = data::solve_find_matlib_file(map.as_ref(), &matlib) {
@@ -45,23 +41,30 @@ impl WaveObjImporter {
                             .with_context(err_map)?
                             .decode()
                             .with_context(err_map)?;
-                        let map_name = map.file_name().and_then(|f| f.to_str())
+                        let map_name = map
+                            .file_name()
+                            .and_then(|f| f.to_str())
                             .ok_or_else(|| anyhow!("Invalid texture name"))?;
-                        texture_map.insert(lib.name().to_owned(), Cell::new((map_name.to_owned(), img)));
+                        texture_map
+                            .insert(lib.name().to_owned(), Cell::new((map_name.to_owned(), img)));
                     } else {
-                        return Err(anyhow!("{} texture from {} matlib not found", map, matlib.display()));
+                        return Err(anyhow!(
+                            "{} texture from {} matlib not found",
+                            map,
+                            matlib.display()
+                        ));
                     }
                 }
             }
         }
 
         // Remove duplicated vertices by adding them into a set
-        let all_vertices: FxHashSet<data::FaceVertex> =
-            obj.faces()
-                .iter()
-                .flat_map(|f| f.vertices())
-                .copied()
-                .collect();
+        let all_vertices: FxHashSet<data::FaceVertex> = obj
+            .faces()
+            .iter()
+            .flat_map(|f| f.vertices())
+            .copied()
+            .collect();
         //Fix the order into a vector, indexed by VertexIndex
         let all_vertices = Vec::from_iter(all_vertices);
 
@@ -81,7 +84,8 @@ impl Importer for WaveObjImporter {
     }
     fn build_vertices(&self) -> (bool, Vec<Vertex>) {
         let mut has_normals = true;
-        let vs = self.all_vertices
+        let vs = self
+            .all_vertices
             .iter()
             .map(|fv| {
                 let uv = if let Some(t) = fv.t() {
@@ -109,31 +113,39 @@ impl Importer for WaveObjImporter {
     fn face_count(&self) -> usize {
         self.obj.faces().len()
     }
-    fn faces<'s>(&'s self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+    fn faces<'s>(
+        &'s self,
+    ) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
         self.obj.faces().iter().map(|face| {
             let verts: Vec<_> = face
                 .vertices()
                 .iter()
-                .map(|fv| VertexIndex::from(self.all_vertices.iter().position(|v| v == fv).unwrap()))
+                .map(|fv| {
+                    VertexIndex::from(self.all_vertices.iter().position(|v| v == fv).unwrap())
+                })
                 .collect();
             let mat = MaterialIndex::from(face.material());
             (verts, mat)
         })
     }
     fn build_textures(&self) -> Vec<Texture> {
-        let mut textures: Vec<_> = self.obj.materials().map(|s| {
-            let tex = &self.texture_map.get(s);
-            match tex {
-                Some(tex) => {
-                    let (file_name, pixbuf) = tex.take();
-                    Texture {
-                        file_name,
-                        pixbuf: Some(pixbuf),
+        let mut textures: Vec<_> = self
+            .obj
+            .materials()
+            .map(|s| {
+                let tex = &self.texture_map.get(s);
+                match tex {
+                    Some(tex) => {
+                        let (file_name, pixbuf) = tex.take();
+                        Texture {
+                            file_name,
+                            pixbuf: Some(pixbuf),
+                        }
                     }
+                    None => Texture::default(),
                 }
-                None => Texture::default(),
-            }
-        }).collect();
+            })
+            .collect();
         if textures.is_empty() {
             textures.push(Texture::default());
         }

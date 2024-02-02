@@ -1,8 +1,8 @@
-use easy_imgui_window::easy_imgui_renderer::{uniform, attrib};
 use crate::glr::{self, Rgba, UniformField};
-use crate::util_3d::*;
 use crate::paper::MaterialIndex;
-use anyhow::{Result, anyhow};
+use crate::util_3d::*;
+use anyhow::{anyhow, Result};
+use easy_imgui_window::easy_imgui_renderer::{attrib, uniform};
 
 //////////////////////////////////////
 // Uniforms and vertices
@@ -80,24 +80,38 @@ attrib! {
     }
 }
 
-
-pub const MSTATUS_UNSEL: MStatus3D = MStatus3D { color: Rgba::new(0.0, 0.0, 0.0, 0.0), top: 0 };
-pub const MSTATUS_SEL: MStatus3D = MStatus3D { color: Rgba::new(0.0, 0.0, 1.0, 0.5), top: 1 };
-pub const MSTATUS_HI: MStatus3D = MStatus3D { color: Rgba::new(1.0, 0.0, 0.0, 0.75), top: 1 };
+pub const MSTATUS_UNSEL: MStatus3D = MStatus3D {
+    color: Rgba::new(0.0, 0.0, 0.0, 0.0),
+    top: 0,
+};
+pub const MSTATUS_SEL: MStatus3D = MStatus3D {
+    color: Rgba::new(0.0, 0.0, 1.0, 0.5),
+    top: 1,
+};
+pub const MSTATUS_HI: MStatus3D = MStatus3D {
+    color: Rgba::new(1.0, 0.0, 0.0, 0.75),
+    top: 1,
+};
 
 pub fn program_from_source(gl: &glr::GlContext, shaders: &str) -> Result<glr::Program> {
-    let split = shaders.find("###").ok_or_else(|| anyhow!("shader marker not found"))?;
-    let vertex = &shaders[.. split];
-    let frag = &shaders[split ..];
-    let split_2 = frag.find('\n').ok_or_else(|| anyhow!("shader marker not valid"))?;
+    let split = shaders
+        .find("###")
+        .ok_or_else(|| anyhow!("shader marker not found"))?;
+    let vertex = &shaders[..split];
+    let frag = &shaders[split..];
+    let split_2 = frag
+        .find('\n')
+        .ok_or_else(|| anyhow!("shader marker not valid"))?;
 
-    let mut frag = &frag[split_2 ..];
+    let mut frag = &frag[split_2..];
 
     let geom = if let Some(split) = frag.find("###") {
-        let geom = &frag[split ..];
-        frag = &frag[.. split];
-        let split_2 = geom.find('\n').ok_or_else(|| anyhow!("shader marker not valid"))?;
-        Some(&geom[split_2 ..])
+        let geom = &frag[split..];
+        frag = &frag[..split];
+        let split_2 = geom
+            .find('\n')
+            .ok_or_else(|| anyhow!("shader marker not valid"))?;
+        Some(&geom[split_2..])
     } else {
         None
     };

@@ -1,17 +1,21 @@
-mod model;
 mod craft;
+mod model;
 
-pub use model::*;
 pub use craft::*;
+pub use model::*;
 
 use crate::util_3d::*;
-use serde::{Serialize, Deserialize, ser::{SerializeStruct, SerializeSeq}};
+use serde::{
+    ser::{SerializeSeq, SerializeStruct},
+    Deserialize, Serialize,
+};
 mod ser {
     use super::*;
     pub mod vector2 {
         use super::*;
         pub fn serialize<S>(data: &Vector2, serializer: S) -> Result<S::Ok, S::Error>
-            where S: serde::Serializer
+        where
+            S: serde::Serializer,
         {
             let mut seq = serializer.serialize_seq(Some(3))?;
             seq.serialize_element(&data.x)?;
@@ -19,7 +23,8 @@ mod ser {
             seq.end()
         }
         pub fn deserialize<'de, D>(deserializer: D) -> Result<Vector2, D::Error>
-            where D: serde::Deserializer<'de>
+        where
+            D: serde::Deserializer<'de>,
         {
             let data = <[f32; 2]>::deserialize(deserializer)?;
             Ok(Vector2::from(data))
@@ -28,7 +33,8 @@ mod ser {
     pub mod vector3 {
         use super::*;
         pub fn serialize<S>(data: &Vector3, serializer: S) -> Result<S::Ok, S::Error>
-            where S: serde::Serializer
+        where
+            S: serde::Serializer,
         {
             let mut seq = serializer.serialize_seq(Some(3))?;
             seq.serialize_element(&data.x)?;
@@ -37,7 +43,8 @@ mod ser {
             seq.end()
         }
         pub fn deserialize<'de, D>(deserializer: D) -> Result<Vector3, D::Error>
-            where D: serde::Deserializer<'de>
+        where
+            D: serde::Deserializer<'de>,
         {
             let data = <[f32; 3]>::deserialize(deserializer)?;
             Ok(Vector3::from(data))
@@ -46,10 +53,14 @@ mod ser {
     // Beware! This serializes pnly the values, not the keys.
     pub mod slot_map {
         use super::*;
-        pub fn serialize<K, V, S>(data: &slotmap::SlotMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
-            where S: serde::Serializer,
-                  K: slotmap::Key,
-                  V: Serialize,
+        pub fn serialize<K, V, S>(
+            data: &slotmap::SlotMap<K, V>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+            K: slotmap::Key,
+            V: Serialize,
         {
             let mut seq = serializer.serialize_seq(Some(data.len()))?;
             for (_, d) in data {
@@ -57,10 +68,13 @@ mod ser {
             }
             seq.end()
         }
-        pub fn deserialize<'de, D, K, V>(deserializer: D) -> Result<slotmap::SlotMap<K, V>, D::Error>
-            where D: serde::Deserializer<'de>,
-                  K: slotmap::Key,
-                  V: Deserialize<'de>,
+        pub fn deserialize<'de, D, K, V>(
+            deserializer: D,
+        ) -> Result<slotmap::SlotMap<K, V>, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+            K: slotmap::Key,
+            V: Deserialize<'de>,
         {
             let data = <Vec<V>>::deserialize(deserializer)?;
             let mut map = slotmap::SlotMap::with_key();

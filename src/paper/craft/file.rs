@@ -274,9 +274,7 @@ impl Papercraft {
                     continue;
                 }
                 let face_b = &self.model[i_fb];
-                let (mut i_v0b, mut i_v1b) = face_b
-                    .vertices_of_edge(i_edge)
-                    .unwrap();
+                let (mut i_v0b, mut i_v1b) = face_b.vertices_of_edge(i_edge).unwrap();
 
                 // Is it a normal or inverted edge?
                 // Check for normal edge: First compare the ids, they are sometimes the same
@@ -300,15 +298,15 @@ impl Papercraft {
 
         // Deduplicate the ids, make them contiguous and get the position
         let mut vertex_pos = Vec::new();
-        let vertex_map: Vec<_> = idx.iter()
+        let vertex_map: Vec<_> = idx
+            .iter()
             .enumerate()
             .map(|(i_v, id)| {
                 let vid = next_id[id.unwrap()];
-                let id = *fx.entry(vid)
-                    .or_insert_with(|| {
-                        vertex_pos.push(self.model[VertexIndex::from(i_v)].pos());
-                        vertex_pos.len() as u32
-                    });
+                let id = *fx.entry(vid).or_insert_with(|| {
+                    vertex_pos.push(self.model[VertexIndex::from(i_v)].pos());
+                    vertex_pos.len() as u32
+                });
                 id
             })
             .collect();
@@ -352,7 +350,9 @@ impl Papercraft {
             }
             by_mat
         } else {
-            vec![(0..self.model.num_faces()).map(|i_f| FaceIndex::from(i_f)).collect()]
+            vec![(0..self.model.num_faces())
+                .map(|i_f| FaceIndex::from(i_f))
+                .collect()]
         };
 
         // We iterate over the triangles, but export the flat-face, we have to skip duplicated

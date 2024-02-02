@@ -1,5 +1,5 @@
-use super::data;
 use super::super::*;
+use super::data;
 use cgmath::Zero;
 
 pub struct StlImporter {
@@ -10,9 +10,7 @@ impl StlImporter {
     pub fn new<R: BufRead>(f: R) -> Result<StlImporter> {
         let stl = data::Stl::new(f)?;
 
-        Ok(StlImporter {
-            stl,
-        })
+        Ok(StlImporter { stl })
     }
 }
 
@@ -23,7 +21,9 @@ impl Importer for StlImporter {
     fn build_vertices(&self) -> (bool, Vec<Vertex>) {
         // The VertexIndex is {3*nface, +1, +2}
         let mut has_normals = false;
-        let vxs = self.stl.triangles()
+        let vxs = self
+            .stl
+            .triangles()
             .iter()
             .flat_map(|tri| {
                 if !has_normals && tri.normal != Vector3::zero() {
@@ -53,10 +53,19 @@ impl Importer for StlImporter {
         self.stl.triangles().len()
     }
 
-    fn faces<'s>(&'s self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
-        (0 .. self.stl.triangles().len() as u32).map(|i_face| {
+    fn faces<'s>(
+        &'s self,
+    ) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+        (0..self.stl.triangles().len() as u32).map(|i_face| {
             let i_v0 = 3 * i_face;
-            ([VertexIndex(i_v0), VertexIndex(i_v0 + 1), VertexIndex(i_v0 + 2)], MaterialIndex(0))
+            (
+                [
+                    VertexIndex(i_v0),
+                    VertexIndex(i_v0 + 1),
+                    VertexIndex(i_v0 + 2),
+                ],
+                MaterialIndex(0),
+            )
         })
     }
 

@@ -1,6 +1,6 @@
-use std::io::BufRead;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use cgmath::Zero;
+use std::io::BufRead;
 
 use crate::paper::import::*;
 
@@ -18,11 +18,11 @@ pub struct Triangle {
 impl Stl {
     pub fn new<R: BufRead>(mut f: R) -> Result<Stl> {
         let mut hdr = [0; 80];
-        f.read_exact(&mut hdr[.. 5])?;
-        if &hdr[.. 5] == b"solid" {
+        f.read_exact(&mut hdr[..5])?;
+        if &hdr[..5] == b"solid" {
             Self::new_text(f)
         } else {
-            f.read_exact(&mut hdr[5 .. ])?;
+            f.read_exact(&mut hdr[5..])?;
             Self::new_binary(f)
         }
     }
@@ -30,7 +30,7 @@ impl Stl {
         let rdr = &mut f;
         let n_tris = read_u32(rdr)?;
         let mut tris = Vec::with_capacity(n_tris as usize);
-        for _ in 0 .. n_tris {
+        for _ in 0..n_tris {
             let normal = read_vector3_f32(rdr)?;
             let v0 = read_vector3_f32(rdr)?;
             let v1 = read_vector3_f32(rdr)?;
@@ -42,11 +42,9 @@ impl Stl {
             })
         }
 
-        Ok(Stl {
-            tris,
-        })
-   }
-   fn new_text<R: BufRead>(mut f: R) -> Result<Stl> {
+        Ok(Stl { tris })
+    }
+    fn new_text<R: BufRead>(mut f: R) -> Result<Stl> {
         let mut line = String::new();
         // "{solid} NAME"
         f.read_line(&mut line)?;
@@ -60,15 +58,23 @@ impl Stl {
             match w {
                 Some("endsolid") => break,
                 Some("facet") => {}
-                _ => { bail!(r#"expected "facet""#); }
+                _ => {
+                    bail!(r#"expected "facet""#);
+                }
             }
             let w = words.next();
             if w != Some("normal") {
                 bail!(r#"expected "normal""#);
             }
-            let Some(nx) = words.next() else { bail!(r#"expected number"#) };
-            let Some(ny) = words.next() else { bail!(r#"expected number"#) };
-            let Some(nz) = words.next() else { bail!(r#"expected number"#) };
+            let Some(nx) = words.next() else {
+                bail!(r#"expected number"#)
+            };
+            let Some(ny) = words.next() else {
+                bail!(r#"expected number"#)
+            };
+            let Some(nz) = words.next() else {
+                bail!(r#"expected number"#)
+            };
             let normal = Vector3::new(nx.parse()?, ny.parse()?, nz.parse()?);
 
             // do not bother parsing lines without values, they can only result in error
@@ -85,11 +91,19 @@ impl Stl {
                 let w = words.next();
                 match w {
                     Some("vertex") => {}
-                    _ => { bail!(r#"expected "vertex""#); }
+                    _ => {
+                        bail!(r#"expected "vertex""#);
+                    }
                 }
-                let Some(vx) = words.next() else { bail!(r#"expected number"#) };
-                let Some(vy) = words.next() else { bail!(r#"expected number"#) };
-                let Some(vz) = words.next() else { bail!(r#"expected number"#) };
+                let Some(vx) = words.next() else {
+                    bail!(r#"expected number"#)
+                };
+                let Some(vy) = words.next() else {
+                    bail!(r#"expected number"#)
+                };
+                let Some(vz) = words.next() else {
+                    bail!(r#"expected number"#)
+                };
                 *vert = Vector3::new(vx.parse()?, vy.parse()?, vz.parse()?);
             }
 
@@ -99,16 +113,11 @@ impl Stl {
             // "end facet"
             line.clear();
             f.read_line(&mut line)?;
-            tris.push(Triangle {
-                normal,
-                vertices,
-            })
+            tris.push(Triangle { normal, vertices })
         }
-        Ok(Stl {
-            tris,
-        })
-   }
-   pub fn triangles(&self) -> &[Triangle] {
+        Ok(Stl { tris })
+    }
+    pub fn triangles(&self) -> &[Triangle] {
         &self.tris
-   }
+    }
 }

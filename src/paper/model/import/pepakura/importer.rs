@@ -1,9 +1,9 @@
 use std::cell::Cell;
 use std::io::BufRead;
 
-use super::data;
 use super::super::*;
-use cgmath::{InnerSpace, Deg, Rad};
+use super::data;
+use cgmath::{Deg, InnerSpace, Rad};
 use image::{DynamicImage, ImageBuffer};
 
 pub struct PepakuraImporter {
@@ -25,12 +25,9 @@ impl PepakuraImporter {
             .iter()
             .enumerate()
             .flat_map(|(i_o, obj)| {
-                obj.faces
-                    .iter()
-                    .enumerate()
-                    .flat_map(move |(i_f, f)| {
-                        (0 .. f.verts.len()).map(move |i_vf| (i_o as u32, i_f as u32, i_vf as u32))
-                    })
+                obj.faces.iter().enumerate().flat_map(move |(i_f, f)| {
+                    (0..f.verts.len()).map(move |i_vf| (i_o as u32, i_f as u32, i_vf as u32))
+                })
             })
             .collect();
 
@@ -61,7 +58,8 @@ impl Importer for PepakuraImporter {
     type VertexId = (u32, u32);
 
     fn build_vertices(&self) -> (bool, Vec<Vertex>) {
-        let vs = self.vertex_map
+        let vs = self
+            .vertex_map
             .iter()
             .map(|&(i_o, i_f, i_vf)| {
                 let obj = &self.pdo.objects()[i_o as usize];
@@ -84,32 +82,37 @@ impl Importer for PepakuraImporter {
         (i_o, i_v)
     }
     fn face_count(&self) -> usize {
-        self.pdo.objects()
-            .iter()
-            .map(|o| o.faces.len())
-            .sum()
+        self.pdo.objects().iter().map(|o| o.faces.len()).sum()
     }
-    fn faces<'s>(&'s self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
-        self.pdo.objects().iter().enumerate().flat_map(move |(obj_id, obj)| {
-            let obj_id = obj_id as u32;
-            obj.faces.iter().enumerate().map(move |(face_id, face)| {
-                let face_id = face_id as u32;
-                let verts: Vec<VertexIndex> = (0 .. face.verts.len())
-                    .map(|v_f| {
-                        let id = (obj_id, face_id, v_f as u32);
-                        let i = self.vertex_map.iter().position(|x| x == &id).unwrap();
-                        VertexIndex::from(i)
-                    })
-                    .collect();
-                // We will add a default material at the end of the textures, so map any out-of bounds to that
-                let mat_index = face.mat_index.min(self.pdo.materials().len() as u32);
-                let mat = MaterialIndex::from(mat_index as usize);
-                (verts, mat)
+    fn faces<'s>(
+        &'s self,
+    ) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+        self.pdo
+            .objects()
+            .iter()
+            .enumerate()
+            .flat_map(move |(obj_id, obj)| {
+                let obj_id = obj_id as u32;
+                obj.faces.iter().enumerate().map(move |(face_id, face)| {
+                    let face_id = face_id as u32;
+                    let verts: Vec<VertexIndex> = (0..face.verts.len())
+                        .map(|v_f| {
+                            let id = (obj_id, face_id, v_f as u32);
+                            let i = self.vertex_map.iter().position(|x| x == &id).unwrap();
+                            VertexIndex::from(i)
+                        })
+                        .collect();
+                    // We will add a default material at the end of the textures, so map any out-of bounds to that
+                    let mat_index = face.mat_index.min(self.pdo.materials().len() as u32);
+                    let mat = MaterialIndex::from(mat_index as usize);
+                    (verts, mat)
+                })
             })
-        })
     }
     fn build_textures(&self) -> Vec<Texture> {
-        let mut textures: Vec<_> = self.pdo.materials()
+        let mut textures: Vec<_> = self
+            .pdo
+            .materials()
             .iter()
             .map(|mat| {
                 let pixbuf = mat.texture.as_ref().and_then(|t| {
@@ -129,14 +132,21 @@ impl Importer for PepakuraImporter {
         let ((obj_id, v0_id), (_, v1_id)) = edge_id;
         let vv = (v0_id, v1_id);
         let obj = &self.pdo.objects()[obj_id as usize];
-        let Some(edge) = obj.edges
+        let Some(edge) = obj
+            .edges
             .iter()
             .find(|&e| vv == (e.i_v1, e.i_v2) || vv == (e.i_v2, e.i_v1))
-            else { return None };
+        else {
+            return None;
+        };
         if edge.connected {
             Some(EdgeStatus::Joined)
         } else {
-            let v_f = obj.faces[edge.i_f1 as usize].verts.iter().find(|v_f| v_f.i_v == edge.i_v1).unwrap();
+            let v_f = obj.faces[edge.i_f1 as usize]
+                .verts
+                .iter()
+                .find(|v_f| v_f.i_v == edge.i_v1)
+                .unwrap();
             if v_f.flap.is_some() {
                 Some(EdgeStatus::Cut(FlapSide::True))
             } else {
@@ -144,8 +154,14 @@ impl Importer for PepakuraImporter {
             }
         }
     }
-    fn relocate_islands<'a>(&self, model: &Model, islands: impl Iterator<Item=&'a mut Island>) -> bool {
-        let Some(unfold) = self.pdo.unfold() else { return false; };
+    fn relocate_islands<'a>(
+        &self,
+        model: &Model,
+        islands: impl Iterator<Item = &'a mut Island>,
+    ) -> bool {
+        let Some(unfold) = self.pdo.unfold() else {
+            return false;
+        };
 
         let margin = Vector2::new(self.options.margin.1, self.options.margin.0);
         let area_size = Vector2::from(self.options.page_size) - 2.0 * margin;
@@ -189,7 +205,11 @@ impl Importer for PepakuraImporter {
                 }
             }
 
-            let loc = self.options.page_to_global(PageOffset { row, col, offset: loc });
+            let loc = self.options.page_to_global(PageOffset {
+                row,
+                col,
+                offset: loc,
+            });
             island.reset_transformation(island.root_face(), rot, loc);
         }
         // 0-based

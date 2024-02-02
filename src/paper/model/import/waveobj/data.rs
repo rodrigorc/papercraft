@@ -1,5 +1,8 @@
-use std::{io::BufRead, path::{Path, PathBuf}};
 use anyhow::{anyhow, Result};
+use std::{
+    io::BufRead,
+    path::{Path, PathBuf},
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct FaceVertex {
@@ -74,8 +77,14 @@ impl Model {
                     for fv in words {
                         let mut vals = fv.split('/');
                         let v = vals.next().ok_or_else(syn_error)?.parse::<usize>()? - 1;
-                        let t = vals.next().and_then(|x| x.parse::<usize>().ok()).map(|x| x - 1);
-                        let n = vals.next().and_then(|x| x.parse::<usize>().ok()).map(|x| x -1);
+                        let t = vals
+                            .next()
+                            .and_then(|x| x.parse::<usize>().ok())
+                            .map(|x| x - 1);
+                        let n = vals
+                            .next()
+                            .and_then(|x| x.parse::<usize>().ok())
+                            .map(|x| x - 1);
                         if v >= data.vs.len() {
                             return Err(anyhow!("vertex index out of range"));
                         }
@@ -94,7 +103,7 @@ impl Model {
                     }
                     data.faces.push(Face {
                         material: current_material,
-                        verts
+                        verts,
                     })
                 }
                 "mtllib" => {
@@ -110,7 +119,7 @@ impl Model {
                         data.materials.push(String::from(mtl));
                     }
                 }
-                "s" => { /* smoothing is ignored */}
+                "s" => { /* smoothing is ignored */ }
                 _p => {
                     // Unknown attribute
                     //println!("{_p}??");
@@ -249,7 +258,7 @@ impl Material {
                     // Unknown attribute
                     //println!("{_p}??");
                 }
-           }
+            }
         }
         mats.extend(data.build());
         Ok(mats)

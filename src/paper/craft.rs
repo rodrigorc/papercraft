@@ -1,13 +1,12 @@
-use std::ops::ControlFlow;
 use std::cell::RefCell;
 use std::num::NonZeroU32;
+use std::ops::ControlFlow;
 
-use fxhash::{FxHashMap, FxHashSet};
-use cgmath::{prelude::*, Transform, EuclideanSpace, InnerSpace, Rad, Deg};
-use slotmap::{SlotMap, new_key_type, SecondaryMap};
-use serde::{Serialize, Deserialize};
 use crate::util_3d;
-
+use cgmath::{prelude::*, Deg, EuclideanSpace, InnerSpace, Rad, Transform};
+use fxhash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
+use slotmap::{new_key_type, SecondaryMap, SlotMap};
 
 use super::*;
 mod file;
@@ -33,7 +32,13 @@ impl FlapSide {
         match (self, action) {
             (_, EdgeToggleFlapAction::Set(next)) => next,
             // toggle
-            (False, EdgeToggleFlapAction::Toggle) => if rim { Hidden } else { True },
+            (False, EdgeToggleFlapAction::Toggle) => {
+                if rim {
+                    Hidden
+                } else {
+                    True
+                }
+            }
             (True, EdgeToggleFlapAction::Toggle) => False,
             (Hidden, EdgeToggleFlapAction::Toggle) => False,
 
@@ -99,9 +104,15 @@ pub struct JoinResult {
     pub prev_loc: Vector2,
 }
 
-fn my_true() -> bool { true }
-fn default_fold_line_width() -> f32 { 0.1 }
-fn default_edge_id_font_size() -> f32 { 8.0 }
+fn my_true() -> bool {
+    true
+}
+fn default_fold_line_width() -> f32 {
+    0.1
+}
+fn default_edge_id_font_size() -> f32 {
+    8.0
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PaperOptions {
@@ -111,30 +122,30 @@ pub struct PaperOptions {
     pub pages: u32,
     pub page_cols: u32,
     pub margin: (f32, f32, f32, f32), //top, left, right, bottom
-    #[serde(default="my_true")]
+    #[serde(default = "my_true")]
     pub texture: bool,
-    #[serde(default="my_true")]
+    #[serde(default = "my_true")]
     pub tex_filter: bool,
-    #[serde(default, rename="tab_style")]
+    #[serde(default, rename = "tab_style")]
     pub flap_style: FlapStyle,
     #[serde(default)]
     pub fold_style: FoldStyle,
-    #[serde(rename="tab_width")]
+    #[serde(rename = "tab_width")]
     pub flap_width: f32,
-    #[serde(rename="tab_angle")]
+    #[serde(rename = "tab_angle")]
     pub flap_angle: f32, //degrees
     pub fold_line_len: f32, //only for folds in & out
-    #[serde(default, rename="shadow_tab_alpha")]
+    #[serde(default, rename = "shadow_tab_alpha")]
     pub shadow_flap_alpha: f32, //0.0 - 1.0
-    #[serde(default="default_fold_line_width")]
+    #[serde(default = "default_fold_line_width")]
     pub fold_line_width: f32, //only for folds in & out
     #[serde(default)]
     pub hidden_line_angle: f32, //degrees
-    #[serde(default="my_true")]
+    #[serde(default = "my_true")]
     pub show_self_promotion: bool,
-    #[serde(default="my_true")]
+    #[serde(default = "my_true")]
     pub show_page_number: bool,
-    #[serde(default="default_edge_id_font_size")]
+    #[serde(default = "default_edge_id_font_size")]
     pub edge_id_font_size: f32,
     #[serde(default)]
     pub edge_id_position: EdgeIdPosition,
@@ -184,7 +195,10 @@ impl PaperOptions {
         self.row_col_position(row as i32, col as i32)
     }
     fn row_col_position(&self, row: i32, col: i32) -> Vector2 {
-        Vector2::new((col as f32) * (self.page_size.0 + PAGE_SEP), (row as f32) * (self.page_size.1 + PAGE_SEP))
+        Vector2::new(
+            (col as f32) * (self.page_size.0 + PAGE_SEP),
+            (row as f32) * (self.page_size.1 + PAGE_SEP),
+        )
     }
     pub fn is_in_page_fn(&self, page: u32) -> impl Fn(Vector2) -> (bool, Vector2) {
         let page_pos_0 = self.page_position(page);
@@ -203,10 +217,7 @@ impl PaperOptions {
 
         let zero_pos = self.row_col_position(row, col);
         let offset = pos - zero_pos;
-        PageOffset {
-            row, col,
-            offset,
-        }
+        PageOffset { row, col, offset }
     }
     pub fn page_to_global(&self, po: PageOffset) -> Vector2 {
         let zero_pos = self.row_col_position(po.row, po.col);
@@ -238,7 +249,7 @@ pub struct Papercraft {
     #[serde(default)] //TODO: default not actually needed
     options: PaperOptions,
     edges: Vec<EdgeStatus>, //parallel to EdgeIndex
-    #[serde(with="super::ser::slot_map")]
+    #[serde(with = "super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
 
     #[serde(skip)]
@@ -311,10 +322,11 @@ impl Papercraft {
         &self.options
     }
     // Returns the old options
-    pub fn set_options(&mut self, mut options: PaperOptions) -> PaperOptions{
+    pub fn set_options(&mut self, mut options: PaperOptions) -> PaperOptions {
         let scale = options.scale / self.options.scale;
         // Compute positions relative to the nearest page
-        let page_pos: FxHashMap<_, _> = self.islands
+        let page_pos: FxHashMap<_, _> = self
+            .islands
             .iter()
             .map(|(i_island, island)| {
                 let po = self.options.global_to_page(island.location());
@@ -345,20 +357,29 @@ impl Papercraft {
     pub fn num_islands(&self) -> usize {
         self.islands.len()
     }
-    pub fn island_bounding_box_angle(&self, island: &Island, angle: Rad<f32>) -> (Vector2, Vector2) {
+    pub fn island_bounding_box_angle(
+        &self,
+        island: &Island,
+        angle: Rad<f32>,
+    ) -> (Vector2, Vector2) {
         let mx = island.matrix() * Matrix3::from(Matrix2::from_angle(angle));
         let mut vx = Vec::new();
-        traverse_faces_ex(&self.model, island.root_face(),
+        traverse_faces_ex(
+            &self.model,
+            island.root_face(),
             mx,
             NormalTraverseFace(self),
             |_, face, mx| {
                 let vs = face.index_vertices().map(|v| {
                     let normal = self.model.face_plane(face);
-                    mx.transform_point(Point2::from_vec(normal.project(&self.model[v].pos(), self.options.scale))).to_vec()
+                    mx.transform_point(Point2::from_vec(
+                        normal.project(&self.model[v].pos(), self.options.scale),
+                    ))
+                    .to_vec()
                 });
                 vx.extend(vs);
                 ControlFlow::Continue(())
-            }
+            },
         );
 
         let (a, b) = util_3d::bounding_box_2d(vx);
@@ -367,7 +388,6 @@ impl Papercraft {
         (a - mm, b + mm)
     }
     pub fn island_best_bounding_box(&self, island: &Island) -> (Rad<f32>, (Vector2, Vector2)) {
-
         const TRIES: i32 = 60;
 
         fn bbox_weight(bb: (Vector2, Vector2)) -> f32 {
@@ -382,7 +402,7 @@ impl Papercraft {
         let mut best_width = bbox_weight(best_bb);
 
         let mut angle2 = delta_a;
-        for _ in 1 .. TRIES {
+        for _ in 1..TRIES {
             let bb2 = self.island_bounding_box_angle(island, angle2);
             let width2 = bbox_weight(bb2);
 
@@ -430,7 +450,8 @@ impl Papercraft {
     pub fn build_island_names(&self) -> SecondaryMap<IslandKey, String> {
         // To get somewhat predictable names try to sort the islands before naming them.
         // For now, sort them by number of faces.
-        let mut islands: Vec<_> = self.islands
+        let mut islands: Vec<_> = self
+            .islands
             .iter()
             .map(|(i_island, island)| (i_island, self.island_area(island)))
             .collect();
@@ -472,7 +493,11 @@ impl Papercraft {
         self.edge_ids[usize::from(edge)]
     }
 
-    pub fn edge_toggle_flap(&mut self, i_edge: EdgeIndex, action: EdgeToggleFlapAction) -> Option<FlapSide> {
+    pub fn edge_toggle_flap(
+        &mut self,
+        i_edge: EdgeIndex,
+        action: EdgeToggleFlapAction,
+    ) -> Option<FlapSide> {
         let rim = matches!(self.model()[i_edge].faces(), (_, None));
         if let EdgeStatus::Cut(ref mut x) = self.edges[usize::from(i_edge)] {
             Some(std::mem::replace(x, x.apply(action, rim)))
@@ -484,12 +509,16 @@ impl Papercraft {
     pub fn edge_cut(&mut self, i_edge: EdgeIndex, offset: Option<f32>) {
         match self.edges[usize::from(i_edge)] {
             EdgeStatus::Joined => {}
-            _ => { return; }
+            _ => {
+                return;
+            }
         }
         let edge = &self.model[i_edge];
         let (i_face_a, i_face_b) = match edge.faces() {
             (fa, Some(fb)) => (fa, fb),
-            _ => { return; }
+            _ => {
+                return;
+            }
         };
 
         //one of the edge faces will be the root of the new island, but we do not know which one, yet
@@ -498,19 +527,18 @@ impl Papercraft {
         self.edges[usize::from(i_edge)] = EdgeStatus::Cut(FlapSide::False);
 
         let mut data_found = None;
-        self.traverse_faces(&self.islands[i_island],
-            |i_face, _, fmx| {
-                if i_face == i_face_a {
-                    data_found = Some((*fmx, i_face_b, i_face_a));
-                } else if i_face == i_face_b {
-                    data_found = Some((*fmx, i_face_a, i_face_b));
-                }
-                ControlFlow::Continue(())
+        self.traverse_faces(&self.islands[i_island], |i_face, _, fmx| {
+            if i_face == i_face_a {
+                data_found = Some((*fmx, i_face_b, i_face_a));
+            } else if i_face == i_face_b {
+                data_found = Some((*fmx, i_face_a, i_face_b));
             }
-        );
+            ControlFlow::Continue(())
+        });
         let (face_mx, new_root, i_face_old) = data_found.unwrap();
 
-        let medge = self.face_to_face_edge_matrix(edge, &self.model[i_face_old], &self.model[new_root]);
+        let medge =
+            self.face_to_face_edge_matrix(edge, &self.model[i_face_old], &self.model[new_root]);
         let mx = face_mx * medge;
 
         let mut new_island = Island {
@@ -546,16 +574,24 @@ impl Papercraft {
     }
 
     //Retuns a map from the island that disappears into the extra join data.
-    pub fn edge_join(&mut self, i_edge: EdgeIndex, priority_face: Option<FaceIndex>) -> FxHashMap<IslandKey, JoinResult> {
+    pub fn edge_join(
+        &mut self,
+        i_edge: EdgeIndex,
+        priority_face: Option<FaceIndex>,
+    ) -> FxHashMap<IslandKey, JoinResult> {
         let mut renames = FxHashMap::default();
         match self.edges[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => {}
-            _ => { return renames; }
+            _ => {
+                return renames;
+            }
         }
         let edge = &self.model[i_edge];
         let (i_face_a, i_face_b) = match edge.faces() {
             (fa, Some(fb)) => (fa, fb),
-            _ => { return renames; }
+            _ => {
+                return renames;
+            }
         };
 
         let i_island_b = self.island_by_face(i_face_b);
@@ -573,13 +609,16 @@ impl Papercraft {
         if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
             std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
         }
-        renames.insert(i_island_b, JoinResult {
-            i_edge,
-            i_island: i_island_a,
-            prev_root: island_b.root_face(),
-            prev_rot: island_b.rotation(),
-            prev_loc: island_b.location(),
-        });
+        renames.insert(
+            i_island_b,
+            JoinResult {
+                i_edge,
+                i_island: i_island_a,
+                prev_root: island_b.root_face(),
+                prev_rot: island_b.rotation(),
+                prev_loc: island_b.location(),
+            },
+        );
         self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
         renames
     }
@@ -605,44 +644,57 @@ impl Papercraft {
     }
     pub fn contains_face(&self, island: &Island, face: FaceIndex) -> bool {
         let mut found = false;
-        self.traverse_faces_no_matrix(island,
-            |i_face|
-                if i_face == face {
-                    found = true;
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                }
-            );
+        self.traverse_faces_no_matrix(island, |i_face| {
+            if i_face == face {
+                found = true;
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        });
         found
     }
     pub fn island_face_count(&self, island: &Island) -> u32 {
         let mut count = 0;
-        self.traverse_faces_no_matrix(island, |_| { count += 1; ControlFlow::Continue(()) });
+        self.traverse_faces_no_matrix(island, |_| {
+            count += 1;
+            ControlFlow::Continue(())
+        });
         count
     }
     pub fn island_area(&self, island: &Island) -> f32 {
         let mut area = 0.0;
-        self.traverse_faces_no_matrix(island, |face| { area += self.model().face_area(face); ControlFlow::Continue(()) });
+        self.traverse_faces_no_matrix(island, |face| {
+            area += self.model().face_area(face);
+            ControlFlow::Continue(())
+        });
         area
     }
     pub fn get_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
         let mut res = FxHashSet::default();
-        traverse_faces_ex(&self.model, i_face, (), FlatTraverseFace(self),
+        traverse_faces_ex(
+            &self.model,
+            i_face,
+            (),
+            FlatTraverseFace(self),
             |i_next_face, _, _| {
                 res.insert(i_next_face);
                 ControlFlow::Continue(())
-            }
+            },
         );
         res
     }
     fn get_flat_faces_with_matrix(&self, i_face: FaceIndex) -> FxHashMap<FaceIndex, Matrix3> {
         let mut res = FxHashMap::default();
-        traverse_faces_ex(&self.model, i_face, Matrix3::one(), FlatTraverseFaceWithMatrix(self),
+        traverse_faces_ex(
+            &self.model,
+            i_face,
+            Matrix3::one(),
+            FlatTraverseFaceWithMatrix(self),
             |i_next_face, _, mx| {
                 res.insert(i_next_face, *mx);
                 ControlFlow::Continue(())
-            }
+            },
         );
         res
     }
@@ -662,7 +714,12 @@ impl Papercraft {
             }
         }
     }
-    fn face_to_face_edge_matrix_internal(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
+    fn face_to_face_edge_matrix_internal(
+        &self,
+        edge: &Edge,
+        face_a: &Face,
+        face_b: &Face,
+    ) -> Matrix3 {
         let (v0, v1) = self.model.edge_pos(edge);
         let plane_a = self.model.face_plane(face_a);
         let plane_b = self.model.face_plane(face_b);
@@ -694,12 +751,21 @@ impl Papercraft {
     pub fn island_edges(&self, island: &Island) -> FxHashSet<EdgeIndex> {
         let mut res = FxHashSet::default();
         self.traverse_faces_no_matrix(island, |i_f| {
-            res.extend(self.model[i_f].index_edges().iter().filter(|&&i| matches!(self.edge_status(i), EdgeStatus::Cut(_))));
+            res.extend(
+                self.model[i_f]
+                    .index_edges()
+                    .iter()
+                    .filter(|&&i| matches!(self.edge_status(i), EdgeStatus::Cut(_))),
+            );
             ControlFlow::Continue(())
         });
         res
     }
-    fn flat_face_flap_dimensions_internal(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> FlapGeom {
+    fn flat_face_flap_dimensions_internal(
+        &self,
+        i_face_b: FaceIndex,
+        i_edge: EdgeIndex,
+    ) -> FlapGeom {
         #[derive(Debug)]
         struct EData {
             i_edge: EdgeIndex,
@@ -716,25 +782,28 @@ impl Papercraft {
             .flat_map(|(f, _m)| {
                 let face = &self.model()[*f];
                 face.vertices_with_edges()
-                      .filter_map(|(i_v0, i_v1, i_edge)| {
-                          if self.edge_status(i_edge) == EdgeStatus::Hidden {
-                              return None;
-                          }
-                          let plane = self.model.face_plane(face);
+                    .filter_map(|(i_v0, i_v1, i_edge)| {
+                        if self.edge_status(i_edge) == EdgeStatus::Hidden {
+                            return None;
+                        }
+                        let plane = self.model.face_plane(face);
 
-                          let p0 = plane.project(&self.model()[i_v0].pos(), scale);
-                          let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
-                          let p1 = plane.project(&self.model()[i_v1].pos(), scale);
-                          let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
-                          Some(EData { i_edge, i_v0, i_v1, p0, p1 })
-                      })
+                        let p0 = plane.project(&self.model()[i_v0].pos(), scale);
+                        let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
+                        let p1 = plane.project(&self.model()[i_v1].pos(), scale);
+                        let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
+                        Some(EData {
+                            i_edge,
+                            i_v0,
+                            i_v1,
+                            p0,
+                            p1,
+                        })
+                    })
             })
             .collect();
         // The selected edge data
-        let the_edge = flat_contour
-            .iter()
-            .find(|d| d.i_edge == i_edge)
-            .unwrap();
+        let the_edge = flat_contour.iter().find(|d| d.i_edge == i_edge).unwrap();
 
         // Adjacent edges data
         let d0 = flat_contour
@@ -780,10 +849,16 @@ impl Papercraft {
         let compute_width = |a0: Rad<f32>, a1: Rad<f32>| -> f32 {
             let mut minimum_width = self.options.flap_width;
             let (flap_sin_0, flap_cos_0) = a0.sin_cos();
-            let normal_0 = Vector2::new(n.x * flap_sin_0 - n.y * flap_cos_0, n.x * flap_cos_0 + n.y * flap_sin_0);
+            let normal_0 = Vector2::new(
+                n.x * flap_sin_0 - n.y * flap_cos_0,
+                n.x * flap_cos_0 + n.y * flap_sin_0,
+            );
             //90° is the original normal so switch the sin/cos in these rotations
             let (flapsin_1, flap_cos_1) = a1.sin_cos();
-            let normal_1 = Vector2::new(n.x * flapsin_1 + n.y * flap_cos_1, -n.x * flap_cos_1 + n.y * flapsin_1);
+            let normal_1 = Vector2::new(
+                n.x * flapsin_1 + n.y * flap_cos_1,
+                -n.x * flap_cos_1 + n.y * flapsin_1,
+            );
 
             let side_0 = (base.0, base.0 + normal_0);
             let side_1 = (base.1, base.1 + normal_1);
@@ -797,7 +872,8 @@ impl Papercraft {
             for other in &flat_contour {
                 // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
                 // flap to avoid crossing those.
-                if other.i_edge == i_edge || other.i_edge == d0.i_edge || other.i_edge == d1.i_edge {
+                if other.i_edge == i_edge || other.i_edge == d0.i_edge || other.i_edge == d1.i_edge
+                {
                     continue;
                 }
 
@@ -815,14 +891,14 @@ impl Papercraft {
                 // so we can check just one of them per edge
                 if other.i_v0 != d1.i_v1
                     && util_3d::point_line_side(other.p0, side_0)
-                        && !util_3d::point_line_side(other.p0, side_1)
-                        && !util_3d::point_line_side(other.p0, base)
-                        {
-                            let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
-                            if (ZERO..=ONE).contains(&seg_0_off) {
-                                minimum_width = minimum_width.min(seg_0_dist);
-                            }
-                        }
+                    && !util_3d::point_line_side(other.p0, side_1)
+                    && !util_3d::point_line_side(other.p0, base)
+                {
+                    let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
+                    if (ZERO..=ONE).contains(&seg_0_off) {
+                        minimum_width = minimum_width.min(seg_0_dist);
+                    }
+                }
             }
             minimum_width
         };
@@ -931,14 +1007,28 @@ impl Papercraft {
     }
 
     pub fn traverse_faces<F>(&self, island: &Island, visit_face: F) -> ControlFlow<()>
-        where F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>
+    where
+        F: FnMut(FaceIndex, &Face, &Matrix3) -> ControlFlow<()>,
     {
-        traverse_faces_ex(&self.model, island.root_face(), island.matrix(), NormalTraverseFace(self), visit_face)
+        traverse_faces_ex(
+            &self.model,
+            island.root_face(),
+            island.matrix(),
+            NormalTraverseFace(self),
+            visit_face,
+        )
     }
     pub fn traverse_faces_no_matrix<F>(&self, island: &Island, mut visit_face: F) -> ControlFlow<()>
-        where F: FnMut(FaceIndex) -> ControlFlow<()>
+    where
+        F: FnMut(FaceIndex) -> ControlFlow<()>,
     {
-        traverse_faces_ex(&self.model, island.root_face(), (), NoMatrixTraverseFace(&self.model, &self.edges), |i, _, ()| visit_face(i))
+        traverse_faces_ex(
+            &self.model,
+            island.root_face(),
+            (),
+            NoMatrixTraverseFace(&self.model, &self.edges),
+            |i, _, ()| visit_face(i),
+        )
     }
     pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> FxHashMap<IslandKey, JoinResult> {
         let mut renames = FxHashMap::default();
@@ -957,8 +1047,10 @@ impl Papercraft {
 
             // Compute the number of faces before joining them, a strip is made of quads,
             // and each square has 2 triangles. At least one of them must be a quad.
-            let n_faces_a = self.island_face_count(self.island_by_key(self.island_by_face(i_face_a)).unwrap());
-            let n_faces_b = self.island_face_count(self.island_by_key(self.island_by_face(i_face_b)).unwrap());
+            let n_faces_a =
+                self.island_face_count(self.island_by_key(self.island_by_face(i_face_a)).unwrap());
+            let n_faces_b =
+                self.island_face_count(self.island_by_key(self.island_by_face(i_face_b)).unwrap());
             if n_faces_a != 2 && n_faces_b != 2 {
                 continue;
             }
@@ -973,7 +1065,8 @@ impl Papercraft {
             // Move to the opposite edge of both faces
             for (i_face, n_faces) in [(i_face_a, n_faces_a), (i_face_b, n_faces_b)] {
                 // face strips must be made by isolated quads: 4 flat edges and 2 faces
-                let edges: Vec<_> = self.get_flat_faces(i_face)
+                let edges: Vec<_> = self
+                    .get_flat_faces(i_face)
                     .into_iter()
                     .flat_map(|f| self.model[f].vertices_with_edges())
                     .filter(|(_, _, e)| self.edge_status(*e) != EdgeStatus::Hidden)
@@ -986,8 +1079,8 @@ impl Papercraft {
                     continue;
                 }
                 let Some(&(this_v0, this_v1, _)) = edges.iter().find(|(_, _, i_e)| *i_e == i_edge)
-                    else {
-                        continue;
+                else {
+                    continue;
                 };
                 // Get the opposite edge, if any
                 let Some(&(_, _, opposite)) = edges.iter().find(|&&(i_v0, i_v1, i_e)| {
@@ -1024,7 +1117,8 @@ impl Papercraft {
         // The island position cannot be updated while iterating
         let mut positions = slotmap::SecondaryMap::<IslandKey, (Rad<f32>, Vector2)>::new();
 
-        let mut ordered_islands: Vec<_> = self.islands
+        let mut ordered_islands: Vec<_> = self
+            .islands
             .iter()
             .map(|(i_island, island)| {
                 let (angle, bbox) = self.island_best_bounding_box(island);
@@ -1067,7 +1161,7 @@ impl Papercraft {
         page + 1
     }
     // Returns the ((face, area), total_area)
-    pub fn get_biggest_flat_face(&self, island: &Island) -> (Vec::<(FaceIndex, f32)>, f32) {
+    pub fn get_biggest_flat_face(&self, island: &Island) -> (Vec<(FaceIndex, f32)>, f32) {
         let mut biggest_face = None;
         let mut visited = FxHashSet::<FaceIndex>::default();
         self.traverse_faces_no_matrix(island, |i_face| {
@@ -1081,7 +1175,10 @@ impl Papercraft {
                     .map(|i_face| (i_face, self.model().face_area(i_face)))
                     .collect();
                 let total_area: f32 = with_area.iter().map(|(_, a)| a).sum();
-                if !biggest_face.as_ref().is_some_and(|(_, prev_area)| *prev_area > total_area) {
+                if !biggest_face
+                    .as_ref()
+                    .is_some_and(|(_, prev_area)| *prev_area > total_area)
+                {
                     biggest_face = Some((with_area, total_area));
                 }
             }
@@ -1091,9 +1188,16 @@ impl Papercraft {
     }
 }
 
-fn traverse_faces_ex<F, TP>(model: &Model, root: FaceIndex, initial_state: TP::State, policy: TP, mut visit_face: F) -> ControlFlow<()>
-where F: FnMut(FaceIndex, &Face, &TP::State) -> ControlFlow<()>,
-      TP: TraverseFacePolicy,
+fn traverse_faces_ex<F, TP>(
+    model: &Model,
+    root: FaceIndex,
+    initial_state: TP::State,
+    policy: TP,
+    mut visit_face: F,
+) -> ControlFlow<()>
+where
+    F: FnMut(FaceIndex, &Face, &TP::State) -> ControlFlow<()>,
+    TP: TraverseFacePolicy,
 {
     let mut visited_faces = FxHashSet::default();
     let mut stack = vec![(root, initial_state)];
@@ -1117,14 +1221,20 @@ where F: FnMut(FaceIndex, &Face, &TP::State) -> ControlFlow<()>,
                 visited_faces.insert(i_next_face);
             }
         }
-    };
+    }
     ControlFlow::Continue(())
 }
 
 trait TraverseFacePolicy {
     type State;
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool;
-    fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State;
+    fn next_state(
+        &self,
+        st: &Self::State,
+        edge: &Edge,
+        face: &Face,
+        i_next_face: FaceIndex,
+    ) -> Self::State;
 }
 struct NormalTraverseFace<'a>(&'a Papercraft);
 
@@ -1134,12 +1244,17 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edges[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => false,
-            EdgeStatus::Joined |
-            EdgeStatus::Hidden => true,
+            EdgeStatus::Joined | EdgeStatus::Hidden => true,
         }
     }
 
-    fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
+    fn next_state(
+        &self,
+        st: &Self::State,
+        edge: &Edge,
+        face: &Face,
+        i_next_face: FaceIndex,
+    ) -> Self::State {
         let next_face = &self.0.model[i_next_face];
         let medge = self.0.face_to_face_edge_matrix(edge, face, next_face);
         st * medge
@@ -1154,12 +1269,17 @@ impl TraverseFacePolicy for NoMatrixTraverseFace<'_> {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.1[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => false,
-            EdgeStatus::Joined |
-            EdgeStatus::Hidden => true,
+            EdgeStatus::Joined | EdgeStatus::Hidden => true,
         }
     }
 
-    fn next_state(&self, _st: &Self::State, _edge: &Edge, _face: &Face, _i_next_face: FaceIndex) -> Self::State {
+    fn next_state(
+        &self,
+        _st: &Self::State,
+        _edge: &Edge,
+        _face: &Face,
+        _i_next_face: FaceIndex,
+    ) -> Self::State {
     }
 }
 
@@ -1170,37 +1290,45 @@ impl TraverseFacePolicy for FlatTraverseFace<'_> {
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edge_status(i_edge) {
-            EdgeStatus::Joined |
-            EdgeStatus::Cut(_) => false,
+            EdgeStatus::Joined | EdgeStatus::Cut(_) => false,
             EdgeStatus::Hidden => true,
         }
     }
 
-    fn next_state(&self, _st: &Self::State, _edge: &Edge, _face: &Face, _i_next_face: FaceIndex) -> Self::State {
+    fn next_state(
+        &self,
+        _st: &Self::State,
+        _edge: &Edge,
+        _face: &Face,
+        _i_next_face: FaceIndex,
+    ) -> Self::State {
     }
 }
 
 struct FlatTraverseFaceWithMatrix<'a>(&'a Papercraft);
-
 
 impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
     type State = Matrix3;
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edge_status(i_edge) {
-            EdgeStatus::Joined |
-            EdgeStatus::Cut(_) => false,
+            EdgeStatus::Joined | EdgeStatus::Cut(_) => false,
             EdgeStatus::Hidden => true,
         }
     }
 
-    fn next_state(&self, st: &Self::State, edge: &Edge, face: &Face, i_next_face: FaceIndex) -> Self::State {
+    fn next_state(
+        &self,
+        st: &Self::State,
+        edge: &Edge,
+        face: &Face,
+        i_next_face: FaceIndex,
+    ) -> Self::State {
         let next_face = &self.0.model[i_next_face];
         let medge = self.0.face_to_face_edge_matrix(edge, face, next_face);
         st * medge
     }
 }
-
 
 #[derive(Debug)]
 pub struct Island {
@@ -1251,7 +1379,8 @@ impl Island {
 
 impl Serialize for EdgeStatus {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: serde::Serializer
+    where
+        S: serde::Serializer,
     {
         let is = match self {
             EdgeStatus::Hidden => 0,
@@ -1265,7 +1394,8 @@ impl Serialize for EdgeStatus {
 }
 impl<'de> Deserialize<'de> for EdgeStatus {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::Deserializer<'de>
+    where
+        D: serde::Deserializer<'de>,
     {
         let d = u32::deserialize(deserializer)?;
         let res = match d {
@@ -1282,7 +1412,8 @@ impl<'de> Deserialize<'de> for EdgeStatus {
 
 impl Serialize for FlapStyle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: serde::Serializer
+    where
+        S: serde::Serializer,
     {
         let is = match self {
             FlapStyle::Textured => 0,
@@ -1295,7 +1426,8 @@ impl Serialize for FlapStyle {
 }
 impl<'de> Deserialize<'de> for FlapStyle {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::Deserializer<'de>
+    where
+        D: serde::Deserializer<'de>,
     {
         let d = u32::deserialize(deserializer)?;
         let res = match d {
@@ -1311,7 +1443,8 @@ impl<'de> Deserialize<'de> for FlapStyle {
 
 impl Serialize for FoldStyle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: serde::Serializer
+    where
+        S: serde::Serializer,
     {
         let is = match self {
             FoldStyle::Full => 0,
@@ -1326,7 +1459,8 @@ impl Serialize for FoldStyle {
 }
 impl<'de> Deserialize<'de> for FoldStyle {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::Deserializer<'de>
+    where
+        D: serde::Deserializer<'de>,
     {
         let d = u32::deserialize(deserializer)?;
         let res = match d {
@@ -1344,7 +1478,8 @@ impl<'de> Deserialize<'de> for FoldStyle {
 
 impl Serialize for EdgeIdPosition {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: serde::Serializer
+    where
+        S: serde::Serializer,
     {
         let is = match self {
             EdgeIdPosition::None => 0,
@@ -1356,13 +1491,18 @@ impl Serialize for EdgeIdPosition {
 }
 impl<'de> Deserialize<'de> for EdgeIdPosition {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::Deserializer<'de>
+    where
+        D: serde::Deserializer<'de>,
     {
         let d = i32::deserialize(deserializer)?;
         let res = match d {
             1 => EdgeIdPosition::Outside,
             -1 => EdgeIdPosition::Inside,
-            _ => return Err(serde::de::Error::missing_field("invalid edge_id_position value")),
+            _ => {
+                return Err(serde::de::Error::missing_field(
+                    "invalid edge_id_position value",
+                ))
+            }
         };
         Ok(res)
     }
@@ -1370,7 +1510,8 @@ impl<'de> Deserialize<'de> for EdgeIdPosition {
 
 impl Serialize for Island {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: serde::Serializer
+    where
+        S: serde::Serializer,
     {
         let mut map = serializer.serialize_struct("Island", 4)?;
         map.serialize_field("root", &usize::from(self.root))?;
@@ -1383,10 +1524,16 @@ impl Serialize for Island {
 
 impl<'de> Deserialize<'de> for Island {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::Deserializer<'de>
+    where
+        D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        struct Def { root: usize, x: f32, y: f32, r: f32 }
+        struct Def {
+            root: usize,
+            x: f32,
+            y: f32,
+            r: f32,
+        }
         let d = Def::deserialize(deserializer)?;
         let mut island = Island {
             root: FaceIndex::from(d.root),
@@ -1396,5 +1543,5 @@ impl<'de> Deserialize<'de> for Island {
         };
         island.recompute_matrix();
         Ok(island)
-}
+    }
 }

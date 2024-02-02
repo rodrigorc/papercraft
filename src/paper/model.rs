@@ -1,9 +1,9 @@
-use std::marker::PhantomData;
-use std::cell::Cell;
-use cgmath::{InnerSpace, Rad, Angle};
-use image::DynamicImage;
-use serde::{Serialize, Deserialize};
 use anyhow::Result;
+use cgmath::{Angle, InnerSpace, Rad};
+use image::DynamicImage;
+use serde::{Deserialize, Serialize};
+use std::cell::Cell;
+use std::marker::PhantomData;
 
 use crate::paper::import::Importer;
 use crate::util_3d::{self, Vector2, Vector3};
@@ -39,14 +39,14 @@ pub struct Model {
 use maybe_owned::MaybeOwned;
 
 #[derive(Serialize, Deserialize)]
-#[serde(rename="Model")]
+#[serde(rename = "Model")]
 struct ModelSer<'s> {
     textures: MaybeOwned<'s, Vec<Texture>>,
-    #[serde(rename="vs")]
+    #[serde(rename = "vs")]
     vertices: MaybeOwned<'s, Vec<Vertex>>,
-    #[serde(rename="es")]
+    #[serde(rename = "es")]
     edges: MaybeOwned<'s, Vec<Edge>>,
-    #[serde(rename="fs")]
+    #[serde(rename = "fs")]
     faces: MaybeOwned<'s, Vec<Face>>,
 }
 
@@ -75,7 +75,8 @@ impl Drop for SetSerModel<'_> {
 
 impl Serialize for Model {
     fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
-        where S: serde::Serializer
+    where
+        S: serde::Serializer,
     {
         use MaybeOwned::Borrowed;
         let _ctx = SetSerModel::new(self);
@@ -91,7 +92,8 @@ impl Serialize for Model {
 }
 impl<'de> Deserialize<'de> for Model {
     fn deserialize<D>(des: D) -> Result<Model, D::Error>
-        where D: serde::Deserializer<'de>
+    where
+        D: serde::Deserializer<'de>,
     {
         use MaybeOwned::Owned;
         let ModelSer {
@@ -100,7 +102,9 @@ impl<'de> Deserialize<'de> for Model {
             edges: Owned(edges),
             faces: Owned(faces),
         } = ModelSer::deserialize(des)?
-            else { unreachable!() };
+        else {
+            unreachable!()
+        };
         let mut model = Model {
             textures,
             vertices,
@@ -148,11 +152,11 @@ index_type!(pub FaceIndex: u32);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Face {
-    #[serde(rename="m")]
+    #[serde(rename = "m")]
     material: MaterialIndex,
-    #[serde(rename="vs")]
+    #[serde(rename = "vs")]
     vertices: [VertexIndex; 3],
-    #[serde(rename="es")]
+    #[serde(rename = "es")]
     edges: [EdgeIndex; 3],
 }
 
@@ -164,7 +168,7 @@ pub struct Face {
 pub struct Edge {
     f0: FaceIndex,
     f1: Option<FaceIndex>,
-    #[serde(skip, default="default_angle")]
+    #[serde(skip, default = "default_angle")]
     angle: Rad<f32>,
 }
 
@@ -174,7 +178,8 @@ fn default_angle() -> Rad<f32> {
 
 impl Serialize for Edge {
     fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
-        where S: serde::Serializer
+    where
+        S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
 
@@ -195,11 +200,11 @@ impl Serialize for Edge {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vertex {
-    #[serde(rename="p", with="super::ser::vector3")]
+    #[serde(rename = "p", with = "super::ser::vector3")]
     pos: Vector3,
-    #[serde(rename="n", with="super::ser::vector3")]
+    #[serde(rename = "n", with = "super::ser::vector3")]
     normal: Vector3,
-    #[serde(rename="t", with="super::ser::vector2")]
+    #[serde(rename = "t", with = "super::ser::vector2")]
     uv: Vector2,
 }
 
@@ -217,7 +222,9 @@ impl Model {
         }
     }
 
-    pub fn from_importer<I: Importer>(obj: &mut I) -> (Model, Vec<FaceSource>, Vec<(I::VertexId, I::VertexId)>) {
+    pub fn from_importer<I: Importer>(
+        obj: &mut I,
+    ) -> (Model, Vec<FaceSource>, Vec<(I::VertexId, I::VertexId)>) {
         let (has_normals, mut vertices) = obj.build_vertices();
 
         let num_faces = obj.face_count();
@@ -227,8 +234,7 @@ impl Model {
         let mut edge_map: Vec<(I::VertexId, I::VertexId)> = Vec::with_capacity(num_faces * 3 / 2);
 
         let mut face_source_id = 0;
-        'face_loop:
-        for (face_verts, face_mat) in obj.faces() {
+        'face_loop: for (face_verts, face_mat) in obj.faces() {
             let face_verts = face_verts.as_ref();
             face_source_id += 1;
             let to_tess: Vec<_> = face_verts
@@ -246,16 +252,24 @@ impl Model {
                     New(Edge, (I::VertexId, I::VertexId)),
                 }
                 // dummy values, will be filled later
-                let mut face_edges = [EdgeCreation::<I>::Existing(0), EdgeCreation::Existing(0), EdgeCreation::Existing(0)];
+                let mut face_edges = [
+                    EdgeCreation::<I>::Existing(0),
+                    EdgeCreation::Existing(0),
+                    EdgeCreation::Existing(0),
+                ];
                 let mut face_vertices = [VertexIndex::from(0); 3];
 
-                for ((i, face_edge), face_vertex) in (0 .. 3).zip(&mut face_edges).zip(&mut face_vertices) {
+                for ((i, face_edge), face_vertex) in
+                    (0..3).zip(&mut face_edges).zip(&mut face_vertices)
+                {
                     let v0 = face_verts[tri[i]];
                     *face_vertex = v0;
                     let v1 = face_verts[tri[(i + 1) % 3]];
                     let v0 = obj.vertex_map(v0);
                     let v1 = obj.vertex_map(v1);
-                    let mut i_edge_candidate = edge_map.iter().position(|(p0, p1)| (p0, p1) == (&v0, &v1) || (p0, p1) == (&v1, &v0));
+                    let mut i_edge_candidate = edge_map
+                        .iter()
+                        .position(|(p0, p1)| (p0, p1) == (&v0, &v1) || (p0, p1) == (&v1, &v0));
 
                     if let Some(i_edge) = i_edge_candidate {
                         if edges[i_edge].f1.is_some() {
@@ -270,24 +284,23 @@ impl Model {
                     }
 
                     *face_edge = match i_edge_candidate {
-                        Some(i_edge) => {
-                            EdgeCreation::Existing(i_edge)
-                        }
-                        None => {
-                            EdgeCreation::New(Edge {
+                        Some(i_edge) => EdgeCreation::Existing(i_edge),
+                        None => EdgeCreation::New(
+                            Edge {
                                 f0: i_face,
                                 f1: None,
                                 angle: default_angle(),
-                            }, (v0, v1))
-                        }
+                            },
+                            (v0, v1),
+                        ),
                     }
                 }
 
                 // If the face uses the same egde twice, it is invalid
                 match face_edges {
-                    [EdgeCreation::Existing(a), EdgeCreation::Existing(b), _] |
-                    [EdgeCreation::Existing(a), _, EdgeCreation::Existing(b)] |
-                    [_, EdgeCreation::Existing(a), EdgeCreation::Existing(b)]
+                    [EdgeCreation::Existing(a), EdgeCreation::Existing(b), _]
+                    | [EdgeCreation::Existing(a), _, EdgeCreation::Existing(b)]
+                    | [_, EdgeCreation::Existing(a), EdgeCreation::Existing(b)]
                         if a == b =>
                     {
                         continue 'face_loop;
@@ -343,7 +356,7 @@ impl Model {
         (model, face_map, edge_map)
     }
     fn post_create(&mut self) {
-        for i_edge in 0 .. self.edges.len() {
+        for i_edge in 0..self.edges.len() {
             let i_edge = EdgeIndex::from(i_edge);
             let edge = &self[i_edge];
             let angle = match edge.faces() {
@@ -421,7 +434,10 @@ impl Model {
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()
     }
-    pub fn reload_textures<F: FnMut(&str) -> Result<DynamicImage>>(&mut self, mut f: F) -> Result<()> {
+    pub fn reload_textures<F: FnMut(&str) -> Result<DynamicImage>>(
+        &mut self,
+        mut f: F,
+    ) -> Result<()> {
         for tex in &mut self.textures {
             tex.pixbuf = if tex.file_name.is_empty() {
                 None
@@ -443,9 +459,7 @@ impl Model {
         let face = &self[i_face];
         // Area in 3D space should be almost equal to the area in 2D space,
         // except for very non planar n-gons, but if that is the case blame the user.
-        let [a, b, c] = face
-            .index_vertices()
-            .map(|iv| self[iv].pos());
+        let [a, b, c] = face.index_vertices().map(|iv| self[iv].pos());
         let ab = b - a;
         let ac = c - a;
         ab.cross(ac).magnitude() / 2.0
@@ -486,16 +500,14 @@ impl Face {
     pub fn material(&self) -> MaterialIndex {
         self.material
     }
-    pub fn vertices_with_edges(&self) -> impl Iterator<Item = (VertexIndex, VertexIndex, EdgeIndex)> + '_ {
-        self.edges
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(i, e)| {
-                let v0 = self.vertices[i];
-                let v1 = self.vertices[(i + 1) % self.vertices.len()];
-                (v0, v1, e)
-            })
+    pub fn vertices_with_edges(
+        &self,
+    ) -> impl Iterator<Item = (VertexIndex, VertexIndex, EdgeIndex)> + '_ {
+        self.edges.iter().copied().enumerate().map(|(i, e)| {
+            let v0 = self.vertices[i];
+            let v1 = self.vertices[(i + 1) % self.vertices.len()];
+            (v0, v1, e)
+        })
     }
     pub fn vertices_of_edge(&self, i_edge: EdgeIndex) -> Option<(VertexIndex, VertexIndex)> {
         let i = self.edges.iter().position(|i_e| *i_e == i_edge)?;

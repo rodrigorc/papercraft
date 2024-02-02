@@ -1,21 +1,24 @@
-//#![allow(clippy::collapsible_if)]
-
-use std::{time::{Instant, Duration}, path::{Path, PathBuf}, rc::Rc, cell::RefCell};
-use std::io::{Read, Write};
-use anyhow::{Result, anyhow, Context};
-use cgmath::{
-    prelude::*,
-    Deg, Rad,
-};
-use lazy_static::lazy_static;
-use image::{DynamicImage, GenericImage, GenericImageView, EncodableLayout};
-use easy_imgui_window::{MainWindow, MainWindowWithRenderer,
-    easy_imgui::{self as imgui, Color, MouseButton, Vector2, vec2},
+use anyhow::{anyhow, Context, Result};
+use cgmath::{prelude::*, Deg, Rad};
+use easy_imgui_window::{
+    easy_imgui::{self as imgui, vec2, Color, MouseButton, Vector2},
     easy_imgui_renderer::{
-        glr::{self, GlContext, Rgba, BinderRenderbuffer, BinderDrawFramebuffer, BinderReadFramebuffer},
         glow::{self, HasContext},
+        glr::{
+            self, BinderDrawFramebuffer, BinderReadFramebuffer, BinderRenderbuffer, GlContext, Rgba,
+        },
     },
     winit::{self, event_loop::EventLoopBuilder},
+    MainWindow, MainWindowWithRenderer,
+};
+use image::{DynamicImage, EncodableLayout, GenericImage, GenericImageView};
+use lazy_static::lazy_static;
+use std::io::{Read, Write};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::{Duration, Instant},
 };
 
 type Ui = imgui::Ui<GlobalContext>;
@@ -35,25 +38,33 @@ mod ui;
 use ui::*;
 
 lazy_static! {
-    static ref LOGO_IMG: image::RgbaImage = load_image_from_memory(include_bytes!("papercraft.png"), true).unwrap();
-    static ref ICONS_IMG: image::RgbaImage = load_image_from_memory(include_bytes!("icons.png"), true).unwrap();
+    static ref LOGO_IMG: image::RgbaImage =
+        load_image_from_memory(include_bytes!("papercraft.png"), true).unwrap();
+    static ref ICONS_IMG: image::RgbaImage =
+        load_image_from_memory(include_bytes!("icons.png"), true).unwrap();
     static ref KARLA_TTF: Vec<u8> = {
         let mut ttf = Vec::new();
-        flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
+        flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice())
+            .read_to_end(&mut ttf)
+            .unwrap();
         ttf
     };
     static ref COPYRIGHT_TTF: Vec<u8> = {
         let mut ttf = Vec::new();
-        flate2::read::ZlibDecoder::new(include_bytes!("copyright.ttf.z").as_slice()).read_to_end(&mut ttf).unwrap();
+        flate2::read::ZlibDecoder::new(include_bytes!("copyright.ttf.z").as_slice())
+            .read_to_end(&mut ttf)
+            .unwrap();
         ttf
     };
 }
 const FONT_SIZE: f32 = 3.0;
 
-use paper::{Papercraft, FlapStyle, FoldStyle, EdgeIdPosition, PaperOptions, IslandKey, import::import_model_file};
+use paper::{
+    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions,
+    Papercraft,
+};
 use util_3d::{Matrix3, Vector3};
-use util_gl::{Uniforms2D, Uniforms3D, UniformQuad, MVertex2DLine};
-
+use util_gl::{MVertex2DLine, UniformQuad, Uniforms2D, Uniforms3D};
 
 use clap::Parser;
 
@@ -64,10 +75,17 @@ struct Cli {
     #[arg(value_name = "MODEL_FILE")]
     name: Option<PathBuf>,
 
-    #[arg(long, help = "Uses Dear ImGui light theme instead of the default dark one")]
+    #[arg(
+        long,
+        help = "Uses Dear ImGui light theme instead of the default dark one"
+    )]
     light: bool,
 
-    #[arg(short, long, help = "Prevents editing of the model, useful as reference to build a real model")]
+    #[arg(
+        short,
+        long,
+        help = "Prevents editing of the model, useful as reference to build a real model"
+    )]
     read_only: bool,
 }
 
@@ -78,7 +96,12 @@ fn main() {
     let event_loop = EventLoopBuilder::new().build().unwrap();
     let window = MainWindow::new(&event_loop, "Papercraft").unwrap();
 
-    let icon = winit::window::Icon::from_rgba(LOGO_IMG.as_bytes().to_owned(), LOGO_IMG.width(), LOGO_IMG.height()).unwrap();
+    let icon = winit::window::Icon::from_rgba(
+        LOGO_IMG.as_bytes().to_owned(),
+        LOGO_IMG.width(),
+        LOGO_IMG.height(),
+    )
+    .unwrap();
     window.window().set_window_icon(Some(icon));
     window.window().set_ime_allowed(true);
     let mut window = MainWindowWithRenderer::new(window);
@@ -98,19 +121,27 @@ fn main() {
     // Initialize papercraft status
     let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
     let cmd_file_action = match cli {
-        Cli { name: Some(name), read_only: false, .. }  => {
-            Some((FileAction::ImportModel, name))
-        }
-        Cli { name: Some(name), read_only: true, .. }  => {
+        Cli {
+            name: Some(name),
+            read_only: false,
+            ..
+        } => Some((FileAction::ImportModel, name)),
+        Cli {
+            name: Some(name),
+            read_only: true,
+            ..
+        } => {
             // This will be rewritten when/if the file is loaded, but setting it here avoids a UI flicker
             data.ui.mode = MouseMode::ReadOnly;
             Some((FileAction::OpenCraftReadOnly, name))
         }
-        _ => { None }
+        _ => None,
     };
 
     let last_path = if let Some((_, path)) = &cmd_file_action {
-        path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(String::new)
+        path.parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(String::new)
     } else {
         String::new()
     };
@@ -147,67 +178,78 @@ fn main() {
         quit_requested: BoolWithConfirm::None,
         title: String::new(),
     }));
-    unsafe { install_crash_backup(event_loop.create_proxy(), &ctx); }
-    event_loop.run(move |event, w| {
-        match &event {
-            winit::event::Event::NewEvents(winit::event::StartCause::Init) => {
-                // This fixes "keyboard non-responsive on startup because it doesn't detect FocusGained...":
-                // https://github.com/rust-windowing/winit/issues/1558
-                // https://github.com/rust-windowing/winit/issues/1558
-                //
-                use easy_imgui_window::winit::raw_window_handle::{
-                    HasWindowHandle, RawWindowHandle::{Xcb, Xlib},
-                };
-                let w = window.main_window().window();
-                if let Ok(h) = w.window_handle() {
-                    if matches!(h.as_raw(), Xcb(_) | Xlib(_)) {
-                        w.set_visible(false);
-                        w.set_visible(true);
+    unsafe {
+        install_crash_backup(event_loop.create_proxy(), &ctx);
+    }
+    event_loop
+        .run(move |event, w| {
+            match &event {
+                winit::event::Event::NewEvents(winit::event::StartCause::Init) => {
+                    // This fixes "keyboard non-responsive on startup because it doesn't detect FocusGained...":
+                    // https://github.com/rust-windowing/winit/issues/1558
+                    // https://github.com/rust-windowing/winit/issues/1558
+                    use easy_imgui_window::winit::raw_window_handle::{
+                        HasWindowHandle,
+                        RawWindowHandle::{Xcb, Xlib},
+                    };
+                    let w = window.main_window().window();
+                    if let Ok(h) = w.window_handle() {
+                        if matches!(h.as_raw(), Xcb(_) | Xlib(_)) {
+                            w.set_visible(false);
+                            w.set_visible(true);
+                        }
                     }
                 }
+                _ => {}
             }
-            _ => {}
-        }
-        // Main loop, if it panics or somewhat crashes, try to save a backup
-        let mut ctx = ctx.borrow_mut();
+            // Main loop, if it panics or somewhat crashes, try to save a backup
+            let mut ctx = ctx.borrow_mut();
 
-        let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Default message handling
-            let loop_res = window.do_event(&mut *ctx, &event, w);
+            let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Default message handling
+                let loop_res = window.do_event(&mut *ctx, &event, w);
 
-            if let Some(new_title) = ctx.updated_title() {
-                window.main_window().window().set_title(&new_title);
-            }
+                if let Some(new_title) = ctx.updated_title() {
+                    window.main_window().window().set_title(&new_title);
+                }
 
-            // manually handle a few messages
-            if let winit::event::Event::UserEvent(()) = &event {
-                //Fatal signal: it is about to be aborted, just stop whatever it is doing and
-                //let the crash handler do its job.
-                loop { std::thread::park(); }
+                // manually handle a few messages
+                if let winit::event::Event::UserEvent(()) = &event {
+                    //Fatal signal: it is about to be aborted, just stop whatever it is doing and
+                    //let the crash handler do its job.
+                    loop {
+                        std::thread::park();
+                    }
+                }
+                if loop_res.is_break() && ctx.quit_requested == BoolWithConfirm::None {
+                    let quit = ctx.check_modified();
+                    ctx.quit_requested = quit;
+                }
+                if ctx.quit_requested == BoolWithConfirm::Confirmed {
+                    w.exit();
+                }
+            }));
+            if let Err(e) = maybe_fatal {
+                ctx.save_backup_on_panic();
+                std::panic::resume_unwind(e);
             }
-            if loop_res.is_break() &&
-                ctx.quit_requested == BoolWithConfirm::None
-            {
-                let quit = ctx.check_modified();
-                ctx.quit_requested = quit;
-            }
-            if ctx.quit_requested == BoolWithConfirm::Confirmed {
-                w.exit();
-            }
-        }));
-        if let Err(e) = maybe_fatal {
-            ctx.save_backup_on_panic();
-            std::panic::resume_unwind(e);
-        }
-    }).unwrap();
+        })
+        .unwrap();
 }
 
 fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
-    let prg_scene_solid = util_gl::program_from_source(gl, include_str!("shaders/scene_solid.glsl")).with_context(|| "scene_solid")?;
-    let prg_scene_line = util_gl::program_from_source(gl, include_str!("shaders/scene_line.glsl")).with_context(|| "scene_line")?;
-    let prg_paper_solid = util_gl::program_from_source(gl, include_str!("shaders/paper_solid.glsl")).with_context(|| "paper_solid")?;
-    let prg_paper_line = util_gl::program_from_source(gl, include_str!("shaders/paper_line.glsl")).with_context(|| "paper_line")?;
-    let prg_quad = util_gl::program_from_source(gl, include_str!("shaders/quad.glsl")).with_context(|| "quad")?;
+    let prg_scene_solid =
+        util_gl::program_from_source(gl, include_str!("shaders/scene_solid.glsl"))
+            .with_context(|| "scene_solid")?;
+    let prg_scene_line = util_gl::program_from_source(gl, include_str!("shaders/scene_line.glsl"))
+        .with_context(|| "scene_line")?;
+    let prg_paper_solid =
+        util_gl::program_from_source(gl, include_str!("shaders/paper_solid.glsl"))
+            .with_context(|| "paper_solid")?;
+    let prg_paper_line = util_gl::program_from_source(gl, include_str!("shaders/paper_line.glsl"))
+        .with_context(|| "paper_line")?;
+    let prg_quad = util_gl::program_from_source(gl, include_str!("shaders/quad.glsl"))
+        .with_context(|| "quad")?;
 
     let vao = glr::VertexArray::generate(gl)?;
 
@@ -220,11 +262,21 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
 
         let rb_binder = BinderRenderbuffer::bind(&rbo_scene_color);
         gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
-        gl.framebuffer_renderbuffer(fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo_scene_color.id()));
+        gl.framebuffer_renderbuffer(
+            fb_binder.target(),
+            glow::COLOR_ATTACHMENT0,
+            glow::RENDERBUFFER,
+            Some(rbo_scene_color.id()),
+        );
 
         rb_binder.rebind(&rbo_scene_depth);
         gl.renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, 1, 1);
-        gl.framebuffer_renderbuffer(fb_binder.target(), glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rbo_scene_depth.id()));
+        gl.framebuffer_renderbuffer(
+            fb_binder.target(),
+            glow::DEPTH_ATTACHMENT,
+            glow::RENDERBUFFER,
+            Some(rbo_scene_depth.id()),
+        );
     }
 
     let fbo_paper = glr::Framebuffer::generate(gl)?;
@@ -235,14 +287,23 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
         let fb_binder = BinderDrawFramebuffer::bind(&fbo_paper);
 
         let rb_binder = BinderRenderbuffer::bind(&rbo_paper_color);
-        gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1,1);
-        gl.framebuffer_renderbuffer(fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo_paper_color.id()));
+        gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
+        gl.framebuffer_renderbuffer(
+            fb_binder.target(),
+            glow::COLOR_ATTACHMENT0,
+            glow::RENDERBUFFER,
+            Some(rbo_paper_color.id()),
+        );
 
         rb_binder.rebind(&rbo_paper_stencil);
         gl.renderbuffer_storage(rb_binder.target(), glow::STENCIL_INDEX, 1, 1);
-        gl.framebuffer_renderbuffer(fb_binder.target(), glow::STENCIL_ATTACHMENT, glow::RENDERBUFFER, Some(rbo_paper_stencil.id()));
+        gl.framebuffer_renderbuffer(
+            fb_binder.target(),
+            glow::STENCIL_ATTACHMENT,
+            glow::RENDERBUFFER,
+            Some(rbo_paper_stencil.id()),
+        );
     }
-
 
     Ok(GLFixedObjects {
         vao,
@@ -295,8 +356,7 @@ enum FileAction {
 impl FileAction {
     fn title(&self) -> &'static str {
         match self {
-            FileAction::OpenCraft |
-            FileAction::OpenCraftReadOnly => "Opening...",
+            FileAction::OpenCraft | FileAction::OpenCraftReadOnly => "Opening...",
             FileAction::SaveAsCraft => "Saving...",
             FileAction::ImportModel => "Importing...",
             FileAction::UpdateObj => "Updating...",
@@ -381,15 +441,18 @@ impl GlobalContext {
 
                 ui.separator();
 
-                if ui.button_config("OK").size(vec2(font_sz * 5.5, 0.0)).build()
+                if ui
+                    .button_config("OK")
+                    .size(vec2(font_sz * 5.5, 0.0))
+                    .build()
                     || ui.is_key_pressed(imgui::Key::Enter)
-                        || ui.is_key_pressed(imgui::Key::KeypadEnter)
-                        {
-                            if !ui.is_window_appearing() {
-                                ui.close_current_popup();
-                                self.error_message = None;
-                            }
-                        }
+                    || ui.is_key_pressed(imgui::Key::KeypadEnter)
+                {
+                    if !ui.is_window_appearing() {
+                        ui.close_current_popup();
+                        self.error_message = None;
+                    }
+                }
             });
     }
     fn build_confirm_message(&mut self, ui: &Ui, menu_actions: &mut MenuActions) {
@@ -404,14 +467,22 @@ impl GlobalContext {
 
                     ui.separator();
 
-                    if ui.button_config("Cancel").size(vec2(font_sz * 5.5, 0.0)).build() {
+                    if ui
+                        .button_config("Cancel")
+                        .size(vec2(font_sz * 5.5, 0.0))
+                        .build()
+                    {
                         if !ui.is_window_appearing() {
                             ui.close_current_popup();
                             closed = Some(false);
                         }
                     }
                     ui.same_line();
-                    if ui.button_config("Continue").size(vec2(font_sz * 5.5, 0.0)).build() {
+                    if ui
+                        .button_config("Continue")
+                        .size(vec2(font_sz * 5.5, 0.0))
+                        .build()
+                    {
                         if !ui.is_window_appearing() {
                             ui.close_current_popup();
                             closed = Some(true);
@@ -446,29 +517,36 @@ impl GlobalContext {
                 //ui.do_image(self.logo_tex, [logo_width, logo_height])
                 ui.image_with_custom_rect_config(self.logo_rect, logo_scale)
                     .build();
-                ui.with_push(self.font_big,
-                    || {
-                         center_text(ui, "Papercraft", sz_full.x);
-                     });
+                ui.with_push(self.font_big, || {
+                    center_text(ui, "Papercraft", sz_full.x);
+                });
 
                 advance_cursor(ui, 0.0, 1.0);
-                center_text(ui, &format!("Version {}", env!("CARGO_PKG_VERSION")), sz_full.x);
+                center_text(
+                    ui,
+                    &format!("Version {}", env!("CARGO_PKG_VERSION")),
+                    sz_full.x,
+                );
                 advance_cursor(ui, 0.0, 1.0);
                 center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
                 center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
-                ui.with_push(self.font_small,
-                    || {
-                         center_text(ui, "© Copyright 2022 - Rodrigo Rivas Costa", sz_full.x);
-                         center_text(ui, "This program comes with absolutely no warranty.", sz_full.x);
-                         center_url(
-                             ui,
-                             "See the GNU General Public License, version 3 or later for details.", "gpl3",
-                             Some("https://www.gnu.org/licenses/gpl-3.0.html"),
-                             sz_full.x
-                             );
-                     });
+                ui.with_push(self.font_small, || {
+                    center_text(ui, "© Copyright 2022 - Rodrigo Rivas Costa", sz_full.x);
+                    center_text(
+                        ui,
+                        "This program comes with absolutely no warranty.",
+                        sz_full.x,
+                    );
+                    center_url(
+                        ui,
+                        "See the GNU General Public License, version 3 or later for details.",
+                        "gpl3",
+                        Some("https://www.gnu.org/licenses/gpl-3.0.html"),
+                        sz_full.x,
+                    );
+                });
                 //TODO: list third party SW
             });
     }
@@ -522,157 +600,245 @@ impl GlobalContext {
             // Toolbar
             ui.with_push(
                 (
-                    (imgui::StyleVar::WindowPadding, imgui::StyleValue::Vec2(vec2(pad, pad))),
-                    (imgui::StyleVar::ItemSpacing, imgui::StyleValue::Vec2(vec2(0.0, 0.0))),
+                    (
+                        imgui::StyleVar::WindowPadding,
+                        imgui::StyleValue::Vec2(vec2(pad, pad)),
+                    ),
+                    (
+                        imgui::StyleVar::ItemSpacing,
+                        imgui::StyleValue::Vec2(vec2(0.0, 0.0)),
+                    ),
                 ),
                 || {
                     ui.child_config("toolbar")
-                        .child_flags(imgui::ChildFlags::AlwaysUseWindowPadding | imgui::ChildFlags::AutoResizeY)
+                        .child_flags(
+                            imgui::ChildFlags::AlwaysUseWindowPadding
+                                | imgui::ChildFlags::AutoResizeY,
+                        )
                         .window_flags(imgui::WindowFlags::NoScrollbar)
                         .with(|| {
-                            ui.with_push((imgui::StyleVar::ItemSpacing, imgui::StyleValue::Vec2(vec2(font_sz / 8.0, 0.0))),
+                            ui.with_push(
+                                (
+                                    imgui::StyleVar::ItemSpacing,
+                                    imgui::StyleValue::Vec2(vec2(font_sz / 8.0, 0.0)),
+                                ),
                                 || {
-                                    let color_active = ui.style().color(imgui::ColorId::ButtonActive);
-                                    if ui.image_button_with_custom_rect_config("Face", self.icons_rect[0], 1.0)
-                                        .bg_col(if self.data.ui.mode == MouseMode::Face { color_active } else { imgui::Color::TRANSPARENT })
+                                    let color_active =
+                                        ui.style().color(imgui::ColorId::ButtonActive);
+                                    if ui
+                                        .image_button_with_custom_rect_config(
+                                            "Face",
+                                            self.icons_rect[0],
+                                            1.0,
+                                        )
+                                        .bg_col(if self.data.ui.mode == MouseMode::Face {
+                                            color_active
+                                        } else {
+                                            imgui::Color::TRANSPARENT
+                                        })
                                         .build()
                                     {
                                         self.set_mouse_mode(MouseMode::Face);
                                     }
                                     ui.same_line();
-                                    if ui.image_button_with_custom_rect_config("Edge", self.icons_rect[1], 1.0)
-                                        .bg_col(if self.data.ui.mode == MouseMode::Edge { color_active } else { imgui::Color::TRANSPARENT })
+                                    if ui
+                                        .image_button_with_custom_rect_config(
+                                            "Edge",
+                                            self.icons_rect[1],
+                                            1.0,
+                                        )
+                                        .bg_col(if self.data.ui.mode == MouseMode::Edge {
+                                            color_active
+                                        } else {
+                                            imgui::Color::TRANSPARENT
+                                        })
                                         .build()
                                     {
                                         self.set_mouse_mode(MouseMode::Edge);
                                     }
                                     ui.same_line();
-                                    if ui.image_button_with_custom_rect_config("Tab", self.icons_rect[2], 1.0)
-                                        .bg_col(if self.data.ui.mode == MouseMode::Flap { color_active } else { imgui::Color::TRANSPARENT })
+                                    if ui
+                                        .image_button_with_custom_rect_config(
+                                            "Tab",
+                                            self.icons_rect[2],
+                                            1.0,
+                                        )
+                                        .bg_col(if self.data.ui.mode == MouseMode::Flap {
+                                            color_active
+                                        } else {
+                                            imgui::Color::TRANSPARENT
+                                        })
                                         .build()
                                     {
                                         self.set_mouse_mode(MouseMode::Flap);
                                     }
-                                });
-                        }
-                    );
-                }
+                                },
+                            );
+                        });
+                },
             );
         }
 
         let color_hovered = ui.style().color(imgui::ColorId::ButtonHovered);
         ui.with_push(
             (
-                (imgui::StyleVar::ItemSpacing, imgui::StyleValue::Vec2(vec2(2.0, 2.0))),
-                (imgui::StyleVar::WindowPadding, imgui::StyleValue::Vec2(vec2(0.0, 0.0))),
+                (
+                    imgui::StyleVar::ItemSpacing,
+                    imgui::StyleValue::Vec2(vec2(2.0, 2.0)),
+                ),
+                (
+                    imgui::StyleVar::WindowPadding,
+                    imgui::StyleValue::Vec2(vec2(0.0, 0.0)),
+                ),
                 (imgui::ColorId::ButtonActive, color_hovered),
                 (imgui::ColorId::Button, color_hovered),
             ),
             || {
                 let sz = vec2(0.0, -ui.get_frame_height());
-                ui.child_config("main_area")
-                    .size(sz)
-                    .with(|| {
-                        let sz_full = ui.get_content_region_avail();
-                        if self.sz_full != sz_full {
-                            if self.sz_full.x > 1.0 {
-                                self.splitter_pos = self.splitter_pos * sz_full.x / self.sz_full.x;
-                            }
-                            self.sz_full = sz_full;
+                ui.child_config("main_area").size(sz).with(|| {
+                    let sz_full = ui.get_content_region_avail();
+                    if self.sz_full != sz_full {
+                        if self.sz_full.x > 1.0 {
+                            self.splitter_pos = self.splitter_pos * sz_full.x / self.sz_full.x;
                         }
+                        self.sz_full = sz_full;
+                    }
 
-                        let scale = ui.display_scale();
+                    let scale = ui.display_scale();
 
-                        self.build_scene(ui, self.splitter_pos);
-                        let sz_scene = scale * ui.get_item_rect_size();
+                    self.build_scene(ui, self.splitter_pos);
+                    let sz_scene = scale * ui.get_item_rect_size();
 
-                        ui.same_line();
+                    ui.same_line();
 
-                        ui.button_config("##vsplitter")
-                            .size(vec2(font_sz / 2.0, -1.0))
-                            .build();
-                        if ui.is_item_active() {
-                            self.splitter_pos += ui.io().MouseDelta.x;
-                        }
-                        self.splitter_pos = self.splitter_pos.clamp(50.0, (sz_full.x - 50.0).max(50.0));
-                        if ui.is_item_hovered() || ui.is_item_active() {
-                            ui.set_mouse_cursor(imgui::MouseCursor::ResizeEW);
-                        }
+                    ui.button_config("##vsplitter")
+                        .size(vec2(font_sz / 2.0, -1.0))
+                        .build();
+                    if ui.is_item_active() {
+                        self.splitter_pos += ui.io().MouseDelta.x;
+                    }
+                    self.splitter_pos = self.splitter_pos.clamp(50.0, (sz_full.x - 50.0).max(50.0));
+                    if ui.is_item_hovered() || ui.is_item_active() {
+                        ui.set_mouse_cursor(imgui::MouseCursor::ResizeEW);
+                    }
 
-                        ui.same_line();
+                    ui.same_line();
 
-                        self.build_paper(ui);
-                        let sz_paper = scale * Vector2::from(ui.get_item_rect_size());
+                    self.build_paper(ui);
+                    let sz_paper = scale * Vector2::from(ui.get_item_rect_size());
 
-                        // Resize FBOs
-                        if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
-                            self.add_rebuild(RebuildFlags::SCENE_REDRAW);
-                            self.sz_scene = sz_scene;
+                    // Resize FBOs
+                    if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
+                        self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                        self.sz_scene = sz_scene;
 
-                            self.data.ui.trans_scene.persp = cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
-                            self.data.ui.trans_scene.persp_inv = self.data.ui.trans_scene.persp.invert().unwrap();
+                        self.data.ui.trans_scene.persp =
+                            cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
+                        self.data.ui.trans_scene.persp_inv =
+                            self.data.ui.trans_scene.persp.invert().unwrap();
 
-                            let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
+                        let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
 
-                            unsafe {
-                                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
+                        unsafe {
+                            let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
 
-                                'no_aa: {
-                                    for samples in MULTISAMPLES {
-                                        self.gl.get_error(); //clear error
-                                        rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::RGBA8, x, y);
-                                        rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::DEPTH_COMPONENT, x, y);
-
-                                        if self.gl.get_error() != 0 || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
-                                            continue;
-                                        }
-                                        break 'no_aa;
-                                    }
-
+                            'no_aa: {
+                                for samples in MULTISAMPLES {
+                                    self.gl.get_error(); //clear error
                                     rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
+                                    self.gl.renderbuffer_storage_multisample(
+                                        rb_binder.target(),
+                                        *samples,
+                                        glow::RGBA8,
+                                        x,
+                                        y,
+                                    );
                                     rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, x, y);
-                                }
-                            }
-                        }
+                                    self.gl.renderbuffer_storage_multisample(
+                                        rb_binder.target(),
+                                        *samples,
+                                        glow::DEPTH_COMPONENT,
+                                        x,
+                                        y,
+                                    );
 
-                        if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
-                            self.add_rebuild(RebuildFlags::PAPER_REDRAW);
-                            self.sz_paper = sz_paper;
-
-                            let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
-                            self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
-
-                            unsafe {
-                                let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
-
-                                'no_aa: {
-                                    for samples in MULTISAMPLES {
-                                        self.gl.get_error(); //clear error
-                                        rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::RGBA8, x, y);
-                                        rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                                        self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::STENCIL_INDEX, x, y);
-
-                                        if self.gl.get_error() != 0 || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
-                                            continue;
-                                        }
-                                        break 'no_aa;
+                                    if self.gl.get_error() != 0
+                                        || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER)
+                                            != glow::FRAMEBUFFER_COMPLETE
+                                    {
+                                        continue;
                                     }
-
-                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
-                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                                    self.gl.renderbuffer_storage(rb_binder.target(), glow::STENCIL_INDEX, x, y);
+                                    break 'no_aa;
                                 }
+
+                                rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
+                                self.gl
+                                    .renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
+                                rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
+                                self.gl.renderbuffer_storage(
+                                    rb_binder.target(),
+                                    glow::DEPTH_COMPONENT,
+                                    x,
+                                    y,
+                                );
                             }
                         }
+                    }
 
-                    });
-            }
+                    if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
+                        self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                        self.sz_paper = sz_paper;
+
+                        let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
+                        self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
+
+                        unsafe {
+                            let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
+
+                            'no_aa: {
+                                for samples in MULTISAMPLES {
+                                    self.gl.get_error(); //clear error
+                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
+                                    self.gl.renderbuffer_storage_multisample(
+                                        rb_binder.target(),
+                                        *samples,
+                                        glow::RGBA8,
+                                        x,
+                                        y,
+                                    );
+                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
+                                    self.gl.renderbuffer_storage_multisample(
+                                        rb_binder.target(),
+                                        *samples,
+                                        glow::STENCIL_INDEX,
+                                        x,
+                                        y,
+                                    );
+
+                                    if self.gl.get_error() != 0
+                                        || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER)
+                                            != glow::FRAMEBUFFER_COMPLETE
+                                    {
+                                        continue;
+                                    }
+                                    break 'no_aa;
+                                }
+
+                                rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
+                                self.gl
+                                    .renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
+                                rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
+                                self.gl.renderbuffer_storage(
+                                    rb_binder.target(),
+                                    glow::STENCIL_INDEX,
+                                    x,
+                                    y,
+                                );
+                            }
+                        }
+                    }
+                });
+            },
         );
         advance_cursor(ui, 0.25, 0.0);
 
@@ -700,14 +866,22 @@ impl GlobalContext {
         };
         let modifiable = self.modifiable();
         let mut options_opened = true;
-        ui.set_next_window_size(if modifiable {vec2(650.0, 400.0)} else {vec2(300.0, 100.0)}, imgui::Cond::Once);
+        ui.set_next_window_size(
+            if modifiable {
+                vec2(650.0, 400.0)
+            } else {
+                vec2(300.0, 100.0)
+            },
+            imgui::Cond::Once,
+        );
         ui.window_config("Document properties###options")
             .open(&mut options_opened)
             .flags(imgui::WindowFlags::NoScrollbar)
             .with_always(|opened| {
                 if opened {
                     if modifiable {
-                        let (keep_opened, apply) = self.build_full_options_inner_dialog(ui, options);
+                        let (keep_opened, apply) =
+                            self.build_full_options_inner_dialog(ui, options);
                         self.options_opened = keep_opened;
                         if let Some(apply_options) = apply {
                             self.data.set_papercraft_options(apply_options);
@@ -730,268 +904,329 @@ impl GlobalContext {
 
     fn build_read_only_options_inner_dialog(&self, ui: &Ui, options: &PaperOptions) {
         let n_pieces = self.data.papercraft().num_islands();
-        let n_flaps = self.data.papercraft().model().edges()
-            .filter(|(e, _)| matches!(self.data.papercraft().edge_status(*e), paper::EdgeStatus::Cut(_)))
+        let n_flaps = self
+            .data
+            .papercraft()
+            .model()
+            .edges()
+            .filter(|(e, _)| {
+                matches!(
+                    self.data.papercraft().edge_status(*e),
+                    paper::EdgeStatus::Cut(_)
+                )
+            })
             .count();
         let bbox = util_3d::bounding_box_3d(
-            self.data.papercraft().model()
-            .vertices()
-            .map(|(_, v)| v.pos())
-            );
+            self.data
+                .papercraft()
+                .model()
+                .vertices()
+                .map(|(_, v)| v.pos()),
+        );
         let model_size = (bbox.1 - bbox.0) * options.scale;
         let Vector3 { x, y, z } = model_size;
         ui.text(&format!("Number of pieces: {n_pieces}\nNumber of flaps: {n_flaps}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
     }
 
-    fn build_full_options_inner_dialog(&mut self, ui: &Ui, mut options: PaperOptions) -> (Option<PaperOptions>, Option<PaperOptions>) {
+    fn build_full_options_inner_dialog(
+        &mut self,
+        ui: &Ui,
+        mut options: PaperOptions,
+    ) -> (Option<PaperOptions>, Option<PaperOptions>) {
         let size = Vector2::from(ui.get_content_region_avail());
         let font_sz = ui.get_font_size();
         ui.child_config("options")
             .size(vec2(size.x, -self.option_button_height))
             .window_flags(imgui::WindowFlags::HorizontalScrollbar)
             .with(|| {
-                ui.tree_node_config("Model").flags(imgui::TreeNodeFlags::Framed).with(|| {
-                    ui.set_next_item_width(font_sz * 5.5);
-                    ui.input_float_config("Scale", &mut options.scale)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    options.scale = options.scale.max(0.0);
-                    ui.same_line_ex(0.0, font_sz * 3.0);
-                    ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
-                        ui.checkbox("Textured", &mut options.texture);
+                ui.tree_node_config("Model")
+                    .flags(imgui::TreeNodeFlags::Framed)
+                    .with(|| {
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.input_float_config("Scale", &mut options.scale)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.scale = options.scale.max(0.0);
                         ui.same_line_ex(0.0, font_sz * 3.0);
-                        ui.checkbox("Texture filter", &mut options.tex_filter);
-                    });
-
-                    ui.tree_node_config("Flaps").with(|| {
-                        static FLAP_STYLES: &[FlapStyle] = &[
-                            FlapStyle::Textured,
-                            FlapStyle::HalfTextured,
-                            FlapStyle::White,
-                            FlapStyle::None,
-                        ];
-                        fn fmt_flap_style(s: FlapStyle) -> &'static str {
-                            match s {
-                                FlapStyle::Textured => "Textured",
-                                FlapStyle::HalfTextured => "Half textured",
-                                FlapStyle::White => "White",
-                                FlapStyle::None => "None",
-                            }
-                        }
-
-                        ui.set_next_item_width(font_sz * 8.0);
-                        ui.combo("Style", FLAP_STYLES.iter().copied(), fmt_flap_style, &mut options.flap_style);
-
-                        ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
-                        ui.set_next_item_width(font_sz * 8.0);
-                        ui.slider_float_config("Shadow", &mut options.shadow_flap_alpha)
-                            .range(0.0, 1.0)
-                            .display_format(imgui::FloatFormat::F(2))
-                            .build();
-
-                        ui.set_next_item_width(font_sz * 8.0);
-                        ui.input_float_config("Width", &mut options.flap_width)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                        options.flap_width = options.flap_width.max(0.0);
-
-                        ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
-                        ui.set_next_item_width(font_sz * 8.0);
-                        ui.input_float_config("Angle", &mut options.flap_angle)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                        options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
-                    });
-                    ui.tree_node_config("Folds").with(|| {
-                        static FOLD_STYLES: &[FoldStyle] = &[
-                            FoldStyle::Full,
-                            FoldStyle::FullAndOut,
-                            FoldStyle::Out,
-                            FoldStyle::In,
-                            FoldStyle::InAndOut,
-                            FoldStyle::None,
-                        ];
-                        fn fmt_fold_style(s: FoldStyle) -> &'static str {
-                            match s {
-                                FoldStyle::Full => "Full line",
-                                FoldStyle::FullAndOut => "Full & out segment",
-                                FoldStyle::Out => "Out segment",
-                                FoldStyle::In => "In segment",
-                                FoldStyle::InAndOut => "Out & in segment",
-                                FoldStyle::None => "None",
-                            }
-                        }
-
-                        ui.set_next_item_width(font_sz * 8.0);
-                        ui.combo("Style", FOLD_STYLES.iter().copied(), fmt_fold_style, &mut options.fold_style);
-
-                        ui.same_line_ex(0.0, font_sz * 1.5);
-                        ui.set_next_item_width(font_sz * 5.5);
-                        ui.with_disabled(matches!(options.fold_style, FoldStyle::None | FoldStyle::Full), || {
-                            ui.input_float_config("Length", &mut options.fold_line_len)
-                                .display_format(imgui::FloatFormat::G)
-                                .build();
-                            options.fold_line_len = options.fold_line_len.max(0.0);
-                        });
-                        ui.same_line_ex(0.0, font_sz * 1.5);
-                        ui.set_next_item_width(font_sz * 5.5);
-                        ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
-                            ui.input_float_config("Line width", &mut options.fold_line_width)
-                                .display_format(imgui::FloatFormat::G)
-                                .build();
-                            options.fold_line_width = options.fold_line_width.max(0.0);
+                        ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
+                            ui.checkbox("Textured", &mut options.texture);
+                            ui.same_line_ex(0.0, font_sz * 3.0);
+                            ui.checkbox("Texture filter", &mut options.tex_filter);
                         });
 
-                        ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config("Hidden fold angle", &mut options.hidden_line_angle)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                        options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
-                    });
-                    ui.tree_node_config("Information").with(|| {
-                        self.build_read_only_options_inner_dialog(ui, &options);
-                    });
-                });
-                ui.tree_node_config("Page layout").flags(imgui::TreeNodeFlags::Framed).with(|| {
-                    ui.set_next_item_width(font_sz * 5.5);
-
-                    let mut i = options.pages as _;
-                    ui.input_int_config("Pages", &mut i).build();
-                    options.pages = i.clamp(1, 1000) as _;
-
-                    ui.same_line_ex(0.0, font_sz * 1.5);
-                    ui.set_next_item_width(font_sz * 5.5);
-
-                    let mut i = options.page_cols as _;
-                    ui.input_int_config("Columns", &mut i).build();
-                    options.page_cols = i.clamp(1, options.pages as _) as _;
-
-                    ui.set_next_item_width(font_sz * 11.0);
-                    ui.checkbox("Print Papercraft signature", &mut options.show_self_promotion);
-
-                    ui.same_line_ex(0.0, font_sz * 3.0);
-                    ui.set_next_item_width(font_sz * 11.0);
-                    ui.checkbox("Print page number", &mut options.show_page_number);
-
-                    static EDGE_ID_POSITIONS: &[EdgeIdPosition] = &[
-                        EdgeIdPosition::None,
-                        EdgeIdPosition::Outside,
-                        EdgeIdPosition::Inside,
-                    ];
-                    fn fmt_edge_id_position(s: EdgeIdPosition) -> &'static str {
-                        match s {
-                            EdgeIdPosition::None => "None",
-                            EdgeIdPosition::Outside => "Outside",
-                            EdgeIdPosition::Inside => "Inside",
-                        }
-                    }
-                    ui.set_next_item_width(font_sz * 6.0);
-                    ui.combo("Edge id position", EDGE_ID_POSITIONS.iter().copied(), fmt_edge_id_position, &mut options.edge_id_position);
-
-                    ui.same_line_ex(0.0, font_sz * 1.5);
-
-                    ui.set_next_item_width(font_sz * 3.0);
-                    ui.with_disabled(options.edge_id_position == EdgeIdPosition::None, || {
-                        ui.input_float_config("Edge id font size (pt)", &mut options.edge_id_font_size)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                        options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
-                    });
-                });
-                ui.tree_node_config("Paper size").flags(imgui::TreeNodeFlags::Framed).with(|| {
-                    ui.set_next_item_width(font_sz * 5.5);
-                    ui.input_float_config("Width", &mut options.page_size.0)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    options.page_size.0 = options.page_size.0.max(1.0);
-                    ui.same_line_ex(0.0, font_sz * 1.5);
-                    ui.set_next_item_width(font_sz * 5.5);
-                    ui.input_float_config("Height", &mut options.page_size.1)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    options.page_size.1 = options.page_size.1.max(1.0);
-                    ui.same_line_ex(0.0, font_sz * 1.5);
-                    ui.set_next_item_width(font_sz * 5.5);
-                    let mut resolution = options.resolution as f32;
-                    ui.input_float_config("DPI", &mut resolution)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    options.resolution = (resolution as u32).max(1);
-
-                    struct PaperSize {
-                        name: &'static str,
-                        size: Vector2,
-                    }
-
-                    static PAPER_SIZES: &[PaperSize] = &[
-                        PaperSize {
-                            name: "A4",
-                            size: vec2(210.0, 297.0),
-                        },
-                        PaperSize {
-                            name: "A3",
-                            size: vec2(297.0, 420.0),
-                        },
-                        PaperSize {
-                            name: "Letter",
-                            size: vec2(215.9, 279.4),
-                        },
-                        PaperSize {
-                            name: "Legal",
-                            size: vec2(215.9, 355.6),
-                        },
-                    ];
-
-                    let portrait = options.page_size.1 >= options.page_size.0;
-                    let paper_size = vec2(options.page_size.0, options.page_size.1);
-                    let paper_size = PAPER_SIZES.iter().find(|s| s.size == paper_size || s.size == vec2(paper_size.y, paper_size.x));
-                    ui.set_next_item_width(font_sz * 8.0);
-                    ui.combo_config("##Paper")
-                        .preview_value_opt(paper_size.map(|p| p.name))
-                        .with(|| {
-                            for op in PAPER_SIZES {
-                                if ui.selectable_config(op.name)
-                                    .selected(paper_size.map(|p| std::ptr::eq(p, op)).unwrap_or(false))
-                                    .build()
-                                {
-                                    options.page_size = (op.size.x, op.size.y);
-                                    if !portrait {
-                                        std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
-                                    }
+                        ui.tree_node_config("Flaps").with(|| {
+                            static FLAP_STYLES: &[FlapStyle] = &[
+                                FlapStyle::Textured,
+                                FlapStyle::HalfTextured,
+                                FlapStyle::White,
+                                FlapStyle::None,
+                            ];
+                            fn fmt_flap_style(s: FlapStyle) -> &'static str {
+                                match s {
+                                    FlapStyle::Textured => "Textured",
+                                    FlapStyle::HalfTextured => "Half textured",
+                                    FlapStyle::White => "White",
+                                    FlapStyle::None => "None",
                                 }
                             }
+
+                            ui.set_next_item_width(font_sz * 8.0);
+                            ui.combo(
+                                "Style",
+                                FLAP_STYLES.iter().copied(),
+                                fmt_flap_style,
+                                &mut options.flap_style,
+                            );
+
+                            ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
+                            ui.set_next_item_width(font_sz * 8.0);
+                            ui.slider_float_config("Shadow", &mut options.shadow_flap_alpha)
+                                .range(0.0, 1.0)
+                                .display_format(imgui::FloatFormat::F(2))
+                                .build();
+
+                            ui.set_next_item_width(font_sz * 8.0);
+                            ui.input_float_config("Width", &mut options.flap_width)
+                                .display_format(imgui::FloatFormat::G)
+                                .build();
+                            options.flap_width = options.flap_width.max(0.0);
+
+                            ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
+                            ui.set_next_item_width(font_sz * 8.0);
+                            ui.input_float_config("Angle", &mut options.flap_angle)
+                                .display_format(imgui::FloatFormat::G)
+                                .build();
+                            options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
                         });
-                    let mut new_portrait = portrait;
-                    if ui.radio_button_config("Portrait", portrait).build() {
-                        new_portrait = true;
-                    }
-                    if ui.radio_button_config("Landscape", !portrait).build() { new_portrait = false;
-                    }
-                    if portrait != new_portrait {
-                        std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
-                    }
-                });
-                ui.tree_node_config("Margins").flags(imgui::TreeNodeFlags::Framed).with(|| {
-                    ui.set_next_item_width(font_sz * 4.0);
-                    ui.input_float_config("Top", &mut options.margin.0)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    ui.same_line_ex(0.0, font_sz * 1.5);
-                    ui.set_next_item_width(font_sz * 4.0);
-                    ui.input_float_config("Left", &mut options.margin.1)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    ui.same_line_ex(0.0, font_sz * 1.5);
-                    ui.set_next_item_width(font_sz * 4.0);
-                    ui.input_float_config("Right", &mut options.margin.2)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    ui.same_line_ex(0.0, font_sz * 1.5);
-                    ui.set_next_item_width(font_sz * 4.0);
-                    ui.input_float_config("Bottom", &mut options.margin.3)
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                });
+                        ui.tree_node_config("Folds").with(|| {
+                            static FOLD_STYLES: &[FoldStyle] = &[
+                                FoldStyle::Full,
+                                FoldStyle::FullAndOut,
+                                FoldStyle::Out,
+                                FoldStyle::In,
+                                FoldStyle::InAndOut,
+                                FoldStyle::None,
+                            ];
+                            fn fmt_fold_style(s: FoldStyle) -> &'static str {
+                                match s {
+                                    FoldStyle::Full => "Full line",
+                                    FoldStyle::FullAndOut => "Full & out segment",
+                                    FoldStyle::Out => "Out segment",
+                                    FoldStyle::In => "In segment",
+                                    FoldStyle::InAndOut => "Out & in segment",
+                                    FoldStyle::None => "None",
+                                }
+                            }
+
+                            ui.set_next_item_width(font_sz * 8.0);
+                            ui.combo(
+                                "Style",
+                                FOLD_STYLES.iter().copied(),
+                                fmt_fold_style,
+                                &mut options.fold_style,
+                            );
+
+                            ui.same_line_ex(0.0, font_sz * 1.5);
+                            ui.set_next_item_width(font_sz * 5.5);
+                            ui.with_disabled(
+                                matches!(options.fold_style, FoldStyle::None | FoldStyle::Full),
+                                || {
+                                    ui.input_float_config("Length", &mut options.fold_line_len)
+                                        .display_format(imgui::FloatFormat::G)
+                                        .build();
+                                    options.fold_line_len = options.fold_line_len.max(0.0);
+                                },
+                            );
+                            ui.same_line_ex(0.0, font_sz * 1.5);
+                            ui.set_next_item_width(font_sz * 5.5);
+                            ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
+                                ui.input_float_config("Line width", &mut options.fold_line_width)
+                                    .display_format(imgui::FloatFormat::G)
+                                    .build();
+                                options.fold_line_width = options.fold_line_width.max(0.0);
+                            });
+
+                            ui.set_next_item_width(font_sz * 5.5);
+                            ui.input_float_config(
+                                "Hidden fold angle",
+                                &mut options.hidden_line_angle,
+                            )
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                            options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
+                        });
+                        ui.tree_node_config("Information").with(|| {
+                            self.build_read_only_options_inner_dialog(ui, &options);
+                        });
+                    });
+                ui.tree_node_config("Page layout")
+                    .flags(imgui::TreeNodeFlags::Framed)
+                    .with(|| {
+                        ui.set_next_item_width(font_sz * 5.5);
+
+                        let mut i = options.pages as _;
+                        ui.input_int_config("Pages", &mut i).build();
+                        options.pages = i.clamp(1, 1000) as _;
+
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 5.5);
+
+                        let mut i = options.page_cols as _;
+                        ui.input_int_config("Columns", &mut i).build();
+                        options.page_cols = i.clamp(1, options.pages as _) as _;
+
+                        ui.set_next_item_width(font_sz * 11.0);
+                        ui.checkbox(
+                            "Print Papercraft signature",
+                            &mut options.show_self_promotion,
+                        );
+
+                        ui.same_line_ex(0.0, font_sz * 3.0);
+                        ui.set_next_item_width(font_sz * 11.0);
+                        ui.checkbox("Print page number", &mut options.show_page_number);
+
+                        static EDGE_ID_POSITIONS: &[EdgeIdPosition] = &[
+                            EdgeIdPosition::None,
+                            EdgeIdPosition::Outside,
+                            EdgeIdPosition::Inside,
+                        ];
+                        fn fmt_edge_id_position(s: EdgeIdPosition) -> &'static str {
+                            match s {
+                                EdgeIdPosition::None => "None",
+                                EdgeIdPosition::Outside => "Outside",
+                                EdgeIdPosition::Inside => "Inside",
+                            }
+                        }
+                        ui.set_next_item_width(font_sz * 6.0);
+                        ui.combo(
+                            "Edge id position",
+                            EDGE_ID_POSITIONS.iter().copied(),
+                            fmt_edge_id_position,
+                            &mut options.edge_id_position,
+                        );
+
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+
+                        ui.set_next_item_width(font_sz * 3.0);
+                        ui.with_disabled(options.edge_id_position == EdgeIdPosition::None, || {
+                            ui.input_float_config(
+                                "Edge id font size (pt)",
+                                &mut options.edge_id_font_size,
+                            )
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                            options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
+                        });
+                    });
+                ui.tree_node_config("Paper size")
+                    .flags(imgui::TreeNodeFlags::Framed)
+                    .with(|| {
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.input_float_config("Width", &mut options.page_size.0)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.page_size.0 = options.page_size.0.max(1.0);
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.input_float_config("Height", &mut options.page_size.1)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.page_size.1 = options.page_size.1.max(1.0);
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 5.5);
+                        let mut resolution = options.resolution as f32;
+                        ui.input_float_config("DPI", &mut resolution)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        options.resolution = (resolution as u32).max(1);
+
+                        struct PaperSize {
+                            name: &'static str,
+                            size: Vector2,
+                        }
+
+                        static PAPER_SIZES: &[PaperSize] = &[
+                            PaperSize {
+                                name: "A4",
+                                size: vec2(210.0, 297.0),
+                            },
+                            PaperSize {
+                                name: "A3",
+                                size: vec2(297.0, 420.0),
+                            },
+                            PaperSize {
+                                name: "Letter",
+                                size: vec2(215.9, 279.4),
+                            },
+                            PaperSize {
+                                name: "Legal",
+                                size: vec2(215.9, 355.6),
+                            },
+                        ];
+
+                        let portrait = options.page_size.1 >= options.page_size.0;
+                        let paper_size = vec2(options.page_size.0, options.page_size.1);
+                        let paper_size = PAPER_SIZES.iter().find(|s| {
+                            s.size == paper_size || s.size == vec2(paper_size.y, paper_size.x)
+                        });
+                        ui.set_next_item_width(font_sz * 8.0);
+                        ui.combo_config("##Paper")
+                            .preview_value_opt(paper_size.map(|p| p.name))
+                            .with(|| {
+                                for op in PAPER_SIZES {
+                                    if ui
+                                        .selectable_config(op.name)
+                                        .selected(
+                                            paper_size
+                                                .map(|p| std::ptr::eq(p, op))
+                                                .unwrap_or(false),
+                                        )
+                                        .build()
+                                    {
+                                        options.page_size = (op.size.x, op.size.y);
+                                        if !portrait {
+                                            std::mem::swap(
+                                                &mut options.page_size.0,
+                                                &mut options.page_size.1,
+                                            );
+                                        }
+                                    }
+                                }
+                            });
+                        let mut new_portrait = portrait;
+                        if ui.radio_button_config("Portrait", portrait).build() {
+                            new_portrait = true;
+                        }
+                        if ui.radio_button_config("Landscape", !portrait).build() {
+                            new_portrait = false;
+                        }
+                        if portrait != new_portrait {
+                            std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
+                        }
+                    });
+                ui.tree_node_config("Margins")
+                    .flags(imgui::TreeNodeFlags::Framed)
+                    .with(|| {
+                        ui.set_next_item_width(font_sz * 4.0);
+                        ui.input_float_config("Top", &mut options.margin.0)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 4.0);
+                        ui.input_float_config("Left", &mut options.margin.1)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 4.0);
+                        ui.input_float_config("Right", &mut options.margin.2)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.set_next_item_width(font_sz * 4.0);
+                        ui.input_float_config("Bottom", &mut options.margin.3)
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                    });
             });
 
         let mut options_opened = Some(options);
@@ -1029,17 +1264,11 @@ impl GlobalContext {
 
         ui.with_menu_bar(|| {
             ui.menu_config("File").with(|| {
-                if ui.menu_item_config("Open...")
-                    .shortcut("Ctrl+O")
-                    .build()
-                {
+                if ui.menu_item_config("Open...").shortcut("Ctrl+O").build() {
                     menu_actions.open = self.check_modified();
                 }
                 ui.with_disabled(self.data.papercraft().model().is_empty(), || {
-                    if ui.menu_item_config("Save")
-                        .shortcut("Ctrl+S")
-                        .build()
-                    {
+                    if ui.menu_item_config("Save").shortcut("Ctrl+S").build() {
                         menu_actions.save = true;
                     }
                     if ui.menu_item_config("Save as...").build() {
@@ -1061,16 +1290,14 @@ impl GlobalContext {
                     menu_actions.generate_printable = true;
                 }
                 ui.separator();
-                if ui.menu_item_config("Quit")
-                    .shortcut("Ctrl+Q")
-                    .build()
-                {
+                if ui.menu_item_config("Quit").shortcut("Ctrl+Q").build() {
                     menu_actions.quit = self.check_modified();
                 }
             });
             ui.menu_config("Edit").with(|| {
                 if self.modifiable() {
-                    if ui.menu_item_config("Undo")
+                    if ui
+                        .menu_item_config("Undo")
                         .shortcut("Ctrl+Z")
                         .enabled(self.data.can_undo())
                         .build()
@@ -1080,7 +1307,8 @@ impl GlobalContext {
                     ui.separator();
                 }
 
-                if ui.menu_item_config("Document properties")
+                if ui
+                    .menu_item_config("Document properties")
                     .selected(self.options_opened.is_some())
                     .build()
                 {
@@ -1093,21 +1321,24 @@ impl GlobalContext {
                 if self.modifiable() {
                     ui.separator();
 
-                    if ui.menu_item_config("Face/Island")
+                    if ui
+                        .menu_item_config("Face/Island")
                         .shortcut("F5")
                         .selected(self.data.ui.mode == MouseMode::Face)
                         .build()
                     {
                         self.set_mouse_mode(MouseMode::Face);
                     }
-                    if ui.menu_item_config("Split/Join edge")
+                    if ui
+                        .menu_item_config("Split/Join edge")
                         .shortcut("F6")
                         .selected(self.data.ui.mode == MouseMode::Edge)
                         .build()
                     {
                         self.set_mouse_mode(MouseMode::Edge);
                     }
-                    if ui.menu_item_config("Flaps")
+                    if ui
+                        .menu_item_config("Flaps")
                         .shortcut("F7")
                         .selected(self.data.ui.mode == MouseMode::Flap)
                         .build()
@@ -1125,7 +1356,8 @@ impl GlobalContext {
                 }
             });
             ui.menu_config("View").with(|| {
-                if ui.menu_item_config("Textures")
+                if ui
+                    .menu_item_config("Textures")
                     .shortcut("T")
                     .enabled(self.data.papercraft().options().texture)
                     .selected(self.data.ui.show_textures)
@@ -1134,7 +1366,8 @@ impl GlobalContext {
                     self.data.ui.show_textures ^= true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
-                if ui.menu_item_config("3D lines")
+                if ui
+                    .menu_item_config("3D lines")
                     .shortcut("D")
                     .selected(self.data.ui.show_3d_lines)
                     .build()
@@ -1142,7 +1375,8 @@ impl GlobalContext {
                     self.data.ui.show_3d_lines ^= true;
                     self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 }
-                if ui.menu_item_config("Flaps")
+                if ui
+                    .menu_item_config("Flaps")
                     .shortcut("B")
                     .selected(self.data.ui.show_flaps)
                     .build()
@@ -1150,7 +1384,8 @@ impl GlobalContext {
                     self.data.ui.show_flaps ^= true;
                     self.add_rebuild(RebuildFlags::PAPER);
                 }
-                if ui.menu_item_config("X-ray selection")
+                if ui
+                    .menu_item_config("X-ray selection")
                     .shortcut("X")
                     .selected(self.data.ui.xray_selection)
                     .build()
@@ -1158,7 +1393,8 @@ impl GlobalContext {
                     self.data.ui.xray_selection ^= true;
                     self.add_rebuild(RebuildFlags::SELECTION);
                 }
-                if ui.menu_item_config("Highlight overlaps")
+                if ui
+                    .menu_item_config("Highlight overlaps")
                     .shortcut("H")
                     .selected(self.data.ui.highlight_overlaps)
                     .build()
@@ -1172,7 +1408,8 @@ impl GlobalContext {
                 }
             });
             ui.menu_config("Help").with(|| {
-                if ui.menu_item_config("About...")
+                if ui
+                    .menu_item_config("About...")
                     .selected(self.about_visible)
                     .build()
                 {
@@ -1192,7 +1429,6 @@ impl GlobalContext {
                     self.set_mouse_mode(MouseMode::Flap);
                 }
                 if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::Z) {
-
                     menu_actions.undo = true;
                 }
             }
@@ -1230,7 +1466,8 @@ impl GlobalContext {
     }
 
     fn build_scene(&mut self, ui: &Ui, width: f32) {
-        let w = ui.child_config("scene")
+        let w = ui
+            .child_config("scene")
             .size(vec2(width, 0.0))
             .child_flags(imgui::ChildFlags::Border)
             .with(|| {
@@ -1249,12 +1486,20 @@ impl GlobalContext {
                             let width = this.sz_scene.x as i32;
                             let height = this.sz_scene.y as i32;
 
-                            let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
+                            let _read_fb_binder =
+                                BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
                             this.gl.blit_framebuffer(
-                                0, 0, width, height,
-                                x, y - height, x + width, y,
-                                glow::COLOR_BUFFER_BIT, glow::NEAREST
-                                );
+                                0,
+                                0,
+                                width,
+                                height,
+                                x,
+                                y - height,
+                                x + width,
+                                y,
+                                glow::COLOR_BUFFER_BIT,
+                                glow::NEAREST,
+                            );
                         }
                     }
                 });
@@ -1265,7 +1510,8 @@ impl GlobalContext {
     }
 
     fn build_paper(&mut self, ui: &Ui) {
-        let r = ui.child_config("paper")
+        let r = ui
+            .child_config("paper")
             .child_flags(imgui::ChildFlags::Border)
             .with(|| {
                 let scale = ui.display_scale();
@@ -1283,12 +1529,20 @@ impl GlobalContext {
                             let width = this.sz_paper.x as i32;
                             let height = this.sz_paper.y as i32;
 
-                            let _read_fb_binder = BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
+                            let _read_fb_binder =
+                                BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
                             this.gl.blit_framebuffer(
-                                0, 0, width, height,
-                                x, y - height, x + width, y,
-                                glow::COLOR_BUFFER_BIT, glow::NEAREST
-                                );
+                                0,
+                                0,
+                                width,
+                                height,
+                                x,
+                                y - height,
+                                x + width,
+                                y,
+                                glow::COLOR_BUFFER_BIT,
+                                glow::NEAREST,
+                            );
                         }
                     }
                 });
@@ -1298,7 +1552,13 @@ impl GlobalContext {
         }
     }
 
-    fn open_confirmation_dialog(&mut self, ui: &Ui, title: &str, message: &str, f: impl Fn(&mut MenuActions) + 'static) {
+    fn open_confirmation_dialog(
+        &mut self,
+        ui: &Ui,
+        title: &str,
+        message: &str,
+        f: impl Fn(&mut MenuActions) + 'static,
+    ) {
         self.confirmable_action = Some(ConfirmableAction {
             title: title.to_owned(),
             message: message.to_owned(),
@@ -1309,7 +1569,8 @@ impl GlobalContext {
 
     fn run_menu_actions(&mut self, ui: &Ui, menu_actions: &MenuActions) {
         if menu_actions.reset_views {
-            self.data.reset_views(to_cgv2(self.sz_scene), to_cgv2(self.sz_paper));
+            self.data
+                .reset_views(to_cgv2(self.sz_scene), to_cgv2(self.sz_paper));
         }
         if menu_actions.undo {
             match self.data.undo_action() {
@@ -1322,7 +1583,7 @@ impl GlobalContext {
                     }
                     self.add_rebuild(RebuildFlags::all());
                 }
-                UndoResult::False => {},
+                UndoResult::False => {}
             }
         }
 
@@ -1332,17 +1593,22 @@ impl GlobalContext {
 
         match menu_actions.open {
             BoolWithConfirm::Requested => {
-                self.open_confirmation_dialog(ui,
+                self.open_confirmation_dialog(
+                    ui,
                     "Load model",
                     "The model has not been save, continue anyway?",
-                    |a| a.open = BoolWithConfirm::Confirmed
+                    |a| a.open = BoolWithConfirm::Confirmed,
                 );
             }
             BoolWithConfirm::Confirmed => {
                 let fd = imgui_filedialog::Builder::new("fd")
                     .filter("Papercraft (*.craft) {.craft},All files {.*}")
                     .path(&self.last_path)
-                    .flags(imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::SHOW_READ_ONLY_CHECK | imgui_filedialog::Flags::NO_DIALOG)
+                    .flags(
+                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON
+                            | imgui_filedialog::Flags::SHOW_READ_ONLY_CHECK
+                            | imgui_filedialog::Flags::NO_DIALOG,
+                    )
                     .open();
                 self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
                 open_file_dialog = true;
@@ -1362,7 +1628,9 @@ impl GlobalContext {
             let fd = imgui_filedialog::Builder::new("fd")
                 .filter("Papercraft (*.craft) {.craft},All files {.*}")
                 .path(&self.last_path)
-                .flags(imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG)
+                .flags(
+                    imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG,
+                )
                 .open();
             self.file_dialog = Some((fd, "Save as...", FileAction::SaveAsCraft));
             open_file_dialog = true;
@@ -1376,17 +1644,21 @@ impl GlobalContext {
             ";
         match menu_actions.import_model {
             BoolWithConfirm::Requested => {
-                self.open_confirmation_dialog(ui,
+                self.open_confirmation_dialog(
+                    ui,
                     "Import model",
                     "The model has not been save, continue anyway?",
-                    |a| a.import_model = BoolWithConfirm::Confirmed
+                    |a| a.import_model = BoolWithConfirm::Confirmed,
                 );
             }
             BoolWithConfirm::Confirmed => {
                 let fd = imgui_filedialog::Builder::new("fd")
                     .filter(LOAD_MODEL_FILTER)
                     .path(&self.last_path)
-                    .flags(imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG)
+                    .flags(
+                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON
+                            | imgui_filedialog::Flags::NO_DIALOG,
+                    )
                     .open();
                 self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportModel));
                 open_file_dialog = true;
@@ -1405,7 +1677,10 @@ impl GlobalContext {
                 let fd = imgui_filedialog::Builder::new("fd")
                     .filter(LOAD_MODEL_FILTER)
                     .path(&self.last_path)
-                    .flags(imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON | imgui_filedialog::Flags::NO_DIALOG)
+                    .flags(
+                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON
+                            | imgui_filedialog::Flags::NO_DIALOG,
+                    )
                     .open();
                 self.file_dialog = Some((fd, "Update with new OBJ...", FileAction::UpdateObj));
                 open_file_dialog = true;
@@ -1416,7 +1691,9 @@ impl GlobalContext {
             let fd = imgui_filedialog::Builder::new("fd")
                 .filter("Wavefront (*.obj) {.obj},All files {.*}")
                 .path(&self.last_path)
-                .flags(imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG)
+                .flags(
+                    imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG,
+                )
                 .open();
             self.file_dialog = Some((fd, "Export OBJ...", FileAction::ExportObj));
             open_file_dialog = true;
@@ -1428,10 +1705,14 @@ impl GlobalContext {
                 (Borrowed(&self.last_path), Borrowed(""))
             } else {
                 let path = PathBuf::from(&self.last_export);
-                let last_path = path.parent()
-                    .map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(String::new);
-                let last_file = path.file_name()
-                    .map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(String::new);
+                let last_path = path
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(String::new);
+                let last_file = path
+                    .file_name()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(String::new);
                 (Owned(last_path), Owned(last_file))
             };
             let fd = imgui_filedialog::Builder::new("fd")
@@ -1461,7 +1742,9 @@ impl GlobalContext {
                     let size = ui.get_content_region_avail();
                     if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
                         if fd2.ok() {
-                            if let Some(file) = fd2.file_path_name(imgui_filedialog::ResultMode::AddIfNoFileExt) {
+                            if let Some(file) =
+                                fd2.file_path_name(imgui_filedialog::ResultMode::AddIfNoFileExt)
+                            {
                                 let action = if action == FileAction::OpenCraft && fd2.readonly() {
                                     FileAction::OpenCraftReadOnly
                                 } else {
@@ -1493,7 +1776,6 @@ impl GlobalContext {
     }
 
     fn run_mouse_actions(&mut self, ui: &Ui) {
-
         let shift_down = ui.is_key_down(imgui::Key::ModShift);
         let control_down = ui.is_key_down(imgui::Key::ModCtrl);
         let alt_down = ui.is_key_down(imgui::Key::ModAlt);
@@ -1506,28 +1788,34 @@ impl GlobalContext {
                     x if x > 0.0 => 1.1,
                     _ => break 'zoom,
                 };
-                let flags = self.data.scene_zoom(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), dz);
+                let flags = self
+                    .data
+                    .scene_zoom(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), dz);
                 self.add_rebuild(flags);
             }
         }
         let flags = match &self.scene_ui_status.action {
             Canvas3dAction::Hovering => {
-                self.data.scene_hover_event(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), alt_down)
+                self.data
+                    .scene_hover_event(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), alt_down)
             }
-            Canvas3dAction::Pressed(MouseButton::Left) |
-            Canvas3dAction::Dragging(MouseButton::Left) => {
-                self.data.scene_button1_click_event(self.sz_scene, mouse_pos)
-            }
-            Canvas3dAction::Pressed(MouseButton::Right) |
-            Canvas3dAction::Dragging(MouseButton::Right) => {
-                self.data.scene_button2_click_event(self.sz_scene, mouse_pos)
-            }
-            Canvas3dAction::DoubleClicked(MouseButton::Left) => {
-                self.data.scene_button1_dblclick_event(self.sz_scene, mouse_pos)
-            }
-            Canvas3dAction::Released(MouseButton::Left) => {
-                self.data.scene_button1_release_event(self.sz_scene, mouse_pos, shift_down, control_down)
-            }
+            Canvas3dAction::Pressed(MouseButton::Left)
+            | Canvas3dAction::Dragging(MouseButton::Left) => self
+                .data
+                .scene_button1_click_event(self.sz_scene, mouse_pos),
+            Canvas3dAction::Pressed(MouseButton::Right)
+            | Canvas3dAction::Dragging(MouseButton::Right) => self
+                .data
+                .scene_button2_click_event(self.sz_scene, mouse_pos),
+            Canvas3dAction::DoubleClicked(MouseButton::Left) => self
+                .data
+                .scene_button1_dblclick_event(self.sz_scene, mouse_pos),
+            Canvas3dAction::Released(MouseButton::Left) => self.data.scene_button1_release_event(
+                self.sz_scene,
+                mouse_pos,
+                shift_down,
+                control_down,
+            ),
             _ => RebuildFlags::empty(),
         };
         self.add_rebuild(flags);
@@ -1546,21 +1834,30 @@ impl GlobalContext {
         }
         let flags = match &self.paper_ui_status.action {
             Canvas3dAction::Hovering => {
-                self.data.paper_hover_event(self.sz_paper, mouse_pos, alt_down)
+                self.data
+                    .paper_hover_event(self.sz_paper, mouse_pos, alt_down)
             }
-            Canvas3dAction::Clicked(MouseButton::Left) |
-            Canvas3dAction::DoubleClicked(MouseButton::Left) => {
-                self.data.paper_button1_click_event(self.sz_paper, mouse_pos, shift_down, control_down, self.modifiable())
+            Canvas3dAction::Clicked(MouseButton::Left)
+            | Canvas3dAction::DoubleClicked(MouseButton::Left) => {
+                self.data.paper_button1_click_event(
+                    self.sz_paper,
+                    mouse_pos,
+                    shift_down,
+                    control_down,
+                    self.modifiable(),
+                )
             }
-            Canvas3dAction::Pressed(MouseButton::Right) |
-            Canvas3dAction::Dragging(MouseButton::Right) => {
+            Canvas3dAction::Pressed(MouseButton::Right)
+            | Canvas3dAction::Dragging(MouseButton::Right) => {
                 self.data.paper_button2_event(self.sz_paper, mouse_pos)
             }
             Canvas3dAction::Pressed(MouseButton::Left) => {
-                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
+                self.data
+                    .paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
             }
             Canvas3dAction::Dragging(MouseButton::Left) => {
-                self.data.paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
+                self.data
+                    .paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
             }
             _ => RebuildFlags::empty(),
         };
@@ -1584,11 +1881,17 @@ impl GlobalContext {
         unsafe {
             self.gl.clear_color(0.2, 0.2, 0.4, 1.0);
             self.gl.clear_depth_f32(1.0);
-            self.gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            self.gl
+                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
             self.gl.enable(glow::BLEND);
             self.gl.enable(glow::DEPTH_TEST);
             self.gl.depth_func(glow::LEQUAL);
-            self.gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+            self.gl.blend_func_separate(
+                glow::SRC_ALPHA,
+                glow::ONE_MINUS_SRC_ALPHA,
+                glow::ONE,
+                glow::ONE_MINUS_SRC_ALPHA,
+            );
 
             self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
             if let (Some(tex), true) = (&self.data.gl_objs().textures, self.data.ui.show_textures) {
@@ -1600,18 +1903,33 @@ impl GlobalContext {
             self.gl.polygon_offset(1.0, 1.0);
             self.gl.enable(glow::POLYGON_OFFSET_FILL);
 
-            gl_fixs.prg_scene_solid.draw(&u, (&self.data.gl_objs().vertices, &self.data.gl_objs().vertices_sel), glow::TRIANGLES);
+            gl_fixs.prg_scene_solid.draw(
+                &u,
+                (
+                    &self.data.gl_objs().vertices,
+                    &self.data.gl_objs().vertices_sel,
+                ),
+                glow::TRIANGLES,
+            );
 
             if self.data.ui.show_3d_lines {
                 //Joined edges
                 self.gl.line_width(1.0);
                 self.gl.disable(glow::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_joint, glow::LINES);
+                gl_fixs.prg_scene_line.draw(
+                    &u,
+                    &self.data.gl_objs().vertices_edge_joint,
+                    glow::LINES,
+                );
 
                 //Cut edges
                 self.gl.line_width(3.0);
                 self.gl.enable(glow::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_cut, glow::LINES);
+                gl_fixs.prg_scene_line.draw(
+                    &u,
+                    &self.data.gl_objs().vertices_edge_cut,
+                    glow::LINES,
+                );
             }
 
             //Selected edge
@@ -1621,7 +1939,11 @@ impl GlobalContext {
                 if self.data.ui.xray_selection {
                     u.line_top = 1;
                 }
-                gl_fixs.prg_scene_line.draw(&u, &self.data.gl_objs().vertices_edge_sel, glow::LINES);
+                gl_fixs.prg_scene_line.draw(
+                    &u,
+                    &self.data.gl_objs().vertices_edge_sel,
+                    glow::LINES,
+                );
             }
         }
     }
@@ -1644,10 +1966,16 @@ impl GlobalContext {
             self.gl.stencil_func(glow::ALWAYS, 0, 0);
             self.gl.disable(glow::STENCIL_TEST);
 
-            self.gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+            self.gl
+                .clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
             self.gl.enable(glow::BLEND);
-            self.gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+            self.gl.blend_func_separate(
+                glow::SRC_ALPHA,
+                glow::ONE_MINUS_SRC_ALPHA,
+                glow::ONE,
+                glow::ONE_MINUS_SRC_ALPHA,
+            );
 
             self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
             if let (Some(tex), true) = (&self.data.gl_objs().textures, self.data.ui.show_textures) {
@@ -1660,38 +1988,64 @@ impl GlobalContext {
             self.gl.enable(glow::STENCIL_TEST);
             self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::ZERO);
 
-            gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_page, glow::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(
+                &u,
+                &self.data.gl_objs().paper_vertices_page,
+                glow::TRIANGLES,
+            );
 
             self.gl.disable(glow::STENCIL_TEST);
 
             u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
 
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_margin, glow::LINES);
+            gl_fixs.prg_paper_line.draw(
+                &u,
+                &self.data.gl_objs().paper_vertices_margin,
+                glow::LINES,
+            );
 
             u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
 
             // Line Flaps
             if self.data.ui.show_flaps {
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, glow::LINES);
+                gl_fixs.prg_paper_line.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_flap_edge,
+                    glow::LINES,
+                );
             }
 
             self.gl.enable(glow::STENCIL_TEST);
             self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::INCR);
 
-
             // Solid Flaps
             if self.data.ui.show_flaps {
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, glow::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_flap,
+                    glow::TRIANGLES,
+                );
             }
             self.gl.disable(glow::STENCIL_TEST);
 
             // Borders
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, glow::LINES);
+            gl_fixs.prg_paper_line.draw(
+                &u,
+                &self.data.gl_objs().paper_vertices_edge_cut,
+                glow::LINES,
+            );
 
             self.gl.enable(glow::STENCIL_TEST);
 
             // Textured faces
-            gl_fixs.prg_paper_solid.draw(&u, (&self.data.gl_objs().paper_vertices, &self.data.gl_objs().paper_vertices_sel) , glow::TRIANGLES);
+            gl_fixs.prg_paper_solid.draw(
+                &u,
+                (
+                    &self.data.gl_objs().paper_vertices,
+                    &self.data.gl_objs().paper_vertices_sel,
+                ),
+                glow::TRIANGLES,
+            );
 
             self.gl.disable(glow::STENCIL_TEST);
 
@@ -1699,17 +2053,29 @@ impl GlobalContext {
             u.texturize = 0;
             if self.data.ui.show_flaps {
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, glow::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_shadow_flap,
+                    glow::TRIANGLES,
+                );
                 u.notex_color = Rgba::new(0.75, 0.75, 0.75, 1.0);
             }
 
             // Creases
-            gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, glow::LINES);
+            gl_fixs.prg_paper_line.draw(
+                &u,
+                &self.data.gl_objs().paper_vertices_edge_crease,
+                glow::LINES,
+            );
 
             // Selected edge
             if self.data.has_selected_edge() {
                 u.line_color = color_edge(self.data.ui.mode);
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_sel, glow::LINES);
+                gl_fixs.prg_paper_line.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_edge_sel,
+                    glow::LINES,
+                );
             }
 
             // Draw the highlight overlap if "1 < STENCIL"
@@ -1718,19 +2084,31 @@ impl GlobalContext {
 
             if self.data.ui.highlight_overlaps {
                 // Draw the overlapped highlight if "1 < STENCIL"
-                let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.9) };
+                let uq = UniformQuad {
+                    color: Rgba::new(1.0, 0.0, 1.0, 0.9),
+                };
                 self.gl.stencil_func(glow::LESS, 1, 0xff);
-                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
+                gl_fixs
+                    .prg_quad
+                    .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
 
                 // Draw the highlight dim if "1 >= STENCIL"
-                let uq = UniformQuad { color: Rgba::new(1.0, 1.0, 1.0, 0.9) };
+                let uq = UniformQuad {
+                    color: Rgba::new(1.0, 1.0, 1.0, 0.9),
+                };
                 self.gl.stencil_func(glow::GEQUAL, 1, 0xff);
-                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
+                gl_fixs
+                    .prg_quad
+                    .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
             } else {
                 // If highlight is disabled wraw the overlaps anyway, but dimmer, or else it would be invisible
-                let uq = UniformQuad { color: Rgba::new(1.0, 0.0, 1.0, 0.5) };
+                let uq = UniformQuad {
+                    color: Rgba::new(1.0, 0.0, 1.0, 0.5),
+                };
                 self.gl.stencil_func(glow::LESS, 1, 0xff);
-                gl_fixs.prg_quad.draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
+                gl_fixs
+                    .prg_quad
+                    .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
             }
 
             self.gl.disable(glow::STENCIL_TEST);
@@ -1741,11 +2119,17 @@ impl GlobalContext {
     }
     fn set_mouse_mode(&mut self, mode: MouseMode) {
         self.data.ui.mode = mode;
-        self.add_rebuild(RebuildFlags::SELECTION | RebuildFlags::SCENE_REDRAW | RebuildFlags::PAPER_REDRAW);
+        self.add_rebuild(
+            RebuildFlags::SELECTION | RebuildFlags::SCENE_REDRAW | RebuildFlags::PAPER_REDRAW,
+        );
     }
 
     fn title(&self, with_unsaved_check: bool) -> String {
-        let unsaved = if with_unsaved_check && self.data.modified { "*" } else { "" };
+        let unsaved = if with_unsaved_check && self.data.modified {
+            "*"
+        } else {
+            ""
+        };
         let app_name = "Papercraft";
         match &self.file_name {
             Some(f) => {
@@ -1774,7 +2158,11 @@ impl GlobalContext {
             Some(&self.title)
         }
     }
-    fn run_file_action(&mut self, action: FileAction, file_name: impl AsRef<Path>) -> anyhow::Result<()> {
+    fn run_file_action(
+        &mut self,
+        action: FileAction,
+        file_name: impl AsRef<Path>,
+    ) -> anyhow::Result<()> {
         let file_name = file_name.as_ref();
         match action {
             FileAction::OpenCraft => {
@@ -1828,7 +2216,9 @@ impl GlobalContext {
         let f = std::fs::File::create(file_name)
             .with_context(|| format!("Error creating file {}", file_name.display()))?;
         let f = std::io::BufWriter::new(f);
-        self.data.papercraft().save(f)
+        self.data
+            .papercraft()
+            .save(f)
             .with_context(|| format!("Error saving file {}", file_name.display()))?;
         Ok(())
     }
@@ -1852,17 +2242,26 @@ impl GlobalContext {
         Ok(())
     }
     fn export_obj(&self, file_name: &Path) -> anyhow::Result<()> {
-        self.data.papercraft().export_waveobj(file_name.as_ref())
+        self.data
+            .papercraft()
+            .export_waveobj(file_name.as_ref())
             .with_context(|| format!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
 
     fn generate_printable(&self, file_name: &Path) -> anyhow::Result<()> {
-        let res = match file_name.extension().map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase()).as_deref() {
+        let res = match file_name
+            .extension()
+            .map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase())
+            .as_deref()
+        {
             Some("pdf") => self.generate_pdf(file_name),
             Some("svg") => self.generate_svg(file_name),
             Some("png") => self.generate_png(file_name),
-            _ => anyhow::bail!("Don't know how to write the format of {}", file_name.display()),
+            _ => anyhow::bail!(
+                "Don't know how to write the format of {}",
+                file_name.display()
+            ),
         };
         res.with_context(|| format!("Error exporting to {}", file_name.display()))?;
         Ok(())
@@ -1874,8 +2273,9 @@ impl GlobalContext {
         let page_size_inches = page_size_mm / 25.4;
         let page_size_dots = page_size_inches * 72.0;
 
-        let pdf = cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
-        let title  = self.title(false);
+        let pdf =
+            cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
+        let title = self.title(false);
         let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
         let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
         let cr = cairo::Context::new(&pdf)?;
@@ -2069,7 +2469,13 @@ impl GlobalContext {
         parent.join(name)
     }
     fn generate_pages<F>(&self, mut do_page_fn: F) -> anyhow::Result<()>
-        where F: FnMut(u32, &cairo::ImageSurface, &[PrintableText], &[(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))]) -> anyhow::Result<()>
+    where
+        F: FnMut(
+            u32,
+            &cairo::ImageSurface,
+            &[PrintableText],
+            &[(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))],
+        ) -> anyhow::Result<()>,
     {
         let options = self.data.papercraft().options();
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
@@ -2077,10 +2483,15 @@ impl GlobalContext {
         let page_size_mm = Vector2::from(options.page_size);
         let page_size_inches = page_size_mm / 25.4;
         let page_size_pixels = page_size_inches * resolution;
-        let page_size_pixels = cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
+        let page_size_pixels =
+            cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
-        let mut pixbuf = cairo::ImageSurface::create(cairo::Format::ARgb32, page_size_pixels.x, page_size_pixels.y)
-            .with_context(|| anyhow!("Unable to create output pixbuf"))?;
+        let mut pixbuf = cairo::ImageSurface::create(
+            cairo::Format::ARgb32,
+            page_size_pixels.x,
+            page_size_pixels.y,
+        )
+        .with_context(|| anyhow!("Unable to create output pixbuf"))?;
         let stride = pixbuf.stride();
 
         unsafe {
@@ -2092,33 +2503,62 @@ impl GlobalContext {
             let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
             let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
             let rb_binder = BinderRenderbuffer::bind(&rbo);
-            self.gl.framebuffer_renderbuffer(draw_fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo.id()));
+            self.gl.framebuffer_renderbuffer(
+                draw_fb_binder.target(),
+                glow::COLOR_ATTACHMENT0,
+                glow::RENDERBUFFER,
+                Some(rbo.id()),
+            );
 
             let rbo_fbo_no_aa = 'check_aa: {
                 // multisample buffers cannot be read directly, it has to be copied to a regular one.
                 for samples in MULTISAMPLES {
                     // check if these many samples are usable
-                    self.gl.renderbuffer_storage_multisample(rb_binder.target(), *samples, glow::RGBA8, page_size_pixels.x, page_size_pixels.y);
-                    if self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
+                    self.gl.renderbuffer_storage_multisample(
+                        rb_binder.target(),
+                        *samples,
+                        glow::RGBA8,
+                        page_size_pixels.x,
+                        page_size_pixels.y,
+                    );
+                    if self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER)
+                        != glow::FRAMEBUFFER_COMPLETE
+                    {
                         continue;
                     }
 
                     // If using AA create another FBO/RBO to blit the antialiased image before reading
                     let rbo2 = glr::Renderbuffer::generate(&self.gl)?;
                     rb_binder.rebind(&rbo2);
-                    self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                    self.gl.renderbuffer_storage(
+                        rb_binder.target(),
+                        glow::RGBA8,
+                        page_size_pixels.x,
+                        page_size_pixels.y,
+                    );
 
                     let fbo2 = glr::Framebuffer::generate(&self.gl)?;
                     read_fb_binder.rebind(&fbo2);
-                    self.gl.framebuffer_renderbuffer(read_fb_binder.target(), glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo2.id()));
+                    self.gl.framebuffer_renderbuffer(
+                        read_fb_binder.target(),
+                        glow::COLOR_ATTACHMENT0,
+                        glow::RENDERBUFFER,
+                        Some(rbo2.id()),
+                    );
 
                     break 'check_aa Some((rbo2, fbo2));
                 }
                 println!("No multisample!");
-                self.gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, page_size_pixels.x, page_size_pixels.y);
+                self.gl.renderbuffer_storage(
+                    rb_binder.target(),
+                    glow::RGBA8,
+                    page_size_pixels.x,
+                    page_size_pixels.y,
+                );
                 None
             };
-            let _vp = glr::PushViewport::push(&self.gl, 0, 0, page_size_pixels.x, page_size_pixels.y);
+            let _vp =
+                glr::PushViewport::push(&self.gl, 0, 0, page_size_pixels.x, page_size_pixels.y);
 
             // Cairo surfaces are alpha-premultiplied:
             // * The framebuffer will be premultiplied, but the input fragments are not.
@@ -2128,7 +2568,12 @@ impl GlobalContext {
             //   functions or we'll get the alpha squared.
             self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
             self.gl.enable(glow::BLEND);
-            self.gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+            self.gl.blend_func_separate(
+                glow::SRC_ALPHA,
+                glow::ONE_MINUS_SRC_ALPHA,
+                glow::ONE,
+                glow::ONE_MINUS_SRC_ALPHA,
+            );
 
             let gl_fixs = &self.gl_fixs;
 
@@ -2171,38 +2616,79 @@ impl GlobalContext {
                 };
                 // Line Flaps
                 if flap_style != FlapStyle::None {
-                    gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_flap_edge, glow::LINES);
+                    gl_fixs.prg_paper_line.draw(
+                        &u,
+                        &self.data.gl_objs().paper_vertices_flap_edge,
+                        glow::LINES,
+                    );
                 }
 
                 // Solid Flaps
                 if flap_style != FlapStyle::None && flap_style != FlapStyle::White {
-                    gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_flap, glow::TRIANGLES);
+                    gl_fixs.prg_paper_solid.draw(
+                        &u,
+                        &self.data.gl_objs().paper_vertices_flap,
+                        glow::TRIANGLES,
+                    );
                 }
 
                 // Borders
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_cut, glow::LINES);
+                gl_fixs.prg_paper_line.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_edge_cut,
+                    glow::LINES,
+                );
 
                 // Textured faces
-                self.gl.vertex_attrib_4_f32(gl_fixs.prg_paper_solid.attrib_by_name("color").unwrap().location() as u32, 0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices, glow::TRIANGLES);
+                self.gl.vertex_attrib_4_f32(
+                    gl_fixs
+                        .prg_paper_solid
+                        .attrib_by_name("color")
+                        .unwrap()
+                        .location() as u32,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                );
+                gl_fixs.prg_paper_solid.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices,
+                    glow::TRIANGLES,
+                );
 
                 // Shadow Flaps
                 u.texturize = 0;
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(&u, &self.data.gl_objs().paper_vertices_shadow_flap, glow::TRIANGLES);
+                gl_fixs.prg_paper_solid.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_shadow_flap,
+                    glow::TRIANGLES,
+                );
                 u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
 
                 // Creases
-                gl_fixs.prg_paper_line.draw(&u, &self.data.gl_objs().paper_vertices_edge_crease, glow::LINES);
+                gl_fixs.prg_paper_line.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_edge_crease,
+                    glow::LINES,
+                );
                 // End render
 
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
                     read_fb_binder.rebind(&fbo);
                     draw_fb_binder.rebind(fbo_no_aa);
                     self.gl.blit_framebuffer(
-                        0, 0, page_size_pixels.x, page_size_pixels.y,
-                        0, 0, page_size_pixels.x, page_size_pixels.y,
-                        glow::COLOR_BUFFER_BIT, glow::NEAREST
+                        0,
+                        0,
+                        page_size_pixels.x,
+                        page_size_pixels.y,
+                        0,
+                        0,
+                        page_size_pixels.x,
+                        page_size_pixels.y,
+                        glow::COLOR_BUFFER_BIT,
+                        glow::NEAREST,
                     );
                     read_fb_binder.rebind(fbo_no_aa);
                     draw_fb_binder.rebind(&fbo);
@@ -2212,7 +2698,15 @@ impl GlobalContext {
 
                 {
                     let mut data = pixbuf.data()?;
-                    self.gl.read_pixels(0, 0, page_size_pixels.x, page_size_pixels.y, glow::BGRA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(data.as_mut()));
+                    self.gl.read_pixels(
+                        0,
+                        0,
+                        page_size_pixels.x,
+                        page_size_pixels.y,
+                        glow::BGRA,
+                        glow::UNSIGNED_BYTE,
+                        glow::PixelPackData::Slice(data.as_mut()),
+                    );
                 }
 
                 let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
@@ -2221,7 +2715,8 @@ impl GlobalContext {
                 texts.clear();
                 if options.show_self_promotion {
                     let x = margin_left;
-                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
+                        .min(page_size_mm.y - FONT_SIZE);
                     let text = String::from(signature());
                     texts.push(PrintableText {
                         size: FONT_SIZE,
@@ -2233,7 +2728,8 @@ impl GlobalContext {
                 }
                 if options.show_page_number {
                     let x = page_size_mm.x - margin_right;
-                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
+                        .min(page_size_mm.y - FONT_SIZE);
                     let text = format!("Page {}/{}", page + 1, page_count);
                     texts.push(PrintableText {
                         size: FONT_SIZE,
@@ -2252,8 +2748,12 @@ impl GlobalContext {
                         };
                         // Edge ids
                         for cut_idx in extra.cut_indices() {
-                            let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face_b);
-                            let ii = island_names.get(i_island_b).map(|s| s.as_str()).unwrap_or("?");
+                            let i_island_b =
+                                self.data.papercraft().island_by_face(cut_idx.i_face_b);
+                            let ii = island_names
+                                .get(i_island_b)
+                                .map(|s| s.as_str())
+                                .unwrap_or("?");
                             let text = format!("{}:{}", ii, cut_idx.id);
                             let pos = in_page(cut_idx.pos).1;
                             texts.push(PrintableText {
@@ -2267,21 +2767,27 @@ impl GlobalContext {
                         // Island ids
                         let pos = match edge_id_position {
                             // On top
-                            EdgeIdPosition::None |
-                            EdgeIdPosition::Outside => {
-                                let top = page_cuts.iter().min_by(|a, b| a.0.y.total_cmp(&b.0.y)).unwrap().0;
+                            EdgeIdPosition::None | EdgeIdPosition::Outside => {
+                                let top = page_cuts
+                                    .iter()
+                                    .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
+                                    .unwrap()
+                                    .0;
                                 top - Vector2::new(0.0, edge_id_font_size)
                             }
                             // In the middle
                             EdgeIdPosition::Inside => {
-                                let island = self.data.papercraft().island_by_key(*i_island).unwrap();
-                                let (flat_face, total_area) = self.data.papercraft().get_biggest_flat_face(island);
+                                let island =
+                                    self.data.papercraft().island_by_key(*i_island).unwrap();
+                                let (flat_face, total_area) =
+                                    self.data.papercraft().get_biggest_flat_face(island);
                                 // Compute the center of mass of the flat-face, that will be the
                                 // weighted mean of the centers of masses of each single face.
                                 let center: Vector2 = flat_face
                                     .iter()
                                     .map(|(i_face, area)| {
-                                        let vv: Vector2 = lines.vertices_for_face(*i_face).into_iter().sum();
+                                        let vv: Vector2 =
+                                            lines.vertices_for_face(*i_face).into_iter().sum();
                                         vv * *area
                                     })
                                     .sum();
@@ -2315,7 +2821,10 @@ impl GlobalContext {
         }
         let mut dir = std::env::temp_dir();
         dir.push(format!("crashed-{}.craft", std::process::id()));
-        eprintln!("Papercraft panicked! Saving backup at \"{}\"", dir.display());
+        eprintln!(
+            "Papercraft panicked! Saving backup at \"{}\"",
+            dir.display()
+        );
         if let Err(e) = self.save_as_craft(&dir) {
             eprintln!("backup failed with {e:?}");
         } else {
@@ -2352,9 +2861,7 @@ enum Canvas3dAction {
 
 fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
     let sz = ui.get_content_region_avail();
-    ui.invisible_button_config("canvas3d")
-        .size(sz)
-        .build();
+    ui.invisible_button_config("canvas3d").size(sz).build();
     let hovered = ui.is_item_hovered();
     let pos = ui.get_item_rect_min();
     let scale = ui.display_scale();
@@ -2370,7 +2877,10 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
                 Canvas3dAction::None
             }
         }
-        Canvas3dAction::Hovering | Canvas3dAction::Pressed(_) | Canvas3dAction::Clicked(_) | Canvas3dAction::DoubleClicked(_) => {
+        Canvas3dAction::Hovering
+        | Canvas3dAction::Pressed(_)
+        | Canvas3dAction::Clicked(_)
+        | Canvas3dAction::DoubleClicked(_) => {
             if !hovered {
                 Canvas3dAction::None
             } else if ui.is_mouse_dragging(MouseButton::Left) {
@@ -2399,9 +2909,9 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
         }
         Canvas3dAction::None | Canvas3dAction::Released(_) => {
             // If the mouse is entered while dragging, it does not count, as if captured by other
-            if hovered &&
-                !ui.is_mouse_dragging(MouseButton::Left) &&
-                !ui.is_mouse_dragging(MouseButton::Right)
+            if hovered
+                && !ui.is_mouse_dragging(MouseButton::Left)
+                && !ui.is_mouse_dragging(MouseButton::Right)
             {
                 Canvas3dAction::Hovering
             } else {
@@ -2410,10 +2920,7 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
         }
     };
 
-    *st = Canvas3dStatus {
-        mouse_pos,
-        action,
-    };
+    *st = Canvas3dStatus { mouse_pos, action };
 }
 
 fn premultiply_image(img: DynamicImage) -> image::RgbaImage {
@@ -2493,7 +3000,10 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
     res
 }
 
-pub fn cuts_to_page_cuts<'c>(cuts: Vec<(&MVertex2DLine, &MVertex2DLine)>, in_page: impl Fn(Vector2) -> (bool, Vector2)) -> Option<Vec<(Vector2, Vector2)>>{
+pub fn cuts_to_page_cuts<'c>(
+    cuts: Vec<(&MVertex2DLine, &MVertex2DLine)>,
+    in_page: impl Fn(Vector2) -> (bool, Vector2),
+) -> Option<Vec<(Vector2, Vector2)>> {
     let mut touching = false;
     let page_cut = cuts
         .iter()
@@ -2522,7 +3032,12 @@ struct PrintableText {
 }
 
 impl PrintableText {
-    fn to_cairo_all(texts: &[PrintableText], edge_id_position: EdgeIdPosition, resolution: f32, cr: &cairo::Context) {
+    fn to_cairo_all(
+        texts: &[PrintableText],
+        edge_id_position: EdgeIdPosition,
+        resolution: f32,
+        cr: &cairo::Context,
+    ) {
         // Dest in millimeters
         let mut mc = cairo::Matrix::identity();
         let scale = resolution / 25.4; // to millimeters
@@ -2532,8 +3047,9 @@ impl PrintableText {
         cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
         match edge_id_position {
             // Text below the texture
-            EdgeIdPosition::None |
-            EdgeIdPosition::Outside => cr.set_operator(cairo::Operator::DestOver),
+            EdgeIdPosition::None | EdgeIdPosition::Outside => {
+                cr.set_operator(cairo::Operator::DestOver)
+            }
             // Text above the texture
             EdgeIdPosition::Inside => cr.set_operator(cairo::Operator::Over),
         }
@@ -2545,13 +3061,9 @@ impl PrintableText {
         let m = cr.matrix();
         cr.set_font_size(self.size as f64);
         let align = match self.align {
-            TextAlign::Near => { 0.0 }
-            TextAlign::Center => {
-                cr.text_extents(&self.text).unwrap().width() / 2.0
-            }
-            TextAlign::Far => {
-                cr.text_extents(&self.text).unwrap().width()
-            }
+            TextAlign::Near => 0.0,
+            TextAlign::Center => cr.text_extents(&self.text).unwrap().width() / 2.0,
+            TextAlign::Far => cr.text_extents(&self.text).unwrap().width(),
         };
         let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(self.angle);
         let p = basis2.rotate_vector(Vector2::new(-align as f32, 0.0));
@@ -2564,9 +3076,12 @@ impl PrintableText {
     }
 }
 
-#[cfg(target_os="linux")]
+#[cfg(target_os = "linux")]
 #[inline(never)]
-unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>, ctx: &Rc<RefCell<GlobalContext>>) {
+unsafe fn install_crash_backup(
+    event_loop: winit::event_loop::EventLoopProxy<()>,
+    ctx: &Rc<RefCell<GlobalContext>>,
+) {
     // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
     // the user's data, what's the worst that could happen?
     // The `ctx` is not Send because of the Rc, the RefCell and the GlContext inside, but we won't touch any of these...
@@ -2593,8 +3108,12 @@ unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>
     });
 }
 
-#[cfg(not(target_os="linux"))]
-unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<()>, _ctx: &Rc<RefCell<GlobalContext>>) { }
+#[cfg(not(target_os = "linux"))]
+unsafe fn install_crash_backup(
+    _event_loop: winit::event_loop::EventLoopProxy<()>,
+    _ctx: &Rc<RefCell<GlobalContext>>,
+) {
+}
 
 impl imgui::UiBuilder for GlobalContext {
     fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {
@@ -2605,26 +3124,23 @@ impl imgui::UiBuilder for GlobalContext {
             imgui::FontInfo::new(&*COPYRIGHT_TTF, 12.0),
         ]);
 
-        self.logo_rect = atlas.add_custom_rect_regular(
-            [LOGO_IMG.width(), LOGO_IMG.height()],
-            |_, img| { img.copy_from(&*LOGO_IMG, 0, 0).unwrap(); }
-        );
+        self.logo_rect =
+            atlas.add_custom_rect_regular([LOGO_IMG.width(), LOGO_IMG.height()], |_, img| {
+                img.copy_from(&*LOGO_IMG, 0, 0).unwrap();
+            });
 
         // Each image is 48x48
         const W: u32 = 48;
         const H: u32 = 48;
-        self.icons_rect[0] = atlas.add_custom_rect_regular(
-            [W, H],
-            |_, img| { img.copy_from(&*ICONS_IMG.view(0, 0, W, H), 0, 0).unwrap(); }
-        );
-        self.icons_rect[1] = atlas.add_custom_rect_regular(
-            [W, H],
-            |_, img| { img.copy_from(&*ICONS_IMG.view(W, 0, W, H), 0, 0).unwrap(); }
-        );
-        self.icons_rect[2] = atlas.add_custom_rect_regular(
-            [W, H],
-            |_, img| { img.copy_from(&*ICONS_IMG.view(0, H, W, H), 0, 0).unwrap(); }
-        );
+        self.icons_rect[0] = atlas.add_custom_rect_regular([W, H], |_, img| {
+            img.copy_from(&*ICONS_IMG.view(0, 0, W, H), 0, 0).unwrap();
+        });
+        self.icons_rect[1] = atlas.add_custom_rect_regular([W, H], |_, img| {
+            img.copy_from(&*ICONS_IMG.view(W, 0, W, H), 0, 0).unwrap();
+        });
+        self.icons_rect[2] = atlas.add_custom_rect_regular([W, H], |_, img| {
+            img.copy_from(&*ICONS_IMG.view(0, H, W, H), 0, 0).unwrap();
+        });
     }
     fn do_ui(&mut self, ui: &Ui) {
         //ui.show_demo_window(None);
@@ -2634,14 +3150,17 @@ impl imgui::UiBuilder for GlobalContext {
         ui.set_next_window_size(sz, imgui::Cond::Always);
         ui.window_config("Papercraft")
             .flags(
-                imgui::WindowFlags::NoDecoration |
-                imgui::WindowFlags::NoResize |
-                imgui::WindowFlags::MenuBar |
-                imgui::WindowFlags::NoBringToFrontOnFocus |
-                imgui::WindowFlags::NoNav
+                imgui::WindowFlags::NoDecoration
+                    | imgui::WindowFlags::NoResize
+                    | imgui::WindowFlags::MenuBar
+                    | imgui::WindowFlags::NoBringToFrontOnFocus
+                    | imgui::WindowFlags::NoNav,
             )
             .push_for_begin((
-                (imgui::StyleVar::WindowPadding, imgui::StyleValue::Vec2([0.0, 0.0].into())),
+                (
+                    imgui::StyleVar::WindowPadding,
+                    imgui::StyleValue::Vec2([0.0, 0.0].into()),
+                ),
                 (imgui::StyleVar::WindowRounding, imgui::StyleValue::F32(0.0)),
             ))
             .with(|| {
@@ -2655,7 +3174,10 @@ impl imgui::UiBuilder for GlobalContext {
                 self.run_menu_actions(ui, &menu_actions);
                 self.run_mouse_actions(ui);
 
-                if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER) {
+                if self
+                    .rebuild
+                    .intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER)
+                {
                     self.data.pre_render(self.rebuild);
                     let vp = glr::PushViewport::new(&self.gl);
                     if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
@@ -2672,13 +3194,16 @@ impl imgui::UiBuilder for GlobalContext {
                 }
 
                 match (menu_actions.quit, self.quit_requested) {
-                    (BoolWithConfirm::Confirmed, _) | (_, BoolWithConfirm::Confirmed) => self.quit_requested = BoolWithConfirm::Confirmed,
-                    (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested)=> {
+                    (BoolWithConfirm::Confirmed, _) | (_, BoolWithConfirm::Confirmed) => {
+                        self.quit_requested = BoolWithConfirm::Confirmed
+                    }
+                    (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested) => {
                         self.quit_requested = BoolWithConfirm::None;
-                        self.open_confirmation_dialog(ui,
+                        self.open_confirmation_dialog(
+                            ui,
                             "Quit?",
                             "The model has not been save, continue anyway?",
-                            |a| a.quit = BoolWithConfirm::Confirmed
+                            |a| a.quit = BoolWithConfirm::Confirmed,
                         );
                     }
                     _ => (),
@@ -2686,4 +3211,3 @@ impl imgui::UiBuilder for GlobalContext {
             });
     }
 }
-

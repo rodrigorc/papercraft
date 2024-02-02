@@ -1,15 +1,15 @@
+use anyhow::{anyhow, bail, Context, Result};
 use std::io::{BufRead, Read};
 use std::panic::catch_unwind;
 use std::path::Path;
-use anyhow::{Result, anyhow, Context, bail};
 
-use super::{PaperOptions, Vertex, VertexIndex, Texture, EdgeStatus, Model, Island, MaterialIndex};
-use crate::paper::{PageOffset, FlapSide, Papercraft};
+use super::{EdgeStatus, Island, MaterialIndex, Model, PaperOptions, Texture, Vertex, VertexIndex};
+use crate::paper::{FlapSide, PageOffset, Papercraft};
 use crate::util_3d::{Vector2, Vector3};
 
-pub mod waveobj;
 pub mod pepakura;
 pub mod stl;
+pub mod waveobj;
 
 fn read_u8(rdr: &mut impl Read) -> Result<u8> {
     let mut x = [0; 1];
@@ -67,7 +67,6 @@ fn read_vector3_f32(rdr: &mut impl Read) -> Result<Vector3> {
     Ok(Vector3::new(x, y, z))
 }
 
-
 pub trait Importer: Sized {
     type VertexId: Copy + Eq + std::fmt::Debug;
 
@@ -76,26 +75,44 @@ pub trait Importer: Sized {
     fn build_vertices(&self) -> (bool, Vec<Vertex>);
     fn face_count(&self) -> usize;
 
-    fn faces<'s>(&'s self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's;
+    fn faces<'s>(&'s self)
+        -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's;
 
     // Returns at least 1 texture, maybe default.
     // As a risky optimization, it can consume the texture data, call only once
     fn build_textures(&self) -> Vec<Texture>;
 
     // Optional functions
-    fn compute_edge_status(&self, _edge_id: (Self::VertexId, Self::VertexId)) -> Option<EdgeStatus> { None }
-    fn relocate_islands<'a>(&self, _model: &Model, _islands: impl Iterator<Item=&'a mut Island>) -> bool { false }
-    fn build_options(&self) -> Option<PaperOptions> { None }
+    fn compute_edge_status(
+        &self,
+        _edge_id: (Self::VertexId, Self::VertexId),
+    ) -> Option<EdgeStatus> {
+        None
+    }
+    fn relocate_islands<'a>(
+        &self,
+        _model: &Model,
+        _islands: impl Iterator<Item = &'a mut Island>,
+    ) -> bool {
+        false
+    }
+    fn build_options(&self) -> Option<PaperOptions> {
+        None
+    }
 }
 
 // Returns (model, is_native_format)
 pub fn import_model_file(file_name: &Path) -> Result<(Papercraft, bool)> {
     // Models have a lot of indices and unwraps, a corrupted file could easily panic
-    match catch_unwind(|| { import_model_file_priv(file_name) }) {
+    match catch_unwind(|| import_model_file_priv(file_name)) {
         Ok(res) => res,
         Err(err) => {
             if let Some(msg) = err.downcast_ref::<&str>() {
-                bail!("Panic importing the model '{}'!\n{}", file_name.display(), msg);
+                bail!(
+                    "Panic importing the model '{}'!\n{}",
+                    file_name.display(),
+                    msg
+                );
             } else {
                 bail!("Panic importing the model '{}'!", file_name.display());
             }
@@ -132,9 +149,11 @@ pub fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
             let importer = stl::StlImporter::new(f)
                 .with_context(|| format!("Error reading STL file {}", file_name.display()))?;
             Papercraft::import(importer)
-    }
+        }
         "mtl" => {
-            anyhow::bail!("MTL are material files for OBJ models. Try opening the OBJ file instead.");
+            anyhow::bail!(
+                "MTL are material files for OBJ models. Try opening the OBJ file instead."
+            );
         }
         // unknown extensions are tried as obj, that was the default previously
         "obj" | _ => {

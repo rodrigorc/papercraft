@@ -1,5 +1,5 @@
+use cgmath::{InnerSpace, MetricSpace, Rad, Zero};
 use std::f32::consts::PI;
-use cgmath::{Zero, InnerSpace, MetricSpace, Rad};
 
 pub type Vector2 = cgmath::Vector2<f32>;
 pub type Vector3 = cgmath::Vector3<f32>;
@@ -18,7 +18,7 @@ pub struct Plane {
 }
 
 impl Default for Plane {
-    fn default() -> Plane{
+    fn default() -> Plane {
         Plane {
             origin: Vector3::zero(),
             base_x: Vector3::new(1.0, 0.0, 0.0),
@@ -57,7 +57,7 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
 
     // Compute the face plane
     let mut normal = Vector3::zero();
-    for i in 0 .. ps.len() {
+    for i in 0..ps.len() {
         let a = ps[i];
         let b = ps[(i + 1) % ps.len()];
         normal += a.cross(b);
@@ -94,7 +94,7 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
     while ps.len() >= 3 {
         let mut min_angle = None;
 
-        for i in 0 .. ps.len() {
+        for i in 0..ps.len() {
             let (_, a) = ps[i];
             let (_, b) = ps[(i + 1) % ps.len()];
             let (_, c) = ps[(i + 2) % ps.len()];
@@ -106,10 +106,10 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
             if min_angle.map(|(_, a)| inner_angle < a).unwrap_or(true) {
                 // If this point is not an ear, discard it
                 if !ps.iter().enumerate().any(|(i_other, (_, p_other))| {
-                    i_other != i &&
-                    i_other != (i + 1) % ps.len() &&
-                    i_other != (i + 2) % ps.len() &&
-                    point_in_triangle(*p_other, [a, b, c])
+                    i_other != i
+                        && i_other != (i + 1) % ps.len()
+                        && i_other != (i + 2) % ps.len()
+                        && point_in_triangle(*p_other, [a, b, c])
                 }) {
                     min_angle = Some((i, inner_angle));
                 }
@@ -139,7 +139,7 @@ pub fn point_in_triangle(p: Vector2, tri: [Vector2; 3]) -> bool {
     }
 }
 
-pub fn bounding_box_3d(vs: impl IntoIterator<Item=Vector3>) -> (Vector3, Vector3) {
+pub fn bounding_box_3d(vs: impl IntoIterator<Item = Vector3>) -> (Vector3, Vector3) {
     let mut vs = vs.into_iter();
     let (mut a, mut b) = match vs.next() {
         Some(v) => (v, v),
@@ -156,7 +156,7 @@ pub fn bounding_box_3d(vs: impl IntoIterator<Item=Vector3>) -> (Vector3, Vector3
     (a, b)
 }
 
-pub fn bounding_box_2d(vs: impl IntoIterator<Item=Vector2>) -> (Vector2, Vector2) {
+pub fn bounding_box_2d(vs: impl IntoIterator<Item = Vector2>) -> (Vector2, Vector2) {
     let mut vs = vs.into_iter();
     let (mut a, mut b) = match vs.next() {
         Some(v) => (v, v),
@@ -231,8 +231,9 @@ pub fn line_line_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3)) 
         let inv_det = 1.0 / det;
         l0_closest = (a01 * b1 - b0) * inv_det;
         l1_closest = (a01 * b0 - b1) * inv_det;
-        distance2 = l0_closest * (l0_closest + a01 * l1_closest + 2.0 * b0) +
-                            l1_closest * (a01 * l0_closest + l1_closest + 2.0 * b1) + c;
+        distance2 = l0_closest * (l0_closest + a01 * l1_closest + 2.0 * b0)
+            + l1_closest * (a01 * l0_closest + l1_closest + 2.0 * b1)
+            + c;
     } else {
         //almost parallel
         l0_closest = -b0;
@@ -242,7 +243,10 @@ pub fn line_line_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3)) 
     (l0_closest / len0, l1_closest / len1, distance2.abs())
 }
 
-pub fn line_segment_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3)) -> (f32, f32, f32) {
+pub fn line_segment_distance(
+    line0: (Vector3, Vector3),
+    line1: (Vector3, Vector3),
+) -> (f32, f32, f32) {
     let (l0_closest, mut l1_closest, mut distance2) = line_line_distance(line0, line1);
     if l1_closest < 0.0 {
         l1_closest = 0.0;
@@ -271,7 +275,7 @@ pub fn point_line_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32) {
 pub fn point_line_side(p: Vector2, line: (Vector2, Vector2)) -> bool {
     let v1 = line.1 - line.0;
     let v2 = p - line.0;
-    (v1.x * v2.y - v1.y  * v2.x) >= 0.0
+    (v1.x * v2.y - v1.y * v2.x) >= 0.0
 }
 
 // (offset, distance)
@@ -287,7 +291,10 @@ pub fn point_segment_distance(p: Vector2, line: (Vector2, Vector2)) -> (f32, f32
 }
 
 // (intersection, offset_1, offset_2)
-pub fn line_line_intersection(line_1: (Vector2, Vector2), line_2: (Vector2, Vector2)) -> (Vector2, f32, f32) {
+pub fn line_line_intersection(
+    line_1: (Vector2, Vector2),
+    line_2: (Vector2, Vector2),
+) -> (Vector2, f32, f32) {
     let s1 = line_1.1 - line_1.0;
     let s2 = line_2.1 - line_2.0;
     let d = line_1.0 - line_2.0;
@@ -297,8 +304,8 @@ pub fn line_line_intersection(line_1: (Vector2, Vector2), line_2: (Vector2, Vect
         return (line_1.0, f32::MAX, f32::MAX);
     }
 
-    let s = ( s2.x * d.y - s2.y * d.x) / dd;
-    let t = ( s1.x * d.y - s1.y * d.x) / dd;
+    let s = (s2.x * d.y - s2.y * d.x) / dd;
+    let t = (s1.x * d.y - s1.y * d.x) / dd;
 
     ((line_1.0 + s * s1), s, t)
 }
@@ -309,18 +316,29 @@ pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
     let top = -height / 2.0;
     let bottom = -top;
     Matrix3::new(
-        2.0 / (right - left), 0.0, 0.0,
-        0.0, 2.0 / (top - bottom), 0.0,
-        0.0, 0.0, 1.0
+        2.0 / (right - left),
+        0.0,
+        0.0,
+        0.0,
+        2.0 / (top - bottom),
+        0.0,
+        0.0,
+        0.0,
+        1.0,
     )
 }
 
 // Like ortho2d but aligned to the (0,0)
 pub fn ortho2d_zero(width: f32, height: f32) -> Matrix3 {
     Matrix3::new(
-        2.0 / width, 0.0, 0.0,
-        0.0, -2.0 / height, 0.0,
-        -1.0, -1.0, 1.0
+        2.0 / width,
+        0.0,
+        0.0,
+        0.0,
+        -2.0 / height,
+        0.0,
+        -1.0,
+        -1.0,
+        1.0,
     )
 }
-

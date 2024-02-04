@@ -40,5 +40,5 @@ opener = "0.6"
 maybe-owned = { version = "0.3", features = ["serde"] }
 lazy_static = "1"
 
-easy-imgui-sys = "*"
-easy-imgui-window = { version = "*", features = ["freetype"] }
+easy-imgui-sys = "0.1"
+easy-imgui-window = { version = "0.1", features = ["freetype"] }

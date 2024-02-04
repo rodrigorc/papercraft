@@ -186,8 +186,7 @@ fn main() {
             match &event {
                 winit::event::Event::NewEvents(winit::event::StartCause::Init) => {
                     // This fixes "keyboard non-responsive on startup because it doesn't detect FocusGained...":
-                    // https://github.com/rust-windowing/winit/issues/1558
-                    // https://github.com/rust-windowing/winit/issues/1558
+                    // https://github.com/rust-windowing/winit/issues/2841
                     use easy_imgui_window::winit::raw_window_handle::{
                         HasWindowHandle,
                         RawWindowHandle::{Xcb, Xlib},

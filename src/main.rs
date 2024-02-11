@@ -165,6 +165,7 @@ fn main() {
         scene_ui_status: Canvas3dStatus::default(),
         paper_ui_status: Canvas3dStatus::default(),
         options_opened: None,
+        options_applied: None,
         about_visible: false,
         option_button_height: 0.0,
         file_dialog: None,
@@ -210,6 +211,10 @@ fn main() {
 
                 if let Some(new_title) = ctx.updated_title() {
                     window.main_window().window().set_title(&new_title);
+                }
+                if let Some(options) = ctx.options_applied.take() {
+                    ctx.data.set_papercraft_options(options);
+                    ctx.add_rebuild(RebuildFlags::all());
                 }
 
                 // manually handle a few messages
@@ -389,6 +394,7 @@ struct GlobalContext {
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
     options_opened: Option<PaperOptions>,
+    options_applied: Option<PaperOptions>,
     option_button_height: f32,
     about_visible: bool,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
@@ -883,8 +889,9 @@ impl GlobalContext {
                             self.build_full_options_inner_dialog(ui, options);
                         self.options_opened = keep_opened;
                         if let Some(apply_options) = apply {
-                            self.data.set_papercraft_options(apply_options);
-                            self.add_rebuild(RebuildFlags::all());
+                            // Don't apply the options immediately because we are in the middle of a render,
+                            // and that could cause inconsistencies
+                            self.options_applied = Some(apply_options);
                         }
                     } else {
                         self.build_read_only_options_inner_dialog(ui, &options);

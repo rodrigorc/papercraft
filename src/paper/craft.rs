@@ -1026,7 +1026,7 @@ impl Papercraft {
             &self.model,
             island.root_face(),
             (),
-            NoMatrixTraverseFace(&self.model, &self.edges),
+            NoMatrixTraverseFace(&self.edges),
             |i, _, ()| visit_face(i),
         )
     }
@@ -1261,13 +1261,13 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
     }
 }
 
-struct NoMatrixTraverseFace<'a>(&'a Model, &'a [EdgeStatus]);
+struct NoMatrixTraverseFace<'a>(&'a [EdgeStatus]);
 
 impl TraverseFacePolicy for NoMatrixTraverseFace<'_> {
     type State = ();
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
-        match self.1[usize::from(i_edge)] {
+        match self.0[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => false,
             EdgeStatus::Joined | EdgeStatus::Hidden => true,
         }

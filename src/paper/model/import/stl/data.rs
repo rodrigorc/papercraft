@@ -1,8 +1,6 @@
-use anyhow::{bail, Result};
-use cgmath::Zero;
-use std::io::BufRead;
-
 use crate::paper::import::*;
+use anyhow::bail;
+use cgmath::Zero;
 
 #[derive(Debug)]
 pub struct Stl {

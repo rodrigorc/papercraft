@@ -2,8 +2,8 @@
 // * https://github.com/dpethes/pdo-tools.git/doc/pdo_spec_draft.txt
 // Many thanks to "dpethes" for the work!
 
-use anyhow::{anyhow, Result};
-use std::{cell::Cell, io::Read};
+use anyhow::anyhow;
+use std::cell::Cell;
 
 use super::super::*;
 type Vector2 = cgmath::Vector2<f32>;

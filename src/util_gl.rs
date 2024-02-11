@@ -78,6 +78,12 @@ attrib! {
     pub struct MStatus2D {
         pub color: Rgba,
     }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MVertexText {
+        pub pos: Vector2,
+        pub uv: Vector2,
+    }
 }
 
 pub const MSTATUS_UNSEL: MStatus3D = MStatus3D {

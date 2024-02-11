@@ -1,10 +1,8 @@
-use std::cell::Cell;
-use std::io::BufRead;
-
 use super::super::*;
 use super::data;
 use cgmath::{Deg, InnerSpace, Rad};
 use image::{DynamicImage, ImageBuffer};
+use std::cell::Cell;
 
 pub struct PepakuraImporter {
     pdo: data::Pdo,

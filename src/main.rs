@@ -7,6 +7,7 @@ use easy_imgui_window::{
         glr::{
             self, BinderDrawFramebuffer, BinderReadFramebuffer, BinderRenderbuffer, GlContext, Rgba,
         },
+        Renderer,
     },
     winit::{self, event_loop::EventLoopBuilder},
     MainWindow, MainWindowWithRenderer,
@@ -93,6 +94,7 @@ fn main() {
     env_logger::init();
 
     let cli = Cli::parse();
+
     let event_loop = EventLoopBuilder::new().build().unwrap();
     let window = MainWindow::new(&event_loop, "Papercraft").unwrap();
 
@@ -153,6 +155,8 @@ fn main() {
         font_default: imgui::FontId::default(),
         font_big: imgui::FontId::default(),
         font_small: imgui::FontId::default(),
+        font_text: imgui::FontId::default(),
+        font_text_line_scale: 1.0,
         icons_rect: [imgui::CustomRectIndex::default(); 3],
         logo_rect: imgui::CustomRectIndex::default(),
         data,
@@ -215,6 +219,7 @@ fn main() {
                 if let Some(options) = ctx.options_applied.take() {
                     ctx.data.set_papercraft_options(options);
                     ctx.add_rebuild(RebuildFlags::all());
+                    window.renderer().imgui().invalidate_font_atlas();
                 }
 
                 // manually handle a few messages
@@ -254,6 +259,8 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
         .with_context(|| "paper_line")?;
     let prg_quad = util_gl::program_from_source(gl, include_str!("shaders/quad.glsl"))
         .with_context(|| "quad")?;
+    let prg_text = util_gl::program_from_source(gl, include_str!("shaders/text.glsl"))
+        .with_context(|| "text")?;
 
     let vao = glr::VertexArray::generate(gl)?;
 
@@ -325,6 +332,7 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
         prg_paper_solid,
         prg_paper_line,
         prg_quad,
+        prg_text,
     })
 }
 
@@ -344,6 +352,7 @@ struct GLFixedObjects {
     prg_paper_solid: glr::Program,
     prg_paper_line: glr::Program,
     prg_quad: glr::Program,
+    prg_text: glr::Program,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -382,6 +391,8 @@ struct GlobalContext {
     font_default: imgui::FontId,
     font_big: imgui::FontId,
     font_small: imgui::FontId,
+    font_text: imgui::FontId,
+    font_text_line_scale: f32,
     icons_rect: [imgui::CustomRectIndex; 3],
     logo_rect: imgui::CustomRectIndex,
     data: PapercraftContext,
@@ -572,7 +583,7 @@ impl GlobalContext {
                     // Give time to the fading modal, should be enough
                     let run = self.popup_time_start.elapsed() > Duration::from_millis(250);
                     if run {
-                        res = Some(self.run_file_action(*action, file));
+                        res = Some(self.run_file_action(ui, *action, file));
                         ui.close_current_popup();
                     }
                 });
@@ -1400,6 +1411,18 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::SELECTION);
                 }
                 if ui
+                    .menu_item_config("Texts")
+                    .shortcut("E")
+                    .selected(self.data.ui.show_texts)
+                    .build()
+                {
+                    self.data.ui.show_texts ^= true;
+                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                    if self.data.ui.show_texts {
+                        self.add_rebuild(RebuildFlags::ISLANDS | RebuildFlags::PAPER);
+                    }
+                }
+                if ui
                     .menu_item_config("Highlight overlaps")
                     .shortcut("H")
                     .selected(self.data.ui.highlight_overlaps)
@@ -1448,24 +1471,31 @@ impl GlobalContext {
                 menu_actions.save = true;
             }
             if ui.is_key_pressed(imgui::Key::X) {
-                self.data.ui.xray_selection = !self.data.ui.xray_selection;
+                self.data.ui.xray_selection ^= true;
                 self.add_rebuild(RebuildFlags::SELECTION);
             }
             if ui.is_key_pressed(imgui::Key::H) {
-                self.data.ui.highlight_overlaps = !self.data.ui.highlight_overlaps;
+                self.data.ui.highlight_overlaps ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
             }
             if ui.is_key_pressed(imgui::Key::T) && self.data.papercraft().options().texture {
-                self.data.ui.show_textures = !self.data.ui.show_textures;
+                self.data.ui.show_textures ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
             }
             if ui.is_key_pressed(imgui::Key::D) {
-                self.data.ui.show_3d_lines = !self.data.ui.show_3d_lines;
+                self.data.ui.show_3d_lines ^= true;
                 self.add_rebuild(RebuildFlags::SCENE_REDRAW);
             }
             if ui.is_key_pressed(imgui::Key::B) {
-                self.data.ui.show_flaps = !self.data.ui.show_flaps;
+                self.data.ui.show_flaps ^= true;
                 self.add_rebuild(RebuildFlags::PAPER);
+            }
+            if ui.is_key_pressed(imgui::Key::E) {
+                self.data.ui.show_texts ^= true;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                if self.data.ui.show_texts {
+                    self.add_rebuild(RebuildFlags::ISLANDS | RebuildFlags::PAPER);
+                }
             }
         }
         menu_actions
@@ -1583,10 +1613,12 @@ impl GlobalContext {
                 UndoResult::Model => {
                     self.add_rebuild(RebuildFlags::all());
                 }
-                UndoResult::ModelAndOptions => {
+                UndoResult::ModelAndOptions(options) => {
+                    // If the "Options" window is opened, just overwrite the values
                     if let Some(o) = self.options_opened.as_mut() {
                         *o = self.data.papercraft().options().clone();
                     }
+                    self.options_applied = Some(options);
                     self.add_rebuild(RebuildFlags::all());
                 }
                 UndoResult::False => {}
@@ -1953,7 +1985,7 @@ impl GlobalContext {
             }
         }
     }
-    fn render_paper(&mut self) {
+    fn render_paper(&mut self, ui: &Ui) {
         let gl_fixs = &self.gl_fixs;
 
         let mut u = Uniforms2D {
@@ -2118,6 +2150,18 @@ impl GlobalContext {
             }
 
             self.gl.disable(glow::STENCIL_TEST);
+
+            // Draw the texts
+            if self.data.ui.show_texts {
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(
+                    glow::TEXTURE_2D,
+                    Renderer::unmap_tex(ui.font_atlas().texture_id()),
+                );
+                gl_fixs
+                    .prg_text
+                    .draw(&u, &self.data.gl_objs().paper_text, glow::TRIANGLES);
+            }
         }
     }
     fn add_rebuild(&mut self, flags: RebuildFlags) {
@@ -2166,6 +2210,7 @@ impl GlobalContext {
     }
     fn run_file_action(
         &mut self,
+        ui: &Ui,
         action: FileAction,
         file_name: impl AsRef<Path>,
     ) -> anyhow::Result<()> {
@@ -2201,7 +2246,15 @@ impl GlobalContext {
             }
             FileAction::ExportObj => self.export_obj(file_name)?,
             FileAction::GeneratePrintable => {
-                self.generate_printable(file_name)?;
+                // Rebuild everything, just in case
+                //TODO: should pass show_texts as argument?
+                let old_show_texts = self.data.ui.show_texts;
+                self.data.ui.show_texts = true;
+                self.pre_render(ui, RebuildFlags::all());
+                self.data.ui.show_texts = old_show_texts;
+
+                let text_tex_id = Renderer::unmap_tex(ui.font_atlas().texture_id());
+                self.generate_printable(text_tex_id, file_name)?;
                 self.last_export = file_name.to_string_lossy().into_owned();
             }
         }
@@ -2255,15 +2308,19 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_printable(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn generate_printable(
+        &self,
+        text_tex_id: Option<glow::Texture>,
+        file_name: &Path,
+    ) -> anyhow::Result<()> {
         let res = match file_name
             .extension()
             .map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase())
             .as_deref()
         {
-            Some("pdf") => self.generate_pdf(file_name),
-            Some("svg") => self.generate_svg(file_name),
-            Some("png") => self.generate_png(file_name),
+            Some("pdf") => self.generate_pdf(text_tex_id, file_name),
+            Some("svg") => self.generate_svg(text_tex_id, file_name),
+            Some("png") => self.generate_png(text_tex_id, file_name),
             _ => anyhow::bail!(
                 "Don't know how to write the format of {}",
                 file_name.display()
@@ -2272,7 +2329,11 @@ impl GlobalContext {
         res.with_context(|| format!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
-    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn generate_pdf(
+        &self,
+        text_tex_id: Option<glow::Texture>,
+        file_name: &Path,
+    ) -> anyhow::Result<()> {
         let options = self.data.papercraft().options();
         let resolution = options.resolution as f32;
         let page_size_mm = Vector2::from(options.page_size);
@@ -2286,7 +2347,7 @@ impl GlobalContext {
         let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
         let cr = cairo::Context::new(&pdf)?;
 
-        self.generate_pages(|_page, pixbuf, texts, _| {
+        self.generate_pages(text_tex_id, |_page, pixbuf, texts, _| {
             // A PDF output is in "dots" for some reason
             // which is nice because 1pixel = 1dot
             let mut mc = cairo::Matrix::identity();
@@ -2310,11 +2371,16 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_svg(&self, file_name: &Path) -> anyhow::Result<()> {
+    //TODO: do not take text_tex_id
+    fn generate_svg(
+        &self,
+        text_tex_id: Option<glow::Texture>,
+        file_name: &Path,
+    ) -> anyhow::Result<()> {
         let options = self.data.papercraft().options();
         let edge_id_position = options.edge_id_position;
 
-        self.generate_pages(|page, pixbuf, texts, lines_by_island| {
+        self.generate_pages(text_tex_id, |page, pixbuf, texts, lines_by_island| {
             let name = Self::file_name_for_page(file_name, page);
             let out = std::fs::File::create(name)?;
             let mut out = std::io::BufWriter::new(out);
@@ -2328,8 +2394,7 @@ impl GlobalContext {
             let mut all_page_cuts = Vec::new();
 
             for (idx, (_, (lines, _))) in lines_by_island.iter().enumerate() {
-                let cuts = lines.iter_cut();
-                if let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) {
+                if let Some(page_cuts) = cuts_to_page_cuts(lines.iter_cut(), &in_page) {
                     all_page_cuts.push((idx, page_cuts));
                 };
             }
@@ -2444,11 +2509,15 @@ impl GlobalContext {
         })?;
         Ok(())
     }
-    fn generate_png(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn generate_png(
+        &self,
+        text_tex_id: Option<glow::Texture>,
+        file_name: &Path,
+    ) -> anyhow::Result<()> {
         let options = self.data.papercraft().options();
         let resolution = options.resolution as f32;
 
-        self.generate_pages(|page, pixbuf, texts, _| {
+        self.generate_pages(text_tex_id, |page, pixbuf, texts, _| {
             let cr = cairo::Context::new(&pixbuf)?;
             PrintableText::to_cairo_all(texts, options.edge_id_position, resolution, &cr);
 
@@ -2474,7 +2543,11 @@ impl GlobalContext {
         name.set_extension(ext);
         parent.join(name)
     }
-    fn generate_pages<F>(&self, mut do_page_fn: F) -> anyhow::Result<()>
+    fn generate_pages<F>(
+        &self,
+        text_tex_id: Option<glow::Texture>,
+        mut do_page_fn: F,
+    ) -> anyhow::Result<()>
     where
         F: FnMut(
             u32,
@@ -2596,13 +2669,6 @@ impl GlobalContext {
 
             let page_count = options.pages;
             let flap_style = options.flap_style;
-            let edge_id_position = options.edge_id_position;
-
-            let island_names = if edge_id_position != EdgeIdPosition::None {
-                self.data.papercraft().build_island_names()
-            } else {
-                Default::default()
-            };
 
             let mut texts = Vec::new();
             let lines_by_island = self.data.lines_by_island();
@@ -2620,6 +2686,16 @@ impl GlobalContext {
                     texturize,
                     notex_color: Rgba::new(1.0, 1.0, 1.0, 1.0),
                 };
+
+                // Draw the texts
+                if text_tex_id.is_some() && options.edge_id_position == EdgeIdPosition::Outside {
+                    self.gl.active_texture(glow::TEXTURE0);
+                    self.gl.bind_texture(glow::TEXTURE_2D, text_tex_id);
+                    gl_fixs
+                        .prg_text
+                        .draw(&u, &self.data.gl_objs().paper_text, glow::TRIANGLES);
+                }
+
                 // Line Flaps
                 if flap_style != FlapStyle::None {
                     gl_fixs.prg_paper_line.draw(
@@ -2679,6 +2755,15 @@ impl GlobalContext {
                     &self.data.gl_objs().paper_vertices_edge_crease,
                     glow::LINES,
                 );
+
+                // Draw the texts
+                if text_tex_id.is_some() && options.edge_id_position == EdgeIdPosition::Inside {
+                    self.gl.active_texture(glow::TEXTURE0);
+                    self.gl.bind_texture(glow::TEXTURE_2D, text_tex_id);
+                    gl_fixs
+                        .prg_text
+                        .draw(&u, &self.data.gl_objs().paper_text, glow::TRIANGLES);
+                }
                 // End render
 
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
@@ -2748,20 +2833,23 @@ impl GlobalContext {
                 if edge_id_position != EdgeIdPosition::None {
                     let in_page = options.is_in_page_fn(page);
                     for (i_island, (lines, extra)) in &lines_by_island {
-                        let cuts = lines.iter_cut();
-                        let Some(page_cuts) = cuts_to_page_cuts(cuts, &in_page) else {
+                        let Some(page_cuts) = cuts_to_page_cuts(lines.iter_cut(), &in_page) else {
                             continue;
                         };
                         // Edge ids
                         for cut_idx in extra.cut_indices() {
                             let i_island_b =
                                 self.data.papercraft().island_by_face(cut_idx.i_face_b);
-                            let ii = island_names
-                                .get(i_island_b)
-                                .map(|s| s.as_str())
+                            let ii = self
+                                .data
+                                .papercraft()
+                                .island_by_key(i_island_b)
+                                .map(|island_b| island_b.name())
                                 .unwrap_or("?");
                             let text = format!("{}:{}", ii, cut_idx.id);
-                            let pos = in_page(cut_idx.pos).1;
+                            let pos =
+                                in_page(cut_idx.pos(self.font_text_line_scale * edge_id_font_size))
+                                    .1;
                             texts.push(PrintableText {
                                 size: edge_id_font_size,
                                 pos,
@@ -2803,13 +2891,13 @@ impl GlobalContext {
                                 center + Vector2::new(0.0, edge_id_font_size)
                             }
                         };
-                        if let Some(ii) = island_names.get(*i_island) {
+                        if let Some(island) = self.data.papercraft().island_by_key(*i_island) {
                             texts.push(PrintableText {
                                 size: 2.0 * edge_id_font_size,
                                 pos,
                                 angle: Rad(0.0),
                                 align: TextAlign::Center,
-                                text: ii.clone(),
+                                text: String::from(island.name()),
                             });
                         }
                     }
@@ -2836,6 +2924,14 @@ impl GlobalContext {
         } else {
             eprintln!("backup complete");
         }
+    }
+    fn pre_render(&mut self, ui: &Ui, rebuild: RebuildFlags) {
+        let text_helper = TextHelper {
+            ui,
+            font_text_line_scale: self.font_text_line_scale,
+            font_id: self.font_text,
+        };
+        self.data.pre_render(rebuild, &text_helper);
     }
 }
 
@@ -3007,12 +3103,11 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
 }
 
 pub fn cuts_to_page_cuts<'c>(
-    cuts: Vec<(&MVertex2DLine, &MVertex2DLine)>,
+    cuts: impl Iterator<Item = (&'c MVertex2DLine, &'c MVertex2DLine)>,
     in_page: impl Fn(Vector2) -> (bool, Vector2),
 ) -> Option<Vec<(Vector2, Vector2)>> {
     let mut touching = false;
     let page_cut = cuts
-        .iter()
         .map(|(v0, v1)| {
             let (is_in_0, v0) = in_page(v0.pos);
             let (is_in_1, v1) = in_page(v1.pos);
@@ -3123,12 +3218,32 @@ unsafe fn install_crash_backup(
 
 impl imgui::UiBuilder for GlobalContext {
     fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {
+        self.add_rebuild(RebuildFlags::all());
+
         self.font_default = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 18.0));
         self.font_big = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 28.0));
         self.font_small = atlas.add_font_collection([
             imgui::FontInfo::new(&*KARLA_TTF, 12.0),
             imgui::FontInfo::new(&*COPYRIGHT_TTF, 12.0),
         ]);
+        let options = self.data.papercraft().options();
+
+        //TODO: do not go too big or it will assert
+        let edge_id_font_size = options.edge_id_font_size * options.resolution as f32 / 72.0;
+
+        self.font_text = atlas.add_font(
+            imgui::FontInfo::new(
+                //include_bytes!("/usr/share/fonts/TTF/verdana.ttf"),
+                &*KARLA_TTF,
+                edge_id_font_size,
+            )
+            .add_char_range('?'..='?')
+            .add_char_range(':'..=':')
+            .add_char_range('0'..='9')
+            .add_char_range('A'..='Z'), //.add_char_range('a'..='z')
+        );
+        // This is eye-balled, depending on the particular font
+        self.font_text_line_scale = 0.80;
 
         self.logo_rect =
             atlas.add_custom_rect_regular([LOGO_IMG.width(), LOGO_IMG.height()], |_, img| {
@@ -3184,7 +3299,7 @@ impl imgui::UiBuilder for GlobalContext {
                     .rebuild
                     .intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER)
                 {
-                    self.data.pre_render(self.rebuild);
+                    self.pre_render(ui, self.rebuild);
                     let vp = glr::PushViewport::new(&self.gl);
                     if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
                         let _draw_fb_binder = BinderDrawFramebuffer::bind(&self.gl_fixs.fbo_scene);
@@ -3194,7 +3309,7 @@ impl imgui::UiBuilder for GlobalContext {
                     if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
                         let _draw_fb_binder = BinderDrawFramebuffer::bind(&self.gl_fixs.fbo_paper);
                         vp.viewport(0, 0, self.sz_paper.x as i32, self.sz_paper.y as i32);
-                        self.render_paper();
+                        self.render_paper(ui);
                     }
                     self.rebuild = RebuildFlags::empty();
                 }
@@ -3215,5 +3330,79 @@ impl imgui::UiBuilder for GlobalContext {
                     _ => (),
                 }
             });
+    }
+}
+
+struct TextHelper<'a> {
+    ui: &'a Ui,
+    font_text_line_scale: f32,
+    font_id: imgui::FontId,
+}
+
+trait TextBuilder {
+    fn font_text_line_scale(&self) -> f32;
+    fn make_text(&self, p: &PrintableText, v: &mut Vec<util_gl::MVertexText>);
+}
+
+impl TextBuilder for TextHelper<'_> {
+    fn font_text_line_scale(&self) -> f32 {
+        self.font_text_line_scale
+    }
+    // To use the imgui fonts we need a Ui, so this is the only class that can do it.
+    fn make_text(&self, pt: &PrintableText, vs: &mut Vec<util_gl::MVertexText>) {
+        let f = self.ui.get_font(self.font_id);
+        let mut x = 0.0;
+        let width = pt
+            .text
+            .chars()
+            .map(|c| {
+                let r = self.ui.find_glyph(self.font_id, c);
+                r.advance_x()
+            })
+            .sum::<f32>();
+        let m = Matrix3::from_translation(pt.pos)
+            * Matrix3::from(cgmath::Matrix2::from_angle(pt.angle))
+            * Matrix3::from_scale(pt.size / f.FontSize)
+            * Matrix3::from_translation(Vector2::new(-width / 2.0, -f.Ascent));
+        for c in pt.text.chars() {
+            let r = self.ui.find_glyph(self.font_id, c);
+            let mut p0 = r.p0();
+            let mut p1 = r.p1();
+            p0.x += x;
+            p1.x += x;
+            let mut q = [
+                util_gl::MVertexText {
+                    pos: p0,
+                    uv: r.uv0(),
+                },
+                util_gl::MVertexText {
+                    pos: Vector2::new(p1.x, p0.y),
+                    uv: Vector2::new(r.uv1().x, r.uv0().y),
+                },
+                util_gl::MVertexText {
+                    pos: Vector2::new(p0.x, p1.y),
+                    uv: Vector2::new(r.uv0().x, r.uv1().y),
+                },
+                util_gl::MVertexText {
+                    pos: Vector2::new(p0.x, p1.y),
+                    uv: Vector2::new(r.uv0().x, r.uv1().y),
+                },
+                util_gl::MVertexText {
+                    pos: Vector2::new(p1.x, p0.y),
+                    uv: Vector2::new(r.uv1().x, r.uv0().y),
+                },
+                util_gl::MVertexText {
+                    pos: p1,
+                    uv: r.uv1(),
+                },
+            ];
+            for v in &mut q {
+                let p = m * Vector3::new(v.pos.x, v.pos.y, 1.0);
+                v.pos.x = p.x;
+                v.pos.y = p.y;
+            }
+            vs.extend(q);
+            x += r.advance_x();
+        }
     }
 }

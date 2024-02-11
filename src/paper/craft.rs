@@ -3,10 +3,10 @@ use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
 use crate::util_3d;
-use cgmath::{prelude::*, Deg, EuclideanSpace, InnerSpace, Rad, Transform};
+use cgmath::{prelude::*, Deg, Rad};
 use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
-use slotmap::{new_key_type, SecondaryMap, SlotMap};
+use slotmap::{new_key_type, SlotMap};
 
 use super::*;
 mod file;
@@ -446,8 +446,7 @@ impl Papercraft {
     pub fn island_by_key_mut(&mut self, key: IslandKey) -> Option<&mut Island> {
         self.islands.get_mut(key)
     }
-    // The returned map is temporary only valid while the model is not changed
-    pub fn build_island_names(&self) -> SecondaryMap<IslandKey, String> {
+    pub fn rebuild_island_names(&mut self) {
         // To get somewhat predictable names try to sort the islands before naming them.
         // For now, sort them by number of faces.
         let mut islands: Vec<_> = self
@@ -472,13 +471,10 @@ impl Papercraft {
         }
 
         let mut island_name = Vec::new();
-        islands
-            .into_iter()
-            .map(|(idx, _)| {
-                next_name(&mut island_name);
-                (idx, String::from_utf8(island_name.clone()).unwrap())
-            })
-            .collect()
+        for (i_island, _) in &islands {
+            next_name(&mut island_name);
+            self.islands[*i_island].name = String::from_utf8(island_name.clone()).unwrap();
+        }
     }
 
     pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {
@@ -546,6 +542,7 @@ impl Papercraft {
             loc: Vector2::new(mx[2][0], mx[2][1]),
             rot: Rad(mx[0][1].atan2(mx[0][0])),
             mx: Matrix3::one(),
+            name: String::new(),
         };
         new_island.recompute_matrix();
 
@@ -1337,6 +1334,7 @@ pub struct Island {
     rot: Rad<f32>,
     loc: Vector2,
     mx: Matrix3,
+    name: String,
 }
 
 impl Island {
@@ -1374,6 +1372,9 @@ impl Island {
         let r = Matrix3::from(cgmath::Matrix2::from_angle(self.rot));
         let t = Matrix3::from_translation(self.loc);
         self.mx = t * r;
+    }
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -1540,6 +1541,7 @@ impl<'de> Deserialize<'de> for Island {
             loc: Vector2::new(d.x, d.y),
             rot: Rad(d.r),
             mx: Matrix3::one(),
+            name: String::new(),
         };
         island.recompute_matrix();
         Ok(island)

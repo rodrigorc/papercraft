@@ -3,13 +3,9 @@ use std::{
     path::Path,
 };
 
-use anyhow::Result;
-use cgmath::{One, Rad, Zero};
-use fxhash::{FxHashMap, FxHashSet};
-use model::import::Importer;
-use slotmap::SlotMap;
-
 use super::*;
+use anyhow::Result;
+use model::import::Importer;
 
 impl Papercraft {
     pub fn save<W: Write + Seek>(&self, w: W) -> Result<()> {
@@ -144,6 +140,7 @@ impl Papercraft {
                 loc: Vector2::zero(),
                 rot: Rad::zero(),
                 mx: Matrix3::one(),
+                name: String::new(),
             };
             islands.insert(island);
         }

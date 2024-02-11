@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range};
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
@@ -10,7 +10,6 @@ use easy_imgui_window::easy_imgui_renderer::{
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
-use crate::glr::{self, Rgba};
 use crate::paper::{
     EdgeId, EdgeIdPosition, EdgeIndex, EdgeStatus, EdgeToggleFlapAction, Face, FaceIndex, FlapGeom,
     FlapSide, FlapStyle, FoldStyle, IslandKey, JoinResult, MaterialIndex, Model, PaperOptions,
@@ -21,7 +20,12 @@ use crate::util_3d::{
 };
 use crate::util_gl::{
     MStatus2D, MStatus3D, MVertex2D, MVertex2DColor, MVertex2DLine, MVertex3D, MVertex3DLine,
-    MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL,
+    MVertexText, MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL,
+};
+use crate::TextBuilder;
+use crate::{
+    glr::{self, Rgba},
+    PrintableText, TextAlign,
 };
 
 // In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
@@ -49,6 +53,7 @@ pub struct GLObjects {
     pub paper_vertices_flap_edge: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_shadow_flap: glr::DynamicVertexArray<MVertex2DColor>,
+    pub paper_text: glr::DynamicVertexArray<MVertexText>,
 
     // Maps a FaceIndex to the index into paper_vertices
     pub paper_face_index: Vec<u32>,
@@ -107,8 +112,9 @@ bitflags::bitflags! {
         const SELECTION = 0x0008;
         const PAPER_REDRAW = 0x0010;
         const SCENE_REDRAW = 0x0020;
+        const ISLANDS = 0x0040;
 
-        const ANY_REDRAW_PAPER = Self::PAGES.bits() | Self::PAPER.bits() | Self::SELECTION.bits() | Self::PAPER_REDRAW.bits();
+        const ANY_REDRAW_PAPER = Self::PAGES.bits() | Self::PAPER.bits() | Self::SELECTION.bits() | Self::PAPER_REDRAW.bits() | Self::ISLANDS.bits();
         const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits() | Self::SELECTION.bits() | Self::SCENE_REDRAW.bits();
     }
 }
@@ -145,6 +151,7 @@ pub struct UiSettings {
     pub show_flaps: bool,
     pub show_3d_lines: bool,
     pub xray_selection: bool,
+    pub show_texts: bool,
     pub highlight_overlaps: bool,
 }
 
@@ -292,6 +299,7 @@ pub struct PaperDrawFaceArgs {
     vertices_flap: Vec<MVertex2DColor>,
     vertices_flap_edge: Vec<MVertex2DLine>,
     vertices_shadow_flap: Vec<MVertex2DColor>,
+    vertices_text: Vec<MVertexText>,
 
     // Maps a FaceIndex to the index into vertices
     face_index: Vec<u32>,
@@ -315,15 +323,24 @@ impl PaperDrawFaceArgs {
             vertices_flap_edge: Vec::new(),
             vertices_shadow_flap: Vec::new(),
             face_index: vec![0; model.num_faces()],
+            vertices_text: Vec::new(),
         }
     }
 
-    pub fn iter_cut(&self) -> Vec<(&MVertex2DLine, &MVertex2DLine)> {
-        self.vertices_flap_edge
+    pub fn iter_cut(&self) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+        self.iter_cut_ex((0, 0)..self.cut_last_index())
+    }
+    pub fn cut_last_index(&self) -> (usize, usize) {
+        (self.vertices_flap_edge.len(), self.vertices_edge_cut.len())
+    }
+    pub fn iter_cut_ex(
+        &self,
+        range: Range<(usize, usize)>,
+    ) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+        self.vertices_flap_edge[range.start.0..range.end.0]
             .chunks_exact(2)
-            .chain(self.vertices_edge_cut.chunks_exact(2))
+            .chain(self.vertices_edge_cut[range.start.1..range.end.1].chunks_exact(2))
             .map(|s| (&s[0], &s[1]))
-            .collect()
     }
     pub fn iter_crease<'a>(
         &'a self,
@@ -354,11 +371,12 @@ impl PaperDrawFaceArgsExtra {
 
 #[derive(Copy, Clone, Debug)]
 pub struct CutIndex {
-    pub pos: Vector2,
+    pub center: Vector2,
     pub dir: Vector2,
     pub angle: Rad<f32>,
     pub i_face_b: FaceIndex,
     pub id: EdgeId,
+    pub voffs: f32,
 }
 
 impl CutIndex {
@@ -379,41 +397,44 @@ impl CutIndex {
         let mut center = (a + b) / 2.0;
 
         // Where does the edge-id go?
-        let factor = match (options.edge_id_position, n_flap) {
+        let voffs = match (options.edge_id_position, n_flap) {
             // inside the face
             (EdgeIdPosition::Inside, None) => -0.2,
             // in the flap, next to the face
-            (EdgeIdPosition::Inside, Some(_)) => 1.1,
+            (EdgeIdPosition::Inside, Some(_)) => 1.0,
             // outside the face
-            (EdgeIdPosition::Outside, None) => 1.1,
+            (EdgeIdPosition::Outside, None) => 1.0,
             // outside the flap
             (EdgeIdPosition::Outside, Some(n)) => {
                 center += n;
-                1.1
+                1.0
             }
             // should not happen, if pos is None it is filtered before getting here
             (EdgeIdPosition::None, _) => 0.0,
         };
-        let factor = factor * 25.4 / 72.0;
         let dir = (b - a).normalize();
-        let normal = Vector2::new(-dir.y, dir.x);
-        let pos = center + normal * options.edge_id_font_size * factor;
+        //let normal = Vector2::new(-dir.y, dir.x);
+        //let pos = center + normal * options.edge_id_font_size * factor;
         let angle = -dir.angle(Vector2::new(1.0, 0.0));
         CutIndex {
-            pos,
+            center,
             dir,
             angle,
             i_face_b,
             id,
+            voffs,
         }
+    }
+    pub fn pos(&self, font_size: f32) -> Vector2 {
+        let normal = Vector2::new(-self.dir.y, self.dir.x);
+        self.center + font_size * self.voffs * normal
     }
 }
 
-// Might be bitflags
 pub enum UndoResult {
     False,
     Model,
-    ModelAndOptions,
+    ModelAndOptions(PaperOptions),
 }
 
 impl PapercraftContext {
@@ -475,17 +496,21 @@ impl PapercraftContext {
                 show_flaps: true,
                 show_3d_lines: true,
                 xray_selection: true,
+                show_texts: false,
                 highlight_overlaps: false,
             },
         })
     }
 
-    pub fn pre_render(&mut self, rebuild: RebuildFlags) {
+    pub fn pre_render(&mut self, rebuild: RebuildFlags, text_builder: &impl TextBuilder) {
+        if rebuild.contains(RebuildFlags::ISLANDS) && self.ui.show_texts {
+            self.papercraft.rebuild_island_names();
+        }
         if rebuild.contains(RebuildFlags::PAGES) {
             self.pages_rebuild();
         }
         if rebuild.contains(RebuildFlags::PAPER) {
-            self.paper_rebuild();
+            self.paper_rebuild(text_builder);
         }
         if rebuild.contains(RebuildFlags::SCENE_EDGE) {
             self.scene_edge_rebuild();
@@ -956,21 +981,31 @@ impl PapercraftContext {
         }
     }
 
-    fn paper_rebuild(&mut self) {
-        //Maps VertexIndex in the model to index in vertices
+    fn paper_rebuild(&mut self, text_builder: &impl TextBuilder) {
+        let options = self.papercraft.options();
         let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
+        let mut edge_id_info =
+            if options.edge_id_position != EdgeIdPosition::None && self.ui.show_texts {
+                Some((
+                    PaperDrawFaceArgsExtra::default(),
+                    slotmap::SecondaryMap::new(),
+                ))
+            } else {
+                None
+            };
 
         // Shadow flaps have to be drawn the the face adjacent to the one being drawn, but we do not
         // now its coordinates yet.
         // So we store the flap vertices and the face matrixes in temporary storage and draw the
         // shadow flaps later.
-        let shadow_flap_alpha = self.papercraft.options().shadow_flap_alpha;
+        let shadow_flap_alpha = options.shadow_flap_alpha;
         let mut shadow_cache = if shadow_flap_alpha > 0.0 {
             Some((HashMap::new(), Vec::new()))
         } else {
             None
         };
-        for (_, island) in self.papercraft.islands() {
+        for (i_island, island) in self.papercraft.islands() {
+            let cut_before = args.cut_last_index();
             self.papercraft.traverse_faces(island, |i_face, face, mx| {
                 if let Some((mx_face, _)) = &mut shadow_cache {
                     mx_face.insert(i_face, *mx);
@@ -981,10 +1016,14 @@ impl PapercraftContext {
                     mx,
                     &mut args,
                     shadow_cache.as_mut().map(|(_, t)| t),
-                    None,
+                    edge_id_info.as_mut().map(|(extra, _)| extra),
                 );
                 ControlFlow::Continue(())
             });
+            if let Some((_, cuts)) = &mut edge_id_info {
+                let cut_next = args.cut_last_index();
+                cuts.insert(i_island, cut_before..cut_next);
+            }
         }
 
         if let Some((mx_face, flap_cache)) = &shadow_cache {
@@ -1007,6 +1046,75 @@ impl PapercraftContext {
             }
         }
 
+        // Draw the EdgeId?
+        if let Some((extra, cut_by_island)) = edge_id_info {
+            let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
+
+            // Edge ids
+            for cut_idx in extra.cut_indices() {
+                let i_island_b = self.papercraft().island_by_face(cut_idx.i_face_b);
+                let ii = self
+                    .papercraft()
+                    .island_by_key(i_island_b)
+                    .map(|island_b| island_b.name())
+                    .unwrap_or("?");
+                let text = format!("{}:{}", ii, cut_idx.id);
+                let pos = cut_idx.pos(text_builder.font_text_line_scale() * edge_id_font_size);
+                let t = PrintableText {
+                    size: edge_id_font_size,
+                    pos,
+                    angle: cut_idx.angle,
+                    align: TextAlign::Center,
+                    text,
+                };
+                text_builder.make_text(&t, &mut args.vertices_text);
+            }
+
+            for (i_island, island) in self.papercraft().islands() {
+                // Island ids
+                let pos = match options.edge_id_position {
+                    // On top (None should not happen)
+                    EdgeIdPosition::None | EdgeIdPosition::Outside => {
+                        let cut_range = cut_by_island[i_island].clone();
+                        let top = args
+                            .iter_cut_ex(cut_range)
+                            .map(|(a, b)| (a.pos, b.pos))
+                            .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
+                            .unwrap()
+                            .0;
+                        top - Vector2::new(0.0, edge_id_font_size)
+                    }
+                    // In the middle
+                    EdgeIdPosition::Inside => {
+                        let (flat_face, total_area) =
+                            self.papercraft().get_biggest_flat_face(island);
+                        // Compute the center of mass of the flat-face, that will be the
+                        // weighted mean of the centers of masses of each single face.
+                        let center: Vector2 = flat_face
+                            .iter()
+                            .map(|(i_face, area)| {
+                                let vv: Vector2 = args.vertices_for_face(*i_face).into_iter().sum();
+                                vv * *area
+                            })
+                            .sum();
+                        // Don't forget to divide the center of each triangle by 3!
+                        let center = center / total_area / 3.0;
+                        center + Vector2::new(0.0, edge_id_font_size)
+                    }
+                };
+                if let Some(island) = self.papercraft().island_by_key(i_island) {
+                    let t = PrintableText {
+                        size: 2.0 * edge_id_font_size,
+                        pos,
+                        angle: Rad(0.0),
+                        align: TextAlign::Center,
+                        text: String::from(island.name()),
+                    };
+                    text_builder.make_text(&t, &mut args.vertices_text);
+                }
+            }
+        }
+
         self.gl_objs.paper_vertices.set(args.vertices);
         self.gl_objs
             .paper_vertices_edge_cut
@@ -1022,6 +1130,7 @@ impl PapercraftContext {
         self.gl_objs
             .paper_vertices_shadow_flap
             .set(args.vertices_shadow_flap);
+        self.gl_objs.paper_text.set(args.vertices_text);
     }
 
     fn pages_rebuild(&mut self) {
@@ -1645,7 +1754,10 @@ impl PapercraftContext {
         if let Some(undo) = undo {
             self.push_undo_action(undo);
         }
-        RebuildFlags::PAPER | RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION
+        RebuildFlags::PAPER
+            | RebuildFlags::SCENE_EDGE
+            | RebuildFlags::SELECTION
+            | RebuildFlags::ISLANDS
     }
     #[must_use]
     fn do_flap_action(&mut self, i_edge: EdgeIndex, shift_action: bool) -> RebuildFlags {
@@ -1919,13 +2031,12 @@ impl PapercraftContext {
                     options,
                     island_pos,
                 } => {
-                    self.set_options(options);
                     for (i_root_face, (rot, loc)) in island_pos {
                         let i_island = self.papercraft.island_by_face(i_root_face);
                         let island = self.papercraft.island_by_key_mut(i_island).unwrap();
                         island.reset_transformation(i_root_face, rot, loc);
                     }
-                    res = UndoResult::ModelAndOptions;
+                    res = UndoResult::ModelAndOptions(options);
                 }
                 UndoAction::Modified => {
                     self.modified = false;
@@ -2124,6 +2235,8 @@ impl GLObjects {
         let paper_vertices_page = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_margin = glr::DynamicVertexArray::new(gl)?;
 
+        let paper_text = glr::DynamicVertexArray::new(gl)?;
+
         Ok(GLObjects {
             textures,
             vertices,
@@ -2145,6 +2258,7 @@ impl GLObjects {
 
             paper_vertices_page,
             paper_vertices_margin,
+            paper_text,
         })
     }
 }

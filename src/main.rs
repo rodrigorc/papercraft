@@ -1817,14 +1817,16 @@ impl GlobalContext {
     fn run_mouse_actions(&mut self, ui: &Ui) {
         let shift_down = ui.is_key_down(imgui::Key::ModShift);
         let control_down = ui.is_key_down(imgui::Key::ModCtrl);
+        let plus = ui.is_key_down(imgui::Key::KeypadAdd);
+        let minus = ui.is_key_down(imgui::Key::KeypadSubtract);
         let alt_down = ui.is_key_down(imgui::Key::ModAlt);
 
         let mouse_pos = self.scene_ui_status.mouse_pos;
         if self.scene_ui_status.action != Canvas3dAction::None {
             'zoom: {
                 let dz = match ui.io().MouseWheel {
-                    x if x < 0.0 => 1.0 / 1.1,
-                    x if x > 0.0 => 1.1,
+                    x if x < 0.0 || minus => 1.0 / 1.1,
+                    x if x > 0.0 || plus => 1.1,
                     _ => break 'zoom,
                 };
                 let flags = self
@@ -1863,8 +1865,8 @@ impl GlobalContext {
         if self.paper_ui_status.action != Canvas3dAction::None {
             'zoom: {
                 let dz = match ui.io().MouseWheel {
-                    x if x < 0.0 => 1.0 / 1.1,
-                    x if x > 0.0 => 1.1,
+                    x if x < 0.0 || minus => 1.0 / 1.1,
+                    x if x > 0.0 || plus => 1.1,
                     _ => break 'zoom,
                 };
                 let flags = self.data.paper_zoom(self.sz_paper, mouse_pos, dz);

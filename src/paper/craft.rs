@@ -290,7 +290,7 @@ struct Memoization {
 
     // This depends on the islands, but not on the options
     // Indexed by FaceIndex
-    island_by_face: RefCell<Vec<Option<IslandKey>>>,
+    island_by_face: RefCell<Vec<IslandKey>>,
 }
 
 impl Memoization {
@@ -419,25 +419,20 @@ impl Papercraft {
         // Try to use a memoized value
         let mut memo = self.memo.island_by_face.borrow_mut();
         if memo.is_empty() {
-            memo.resize(self.model.num_faces(), None);
+            self.rebuild_island_by_face(&mut memo);
         }
-        let res = &mut memo[usize::from(i_face)];
-        match res {
-            Some(x) => *x,
-            None => {
-                let i = self.island_by_face_internal(i_face);
-                *res = Some(i);
-                i
-            }
-        }
+        memo[usize::from(i_face)]
     }
-    fn island_by_face_internal(&self, i_face: FaceIndex) -> IslandKey {
-        for (i_island, island) in &self.islands {
-            if self.contains_face(island, i_face) {
-                return i_island;
-            }
+    fn rebuild_island_by_face(&self, memo: &mut Vec<IslandKey>) {
+        // This could be optimized and updated every time an island is split/joined,
+        // instead of creating it from scratch every time, but is it worth it?
+        memo.resize(self.model.num_faces(), IslandKey::default());
+        for (i_island, island) in self.islands() {
+            self.traverse_faces_no_matrix(island, |i_face| {
+                memo[usize::from(i_face)] = i_island;
+                ControlFlow::Continue(())
+            });
         }
-        panic!("Island not found");
     }
     // Islands come and go, so this key may not exist.
     pub fn island_by_key(&self, key: IslandKey) -> Option<&Island> {

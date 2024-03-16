@@ -1077,7 +1077,7 @@ impl GlobalContext {
                             self.build_read_only_options_inner_dialog(ui, &options);
                         });
                     });
-                ui.tree_node_config("Page layout")
+                ui.tree_node_config("Layout")
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 5.5);

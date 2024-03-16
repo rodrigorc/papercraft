@@ -17,10 +17,9 @@ cc = "1"
 bindgen = "0.69"
 
 [dependencies]
-cairo-rs = { version = "0.18", features = ["pdf", "png", "v1_16"] }
 cgmath = { version = "0.18", features = ["mint"] }
 anyhow = "1"
-base64 = "0.21"
+base64 = "0.22"
 slotmap = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -29,7 +28,7 @@ zip = "0.6"
 memoffset = "0.9"
 bitflags = "2"
 mint = "0.5"
-image = { version = "0.24", default_features = false, features = ["png", "jpeg", "jpeg_rayon"] }
+image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
 clap = { version = "4", features = ["derive", "cargo"] }
 log = "0.4"
 env_logger = "0.11"
@@ -39,6 +38,7 @@ signal-hook = "0.3"
 opener = "0.6"
 maybe-owned = { version = "0.3", features = ["serde"] }
 lazy_static = "1"
+printpdf = { version = "0.7", features = ["embedded_images"], git = "https://github.com/fschutt/printpdf", rev = "fbc7d691f988b0d295570bee072de932f4cabda2" }
 
 easy-imgui-sys = "0.2"
 easy-imgui-window = { version = "0.2", features = ["freetype"] }

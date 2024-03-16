@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 fn main() -> Result<()> {
     build_resource()?;
     build_imgui_filedialog()?;
+    build_helvetica()?;
     Ok(())
 }
 
@@ -52,9 +53,6 @@ fn build_resource() -> Result<()> {
 }
 
 fn build_imgui_filedialog() -> Result<()> {
-    for x in env::vars() {
-        dbg!(x);
-    }
     let dep_imgui_path =
         env::var("DEP_IMGUI_THIRD_PARTY").expect("DEP_IMGUI_THIRD_PARTY not defined");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -121,5 +119,84 @@ fn build_imgui_filedialog() -> Result<()> {
         let entry = entry?;
         println!("cargo:rerun-if-changed={}", entry.path().display());
     }
+    Ok(())
+}
+
+fn build_helvetica() -> Result<()> {
+    use std::{
+        collections::HashMap,
+        fs::File,
+        io::{BufRead, BufReader, BufWriter, Write},
+    };
+
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out = File::create(out_path.join("helvetica_afm.rs"))?;
+    let mut out = BufWriter::new(out);
+    let afm = File::open("thirdparty/afm/Helvetica.afm").unwrap();
+    let afm = BufReader::new(afm);
+
+    let mut widths = [0; 128];
+    let mut names = HashMap::new();
+    let mut kerns = vec![Vec::new(); 128];
+
+    for line in afm.lines() {
+        let line = line.unwrap();
+        let pieces: Vec<&str> = line.split(';').collect();
+        let words0: Vec<&str> = pieces[0].split_ascii_whitespace().collect();
+        if words0.is_empty() {
+            continue;
+        }
+        match words0[0] {
+            "C" => {
+                let code: i32 = words0[1].parse().unwrap();
+                if code < 0 || code >= 128 {
+                    continue;
+                }
+                for piece in &pieces[1..] {
+                    let words: Vec<&str> = piece.split_ascii_whitespace().collect();
+                    if words.is_empty() {
+                        continue;
+                    }
+                    match words[0] {
+                        "WX" => {
+                            let width: u32 = words[1].parse().unwrap();
+                            widths[code as usize] = width;
+                        }
+                        "N" => {
+                            let name = words[1];
+                            names.insert(String::from(name), code);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "KPX" => {
+                let Some(&c1) = names.get(words0[1]) else {
+                    continue;
+                };
+                let Some(&c2) = names.get(words0[2]) else {
+                    continue;
+                };
+                let kern: i32 = words0[3].parse().unwrap();
+                kerns[c1 as usize].push((c2, kern));
+            }
+            _ => {}
+        }
+    }
+
+    write!(out, "pub static WIDTHS: [i32; 128] = [")?;
+    for w in widths {
+        write!(out, "{w},")?;
+    }
+    writeln!(out, "];")?;
+    write!(out, "pub static KERNS: [&[(u8, i32)]; 128] = [")?;
+    for bks in &kerns {
+        write!(out, "&[")?;
+        for &(b, k) in bks {
+            write!(out, "({b},{k}),")?;
+        }
+        write!(out, "],")?;
+    }
+    writeln!(out, "];")?;
     Ok(())
 }

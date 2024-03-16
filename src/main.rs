@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use cgmath::{prelude::*, Deg, Rad};
 use easy_imgui_window::{
     easy_imgui::{self as imgui, vec2, Color, MouseButton, Vector2},
@@ -32,6 +32,7 @@ fn to_cgv2(v: imgui::Vector2) -> cgmath::Vector2<f32> {
 
 mod imgui_filedialog;
 mod paper;
+mod pdf_metrics;
 mod util_3d;
 mod util_gl;
 
@@ -2318,8 +2319,8 @@ impl GlobalContext {
             .map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase())
             .as_deref()
         {
-            Some("pdf") => self.generate_pdf(text_tex_id, file_name),
-            Some("svg") => self.generate_svg(text_tex_id, file_name),
+            Some("pdf") => self.generate_pdf(file_name),
+            Some("svg") => self.generate_svg(file_name),
             Some("png") => self.generate_png(text_tex_id, file_name),
             _ => anyhow::bail!(
                 "Don't know how to write the format of {}",
@@ -2329,58 +2330,91 @@ impl GlobalContext {
         res.with_context(|| format!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
-    fn generate_pdf(
-        &self,
-        text_tex_id: Option<glow::Texture>,
-        file_name: &Path,
-    ) -> anyhow::Result<()> {
+    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
+        use printpdf::{BuiltinFont, Mm, PdfDocument, TextMatrix};
+
         let options = self.data.papercraft().options();
         let resolution = options.resolution as f32;
         let page_size_mm = Vector2::from(options.page_size);
-        let page_size_inches = page_size_mm / 25.4;
-        let page_size_dots = page_size_inches * 72.0;
 
-        let pdf =
-            cairo::PdfSurface::new(page_size_dots.x as f64, page_size_dots.y as f64, file_name)?;
         let title = self.title(false);
-        let _ = pdf.set_metadata(cairo::PdfMetadata::Title, &title);
-        let _ = pdf.set_metadata(cairo::PdfMetadata::Creator, signature());
-        let cr = cairo::Context::new(&pdf)?;
+        let (doc, page_ref, layer_ref) =
+            PdfDocument::new(&title, Mm(page_size_mm.x), Mm(page_size_mm.y), "Layer");
+        let doc = doc.with_creator(signature());
+        let font = doc.add_builtin_font(BuiltinFont::Helvetica).unwrap();
+        let edge_id_position = options.edge_id_position;
 
-        self.generate_pages(text_tex_id, |_page, pixbuf, texts, _| {
-            // A PDF output is in "dots" for some reason
-            // which is nice because 1pixel = 1dot
-            let mut mc = cairo::Matrix::identity();
-            cr.set_matrix(mc);
+        let mut first_page = Some((page_ref, layer_ref));
 
-            // Scale pattern to in dots
-            cr.set_source_surface(pixbuf, 0.0, 0.0)?;
-            let pat = cr.source();
-            let scale = resolution / 72.0; // to dots
-            mc.scale(scale as f64, scale as f64);
-            pat.set_matrix(mc);
+        self.generate_pages(None, |_page, pixbuf, texts, _| {
+            let (page_ref, layer_ref) = first_page
+                .take()
+                .unwrap_or_else(|| doc.add_page(Mm(page_size_mm.x), Mm(page_size_mm.y), "Layer"));
+            let layer = doc.get_page(page_ref).get_layer(layer_ref);
 
-            let _ = cr.paint();
-            PrintableText::to_cairo_all(texts, options.edge_id_position, 72.0, &cr);
-            let _ = cr.show_page();
+            let write_texts = || {
+                if texts.is_empty() {
+                    return;
+                }
+                layer.begin_text_section();
+                for text in texts {
+                    let size = text.size * 72.0 / 25.4;
+                    // PDF fonts are just slightly larger than expected
+                    let size = size / 1.1;
+                    let x = text.pos.x;
+                    // (0,0) is in lower-left
+                    let y = page_size_mm.y - text.pos.y;
+                    let angle = -Deg::from(text.angle).0;
+                    let (width, cps) = pdf_metrics::measure_helvetica(&text.text);
+                    let width = width as f32 * text.size / 1000.0;
+                    let dx = match text.align {
+                        TextAlign::Near => 0.0,
+                        TextAlign::Center => -width / 2.0,
+                        TextAlign::Far => -width,
+                    };
+                    let x = x + dx * text.angle.cos();
+                    let y = y - dx * text.angle.sin();
+                    layer.set_font(&font, size);
+                    layer.set_text_matrix(TextMatrix::TranslateRotate(
+                        Mm(x).into_pt(),
+                        Mm(y).into_pt(),
+                        angle,
+                    ));
+                    layer.write_positioned_codepoints(cps);
+                }
+                layer.end_text_section();
+            };
+
+            if edge_id_position != EdgeIdPosition::Inside {
+                write_texts();
+            }
+
+            let img = printpdf::Image::from_dynamic_image(&pixbuf);
+            // This image with the default transformation and the right resolution should cover the page exactly
+            let tr = printpdf::ImageTransform {
+                dpi: Some(resolution),
+                ..Default::default()
+            };
+            img.add_to_layer(layer.clone(), tr);
+
+            if edge_id_position == EdgeIdPosition::Inside {
+                write_texts();
+            }
             Ok(())
         })?;
-        drop(cr);
-        drop(pdf);
+
+        let out = std::fs::File::create(file_name)?;
+        let mut out = std::io::BufWriter::new(out);
+        doc.save(&mut out)?;
 
         Ok(())
     }
 
-    //TODO: do not take text_tex_id
-    fn generate_svg(
-        &self,
-        text_tex_id: Option<glow::Texture>,
-        file_name: &Path,
-    ) -> anyhow::Result<()> {
+    fn generate_svg(&self, file_name: &Path) -> anyhow::Result<()> {
         let options = self.data.papercraft().options();
         let edge_id_position = options.edge_id_position;
 
-        self.generate_pages(text_tex_id, |page, pixbuf, texts, lines_by_island| {
+        self.generate_pages(None, |page, pixbuf, texts, lines_by_island| {
             let name = Self::file_name_for_page(file_name, page);
             let out = std::fs::File::create(name)?;
             let mut out = std::io::BufWriter::new(out);
@@ -2389,7 +2423,8 @@ impl GlobalContext {
             let in_page = options.is_in_page_fn(page);
 
             let mut png = Vec::new();
-            pixbuf.write_to_png(&mut png)?;
+            let mut cpng = std::io::Cursor::new(&mut png);
+            pixbuf.write_to(&mut cpng, image::ImageFormat::Png)?;
 
             let mut all_page_cuts = Vec::new();
 
@@ -2514,17 +2549,11 @@ impl GlobalContext {
         text_tex_id: Option<glow::Texture>,
         file_name: &Path,
     ) -> anyhow::Result<()> {
-        let options = self.data.papercraft().options();
-        let resolution = options.resolution as f32;
-
-        self.generate_pages(text_tex_id, |page, pixbuf, texts, _| {
-            let cr = cairo::Context::new(&pixbuf)?;
-            PrintableText::to_cairo_all(texts, options.edge_id_position, resolution, &cr);
-
+        self.generate_pages(text_tex_id, |page, pixbuf, _texts, _| {
             let name = Self::file_name_for_page(file_name, page);
             let f = std::fs::File::create(name)?;
             let mut f = std::io::BufWriter::new(f);
-            pixbuf.write_to_png(&mut f)?;
+            pixbuf.write_to(&mut f, image::ImageFormat::Png)?;
             Ok(())
         })?;
         Ok(())
@@ -2551,7 +2580,7 @@ impl GlobalContext {
     where
         F: FnMut(
             u32,
-            &cairo::ImageSurface,
+            &DynamicImage,
             &[PrintableText],
             &[(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))],
         ) -> anyhow::Result<()>,
@@ -2565,17 +2594,10 @@ impl GlobalContext {
         let page_size_pixels =
             cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
-        let mut pixbuf = cairo::ImageSurface::create(
-            cairo::Format::ARgb32,
-            page_size_pixels.x,
-            page_size_pixels.y,
-        )
-        .with_context(|| anyhow!("Unable to create output pixbuf"))?;
-        let stride = pixbuf.stride();
+        let mut pixbuf =
+            image::RgbaImage::new(page_size_pixels.x as u32, page_size_pixels.y as u32);
 
         unsafe {
-            self.gl.pixel_store_i32(glow::PACK_ROW_LENGTH, stride / 4);
-
             let fbo = glr::Framebuffer::generate(&self.gl)?;
             let rbo = glr::Renderbuffer::generate(&self.gl)?;
 
@@ -2787,18 +2809,15 @@ impl GlobalContext {
 
                 self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
 
-                {
-                    let mut data = pixbuf.data()?;
-                    self.gl.read_pixels(
-                        0,
-                        0,
-                        page_size_pixels.x,
-                        page_size_pixels.y,
-                        glow::BGRA,
-                        glow::UNSIGNED_BYTE,
-                        glow::PixelPackData::Slice(data.as_mut()),
-                    );
-                }
+                self.gl.read_pixels(
+                    0,
+                    0,
+                    page_size_pixels.x,
+                    page_size_pixels.y,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelPackData::Slice(&mut pixbuf),
+                );
 
                 let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
                 let edge_id_position = options.edge_id_position;
@@ -2902,10 +2921,11 @@ impl GlobalContext {
                         }
                     }
                 }
-
-                do_page_fn(page, &pixbuf, &texts, &lines_by_island)?;
+                let img = DynamicImage::from(pixbuf);
+                do_page_fn(page, &img, &texts, &lines_by_island)?;
+                // restore the
+                pixbuf = img.into();
             }
-            self.gl.pixel_store_i32(glow::PACK_ROW_LENGTH, 0);
         }
         Ok(())
     }
@@ -3132,51 +3152,6 @@ struct PrintableText {
     text: String,
 }
 
-impl PrintableText {
-    fn to_cairo_all(
-        texts: &[PrintableText],
-        edge_id_position: EdgeIdPosition,
-        resolution: f32,
-        cr: &cairo::Context,
-    ) {
-        // Dest in millimeters
-        let mut mc = cairo::Matrix::identity();
-        let scale = resolution / 25.4; // to millimeters
-        mc.scale(scale as f64, scale as f64);
-        cr.set_matrix(mc);
-        // Black
-        cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-        match edge_id_position {
-            // Text below the texture
-            EdgeIdPosition::None | EdgeIdPosition::Outside => {
-                cr.set_operator(cairo::Operator::DestOver)
-            }
-            // Text above the texture
-            EdgeIdPosition::Inside => cr.set_operator(cairo::Operator::Over),
-        }
-        for text in texts {
-            text.to_cairo(cr);
-        }
-    }
-    fn to_cairo(&self, cr: &cairo::Context) {
-        let m = cr.matrix();
-        cr.set_font_size(self.size as f64);
-        let align = match self.align {
-            TextAlign::Near => 0.0,
-            TextAlign::Center => cr.text_extents(&self.text).unwrap().width() / 2.0,
-            TextAlign::Far => cr.text_extents(&self.text).unwrap().width(),
-        };
-        let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(self.angle);
-        let p = basis2.rotate_vector(Vector2::new(-align as f32, 0.0));
-
-        let Vector2 { x, y } = self.pos + p;
-        cr.move_to(x as f64, y as f64);
-        cr.rotate(self.angle.0 as f64);
-        let _ = cr.show_text(&self.text);
-        cr.set_matrix(m);
-    }
-}
-
 #[cfg(target_os = "linux")]
 #[inline(never)]
 unsafe fn install_crash_backup(
@@ -3228,20 +3203,10 @@ impl imgui::UiBuilder for GlobalContext {
         ]);
         let options = self.data.papercraft().options();
 
-        //TODO: do not go too big or it will assert
-        let edge_id_font_size = options.edge_id_font_size * options.resolution as f32 / 72.0;
-
-        self.font_text = atlas.add_font(
-            imgui::FontInfo::new(
-                //include_bytes!("/usr/share/fonts/TTF/verdana.ttf"),
-                &*KARLA_TTF,
-                edge_id_font_size,
-            )
-            .add_char_range('?'..='?')
-            .add_char_range(':'..=':')
-            .add_char_range('0'..='9')
-            .add_char_range('A'..='Z'), //.add_char_range('a'..='z')
-        );
+        // Do not go too big or Dear ImGui will assert!
+        let edge_id_font_size =
+            (options.edge_id_font_size * options.resolution as f32 / 72.0).min(350.0);
+        self.font_text = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, edge_id_font_size));
         // This is eye-balled, depending on the particular font
         self.font_text_line_scale = 0.80;
 
@@ -3360,10 +3325,15 @@ impl TextBuilder for TextHelper<'_> {
                 r.advance_x()
             })
             .sum::<f32>();
+        let x_offset = match pt.align {
+            TextAlign::Near => 0.0,
+            TextAlign::Center => -width / 2.0,
+            TextAlign::Far => -width,
+        };
         let m = Matrix3::from_translation(pt.pos)
             * Matrix3::from(cgmath::Matrix2::from_angle(pt.angle))
             * Matrix3::from_scale(pt.size / f.FontSize)
-            * Matrix3::from_translation(Vector2::new(-width / 2.0, -f.Ascent));
+            * Matrix3::from_translation(Vector2::new(x_offset, -f.Ascent));
         for c in pt.text.chars() {
             let r = self.ui.find_glyph(self.font_id, c);
             let mut p0 = r.p0();

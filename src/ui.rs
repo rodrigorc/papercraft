@@ -22,11 +22,11 @@ use crate::util_gl::{
     MStatus2D, MStatus3D, MVertex2D, MVertex2DColor, MVertex2DLine, MVertex3D, MVertex3DLine,
     MVertexText, MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL,
 };
-use crate::TextBuilder;
 use crate::{
     glr::{self, Rgba},
     PrintableText, TextAlign,
 };
+use crate::{TextBuilder, FONT_SIZE};
 
 // In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
 const FLAP_LINE_WIDTH: f32 = 0.2;
@@ -1109,6 +1109,44 @@ impl PapercraftContext {
                         angle: Rad(0.0),
                         align: TextAlign::Center,
                         text: String::from(island.name()),
+                    };
+                    text_builder.make_text(&t, &mut args.vertices_text);
+                }
+            }
+        }
+
+        //TODO PrintableTexts duplicated here and in generate_pages???
+        if options.show_self_promotion || options.show_page_number {
+            let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
+            let page_size_mm = Vector2::from(options.page_size);
+            let page_count = options.pages;
+            for page in 0..page_count {
+                let page_pos = options.page_position(page);
+                if options.show_self_promotion {
+                    let x = margin_left;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
+                        .min(page_size_mm.y - FONT_SIZE);
+                    let text = String::from(signature());
+                    let t = PrintableText {
+                        size: FONT_SIZE,
+                        pos: page_pos + Vector2::new(x, y),
+                        angle: Rad(0.0),
+                        align: TextAlign::Near,
+                        text,
+                    };
+                    text_builder.make_text(&t, &mut args.vertices_text);
+                }
+                if options.show_page_number {
+                    let x = page_size_mm.x - margin_right;
+                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
+                        .min(page_size_mm.y - FONT_SIZE);
+                    let text = format!("Page {}/{}", page + 1, page_count);
+                    let t = PrintableText {
+                        size: FONT_SIZE,
+                        pos: page_pos + Vector2::new(x, y),
+                        angle: Rad(0.0),
+                        align: TextAlign::Far,
+                        text,
                     };
                     text_builder.make_text(&t, &mut args.vertices_text);
                 }

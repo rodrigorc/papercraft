@@ -2,15 +2,10 @@ FROM ubuntu:18.04
 WORKDIR /app
 RUN apt -y update
 RUN apt -y upgrade
-RUN apt -y install curl gcc pkg-config xz-utils libgtk-3-dev fuse libclang-dev
+RUN apt -y install curl gcc pkg-config xz-utils fuse libclang-dev file libfreetype6-dev
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.rs
-# Ubuntu 18.04 does not ship cairo-1.16 that we need, so compile it locally
-COPY build_cairo ./
-RUN ./build_cairo
-# Rust 1.71
-RUN sh rustup.rs -y --profile minimal
-# Rust 1.74
-RUN sh rustup.rs -y --profile minimal
+# Rust 1.76
+RUN sh rustup.rs -y --profile minimal -c rustfmt
 COPY linuxdeploy ./
 COPY makeappimage ./
 COPY apprun ./

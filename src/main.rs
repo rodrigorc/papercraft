@@ -2660,6 +2660,9 @@ impl GlobalContext {
                 );
                 None
             };
+            // Consume the possible error from the multisample above
+            let _ = self.gl.get_error();
+
             let _vp =
                 glr::PushViewport::push(&self.gl, 0, 0, page_size_pixels.x, page_size_pixels.y);
 

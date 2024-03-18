@@ -322,17 +322,27 @@ impl Papercraft {
         &self.options
     }
     // Returns the old options
-    pub fn set_options(&mut self, mut options: PaperOptions) -> PaperOptions {
+    pub fn set_options(
+        &mut self,
+        mut options: PaperOptions,
+        relocate_pieces: bool,
+    ) -> PaperOptions {
         let scale = options.scale / self.options.scale;
         // Compute positions relative to the nearest page
-        let page_pos: FxHashMap<_, _> = self
-            .islands
-            .iter()
-            .map(|(i_island, island)| {
-                let po = self.options.global_to_page(island.location());
-                (i_island, po)
-            })
-            .collect();
+        let page_pos: Option<FxHashMap<_, _>> = if relocate_pieces {
+            Some(
+                self.islands
+                    .iter()
+                    .map(|(i_island, island)| {
+                        let mut po = self.options.global_to_page(island.location());
+                        po.offset *= scale;
+                        (i_island, po)
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        };
 
         // Apply the new options
         std::mem::swap(&mut self.options, &mut options);
@@ -340,12 +350,13 @@ impl Papercraft {
         self.memo.invalidate_options();
 
         // Apply the new positions
-        for (i_island, mut po) in page_pos {
-            po.offset *= scale;
-            let loc = self.options.page_to_global(po);
-            if let Some(island) = self.island_by_key_mut(i_island) {
-                island.loc = loc;
-                island.recompute_matrix();
+        if let Some(page_pos) = page_pos {
+            for (i_island, po) in page_pos {
+                let loc = self.options.page_to_global(po);
+                if let Some(island) = self.island_by_key_mut(i_island) {
+                    island.loc = loc;
+                    island.recompute_matrix();
+                }
             }
         }
 

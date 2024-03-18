@@ -444,17 +444,33 @@ impl PapercraftContext {
     pub fn gl_objs(&self) -> &GLObjects {
         &self.gl_objs
     }
-    pub fn set_papercraft_options(&mut self, options: PaperOptions) {
-        let island_pos = self
-            .papercraft()
-            .islands()
-            .map(|(_, island)| (island.root_face(), (island.rotation(), island.location())))
-            .collect();
-        let old_options = self.set_options(options);
-        self.push_undo_action(vec![UndoAction::DocConfig {
-            options: old_options,
-            island_pos,
-        }]);
+    pub fn set_papercraft_options(&mut self, options: PaperOptions, push_undo_action: bool) {
+        let island_pos = push_undo_action.then(|| {
+            self.papercraft()
+                .islands()
+                .map(|(_, island)| (island.root_face(), (island.rotation(), island.location())))
+                .collect()
+        });
+
+        self.ui.show_textures = options.texture;
+        if let Some(tex) = &self.gl_objs.textures {
+            unsafe {
+                tex.gl().active_texture(glow::TEXTURE0);
+                tex.gl()
+                    .bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
+                set_texture_filter(tex.gl(), options.tex_filter);
+            }
+        }
+        let old_options = self
+            .papercraft
+            .set_options(options, /* relocate_pieces */ push_undo_action);
+
+        if let Some(island_pos) = island_pos {
+            self.push_undo_action(vec![UndoAction::DocConfig {
+                options: old_options,
+                island_pos,
+            }]);
+        }
     }
     pub fn from_papercraft(
         papercraft: Papercraft,
@@ -527,19 +543,6 @@ impl PapercraftContext {
             sz_paper,
             self.papercraft.options(),
         );
-    }
-
-    fn set_options(&mut self, options: PaperOptions) -> PaperOptions {
-        self.ui.show_textures = options.texture;
-        if let Some(tex) = &self.gl_objs.textures {
-            unsafe {
-                tex.gl().active_texture(glow::TEXTURE0);
-                tex.gl()
-                    .bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
-                set_texture_filter(tex.gl(), options.tex_filter);
-            }
-        }
-        self.papercraft.set_options(options)
     }
 
     fn make_dash_line(size: f32, p0: MVertex2DLine, p1: &mut MVertex2DLine) {

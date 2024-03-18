@@ -217,8 +217,8 @@ fn main() {
                 if let Some(new_title) = ctx.updated_title() {
                     window.main_window().window().set_title(&new_title);
                 }
-                if let Some(options) = ctx.options_applied.take() {
-                    ctx.data.set_papercraft_options(options);
+                if let Some((options, push_undo)) = ctx.options_applied.take() {
+                    ctx.data.set_papercraft_options(options, push_undo);
                     ctx.add_rebuild(RebuildFlags::all());
                     window.renderer().imgui().invalidate_font_atlas();
                 }
@@ -406,7 +406,8 @@ struct GlobalContext {
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
     options_opened: Option<PaperOptions>,
-    options_applied: Option<PaperOptions>,
+    options_applied: Option<(PaperOptions, bool)>, // the .1 is true if the Options was accepted,
+    // false, when doing an "Undo".
     option_button_height: f32,
     about_visible: bool,
     file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
@@ -903,7 +904,7 @@ impl GlobalContext {
                         if let Some(apply_options) = apply {
                             // Don't apply the options immediately because we are in the middle of a render,
                             // and that could cause inconsistencies
-                            self.options_applied = Some(apply_options);
+                            self.options_applied = Some((apply_options, true));
                         }
                     } else {
                         self.build_read_only_options_inner_dialog(ui, &options);
@@ -1619,8 +1620,7 @@ impl GlobalContext {
                     if let Some(o) = self.options_opened.as_mut() {
                         *o = self.data.papercraft().options().clone();
                     }
-                    self.options_applied = Some(options);
-                    self.add_rebuild(RebuildFlags::all());
+                    self.options_applied = Some((options, false));
                 }
                 UndoResult::False => {}
             }

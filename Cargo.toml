@@ -35,10 +35,10 @@ env_logger = "0.11"
 flate2 = "1"
 fxhash = "0.2"
 signal-hook = "0.3"
-opener = "0.6"
+opener = { version = "0.7", default-features = false }
 maybe-owned = { version = "0.3", features = ["serde"] }
 lazy_static = "1"
 printpdf = { version = "0.7", features = ["embedded_images"], git = "https://github.com/fschutt/printpdf", rev = "fbc7d691f988b0d295570bee072de932f4cabda2" }
 
-easy-imgui-sys = "0.2"
-easy-imgui-window = { version = "0.2", features = ["freetype"] }
+easy-imgui-sys = "0.3"
+easy-imgui-window = { version = "0.3", features = ["freetype"] }

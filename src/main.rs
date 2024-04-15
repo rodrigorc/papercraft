@@ -189,30 +189,12 @@ fn main() {
     }
     event_loop
         .run(move |event, w| {
-            match &event {
-                winit::event::Event::NewEvents(winit::event::StartCause::Init) => {
-                    // This fixes "keyboard non-responsive on startup because it doesn't detect FocusGained...":
-                    // https://github.com/rust-windowing/winit/issues/2841
-                    use easy_imgui_window::winit::raw_window_handle::{
-                        HasWindowHandle,
-                        RawWindowHandle::{Xcb, Xlib},
-                    };
-                    let w = window.main_window().window();
-                    if let Ok(h) = w.window_handle() {
-                        if matches!(h.as_raw(), Xcb(_) | Xlib(_)) {
-                            w.set_visible(false);
-                            w.set_visible(true);
-                        }
-                    }
-                }
-                _ => {}
-            }
             // Main loop, if it panics or somewhat crashes, try to save a backup
             let mut ctx = ctx.borrow_mut();
 
             let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Default message handling
-                let loop_res = window.do_event(&mut *ctx, &event, w);
+                let loop_res = window.do_event(&mut *ctx, &event);
 
                 if let Some(new_title) = ctx.updated_title() {
                     window.main_window().window().set_title(&new_title);
@@ -231,7 +213,7 @@ fn main() {
                         std::thread::park();
                     }
                 }
-                if loop_res.is_break() && ctx.quit_requested == BoolWithConfirm::None {
+                if loop_res.window_closed && ctx.quit_requested == BoolWithConfirm::None {
                     let quit = ctx.check_modified();
                     ctx.quit_requested = quit;
                 }

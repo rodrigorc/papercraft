@@ -347,9 +347,7 @@ impl Papercraft {
             }
             by_mat
         } else {
-            vec![(0..self.model.num_faces())
-                .map(|i_f| FaceIndex::from(i_f))
-                .collect()]
+            vec![(0..self.model.num_faces()).map(FaceIndex::from).collect()]
         };
 
         // We iterate over the triangles, but export the flat-face, we have to skip duplicated

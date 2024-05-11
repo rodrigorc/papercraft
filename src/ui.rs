@@ -491,7 +491,7 @@ impl PapercraftContext {
         let (trans_scene, trans_paper) =
             default_transformations(obj, sz_dummy, sz_dummy, papercraft.options());
         let show_textures = papercraft.options().texture;
-        let gl_objs = GLObjects::new(&papercraft, &gl)?;
+        let gl_objs = GLObjects::new(&papercraft, gl)?;
 
         Ok(PapercraftContext {
             papercraft,
@@ -775,7 +775,7 @@ impl PapercraftContext {
                     (extra.as_mut(), edge_id, draw_flap.face())
                 {
                     extra.cut_index.push(CutIndex::new(
-                        v0.pos, v1.pos, None, i_face_b, edge_id, &options,
+                        v0.pos, v1.pos, None, i_face_b, edge_id, options,
                     ));
                 }
             }
@@ -905,7 +905,7 @@ impl PapercraftContext {
                         // N shadow flaps.
                         geom_b = None;
                         mat = face.material();
-                        uvs = compute_uvs(face, &m);
+                        uvs = compute_uvs(face, m);
                     }
                 }
                 let (root_alpha, tip_alpha) = match flap_style {

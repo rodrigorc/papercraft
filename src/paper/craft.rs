@@ -212,8 +212,8 @@ impl PaperOptions {
     pub fn global_to_page(&self, pos: Vector2) -> PageOffset {
         let page_cols = self.page_cols;
         let page_size = Vector2::from(self.page_size);
-        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).clamp(0, page_cols as i32) as i32;
-        let row = ((pos.y / (page_size.y + PAGE_SEP)) as i32).max(0) as i32;
+        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).clamp(0, page_cols as i32);
+        let row = ((pos.y / (page_size.y + PAGE_SEP)) as i32).max(0);
 
         let zero_pos = self.row_col_position(row, col);
         let offset = pos - zero_pos;
@@ -460,7 +460,7 @@ impl Papercraft {
             .iter()
             .map(|(i_island, island)| (i_island, self.island_area(island)))
             .collect();
-        islands.sort_by(|(_, n1), (_, n2)| n2.total_cmp(&n1));
+        islands.sort_by(|(_, n1), (_, n2)| n2.total_cmp(n1));
 
         // A, B, ... Z, AA, ... AZ, BA, .... ZZ, AAA, AAB, ...
         fn next_name(name: &mut Vec<u8>) {

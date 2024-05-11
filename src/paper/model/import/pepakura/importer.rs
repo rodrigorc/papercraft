@@ -33,9 +33,11 @@ impl PepakuraImporter {
         let margin = Vector2::new(settings.margin_side as f32, settings.margin_top as f32);
         let page_size = settings.page_size;
 
-        let mut options = PaperOptions::default();
-        options.page_size = (page_size.x, page_size.y);
-        options.margin = (margin.y, margin.x, margin.x, margin.y);
+        let mut options = PaperOptions {
+            page_size: (page_size.x, page_size.y),
+            margin: (margin.y, margin.x, margin.x, margin.y),
+            ..Default::default()
+        };
         if let Some(a) = settings.fold_line_hide_angle {
             options.hidden_line_angle = (180 - a) as f32;
         }
@@ -82,9 +84,7 @@ impl Importer for PepakuraImporter {
     fn face_count(&self) -> usize {
         self.pdo.objects().iter().map(|o| o.faces.len()).sum()
     }
-    fn faces<'s>(
-        &'s self,
-    ) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+    fn faces(&self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> {
         self.pdo
             .objects()
             .iter()
@@ -115,7 +115,7 @@ impl Importer for PepakuraImporter {
             .map(|mat| {
                 let pixbuf = mat.texture.as_ref().and_then(|t| {
                     let img = ImageBuffer::from_raw(t.width, t.height, t.data.take());
-                    img.map(|b| DynamicImage::ImageRgb8(b))
+                    img.map(DynamicImage::ImageRgb8)
                 });
                 Texture {
                     file_name: mat.name.clone() + ".png",
@@ -130,13 +130,10 @@ impl Importer for PepakuraImporter {
         let ((obj_id, v0_id), (_, v1_id)) = edge_id;
         let vv = (v0_id, v1_id);
         let obj = &self.pdo.objects()[obj_id as usize];
-        let Some(edge) = obj
+        let edge = obj
             .edges
             .iter()
-            .find(|&e| vv == (e.i_v1, e.i_v2) || vv == (e.i_v2, e.i_v1))
-        else {
-            return None;
-        };
+            .find(|&e| vv == (e.i_v1, e.i_v2) || vv == (e.i_v2, e.i_v1))?;
         if edge.connected {
             Some(EdgeStatus::Joined)
         } else {

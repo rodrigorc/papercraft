@@ -53,9 +53,7 @@ impl Importer for StlImporter {
         self.stl.triangles().len()
     }
 
-    fn faces<'s>(
-        &'s self,
-    ) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+    fn faces(&self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> {
         (0..self.stl.triangles().len() as u32).map(|i_face| {
             let i_v0 = 3 * i_face;
             (

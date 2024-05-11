@@ -28,7 +28,7 @@ zip = "0.6"
 memoffset = "0.9"
 bitflags = "2"
 mint = "0.5"
-image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clap = { version = "4", features = ["derive", "cargo"] }
 log = "0.4"
 env_logger = "0.11"
@@ -38,7 +38,9 @@ signal-hook = "0.3"
 opener = { version = "0.7", default-features = false }
 maybe-owned = { version = "0.3", features = ["serde"] }
 lazy_static = "1"
-printpdf = { version = "0.7", features = ["embedded_images"], git = "https://github.com/fschutt/printpdf", rev = "fbc7d691f988b0d295570bee072de932f4cabda2" }
 
-easy-imgui-sys = "0.3"
-easy-imgui-window = { version = "0.3", features = ["freetype"] }
+# Use my fork of printpdf for now, that depends on image-0.25
+printpdf = { version = "0.7", features = ["embedded_images"], git = "https://github.com/rodrigorc/printpdf", rev = "5183aeab58c7c2ce550619222f908c5a9d66a0c1" }
+
+easy-imgui-sys = "0.4"
+easy-imgui-window = { version = "0.4", features = ["freetype"] }

@@ -18,7 +18,7 @@ fn build_resource() -> Result<()> {
         let output_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| ".".to_string());
         let header = std::path::PathBuf::from(&output_dir).join("papercraft.h");
         std::fs::write(
-            &header,
+            header,
             format!(
                 r#"
 #define PC_PROJECT "{name}"
@@ -28,6 +28,7 @@ fn build_resource() -> Result<()> {
             ),
         )?;
         let output = std::path::PathBuf::from(&output_dir).join("resource.o");
+        #[allow(clippy::option_env_unwrap)]
         let status = std::process::Command::new(
             option_env!("WINDRES").expect("WINDRES envvar is undefined"),
         )
@@ -149,7 +150,7 @@ fn build_helvetica() -> Result<()> {
         match words0[0] {
             "C" => {
                 let code: i32 = words0[1].parse().unwrap();
-                if code < 0 || code >= 128 {
+                if !(0..128).contains(&code) {
                     continue;
                 }
                 for piece in &pieces[1..] {

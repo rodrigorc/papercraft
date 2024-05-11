@@ -52,7 +52,7 @@ struct ModelSer<'s> {
 
 // Hack to pass a serialization context to the Edges, it will be removed, eventually
 thread_local! {
-    static SER_MODEL: Cell<Option<*const Model>> = Cell::new(None);
+    static SER_MODEL: Cell<Option<*const Model>> = const { Cell::new(None) };
 }
 struct SetSerModel<'a> {
     old: Option<*const Model>,

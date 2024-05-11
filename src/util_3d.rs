@@ -186,7 +186,7 @@ pub fn ray_crosses_face(ray: (Vector3, Vector3), vs: &[Vector3; 3]) -> Option<f3
     }*/
 
     // ray and triangle are parallel if det is close to 0
-    if det.abs() < std::f32::EPSILON {
+    if det.abs() < f32::EPSILON {
         return None;
     }
 
@@ -225,7 +225,7 @@ pub fn line_line_distance(line0: (Vector3, Vector3), line1: (Vector3, Vector3)) 
     let l0_closest;
     let l1_closest;
     let distance2;
-    if det.abs() > std::f32::EPSILON {
+    if det.abs() > f32::EPSILON {
         //not parallel
         let b1 = -line1d.dot(diff);
         let inv_det = 1.0 / det;

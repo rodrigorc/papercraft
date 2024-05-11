@@ -2,6 +2,9 @@
 // * https://github.com/dpethes/pdo-tools.git/doc/pdo_spec_draft.txt
 // Many thanks to "dpethes" for the work!
 
+// I don't use many of the values, but I'll keep them there for reference
+#![allow(dead_code)]
+
 use anyhow::anyhow;
 use std::cell::Cell;
 
@@ -201,7 +204,7 @@ impl<'r, R: Read> Reader<'r, R> {
             let width = read_f64(self.rdr)?;
             let a1 = read_f64(self.rdr)?;
             let a2 = read_f64(self.rdr)?;
-            let flap = flap.then(|| Flap {
+            let flap = flap.then_some(Flap {
                 width: width as f32,
                 angle1: Rad(a1 as f32),
                 angle2: Rad(a2 as f32),

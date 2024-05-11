@@ -197,7 +197,7 @@ fn main() {
                 let loop_res = window.do_event(&mut *ctx, &event);
 
                 if let Some(new_title) = ctx.updated_title() {
-                    window.main_window().window().set_title(&new_title);
+                    window.main_window().window().set_title(new_title);
                 }
                 if let Some((options, push_undo)) = ctx.options_applied.take() {
                     ctx.data.set_papercraft_options(options, push_undo);
@@ -426,6 +426,7 @@ struct MenuActions {
     undo: bool,
 }
 
+#[allow(clippy::collapsible_if)]
 impl GlobalContext {
     fn modifiable(&self) -> bool {
         self.data.ui.mode != MouseMode::ReadOnly
@@ -1244,7 +1245,7 @@ impl GlobalContext {
         }
         ui.same_line();
         if ui.button_config("Apply").size(vec2(100.0, 0.0)).build() {
-            apply_options = options_opened.clone();
+            apply_options.clone_from(&options_opened);
         }
         // Compute the height of the buttons to avoid having an external scrollbar
         let pos2 = Vector2::from(ui.get_cursor_screen_pos());
@@ -2323,7 +2324,7 @@ impl GlobalContext {
 
         let title = self.title(false);
         let (doc, page_ref, layer_ref) =
-            PdfDocument::new(&title, Mm(page_size_mm.x), Mm(page_size_mm.y), "Layer");
+            PdfDocument::new(title, Mm(page_size_mm.x), Mm(page_size_mm.y), "Layer");
         let doc = doc.with_creator(signature());
         let font = doc.add_builtin_font(BuiltinFont::Helvetica).unwrap();
         let edge_id_position = options.edge_id_position;
@@ -2373,7 +2374,7 @@ impl GlobalContext {
                 write_texts();
             }
 
-            let img = printpdf::Image::from_dynamic_image(&pixbuf);
+            let img = printpdf::Image::from_dynamic_image(pixbuf);
             // This image with the default transformation and the right resolution should cover the page exactly
             let tr = printpdf::ImageTransform {
                 dpi: Some(resolution),
@@ -2497,7 +2498,7 @@ impl GlobalContext {
                 writeln!(&mut out, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
                     if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
                 for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
-                    let creases = lines.iter_crease(&extra, fold_kind);
+                    let creases = lines.iter_crease(extra, fold_kind);
                     // each crease can be checked for bounds individually
                     let page_creases = creases
                         .filter_map(|(a, b)| {
@@ -2736,7 +2737,7 @@ impl GlobalContext {
                         .prg_paper_solid
                         .attrib_by_name("color")
                         .unwrap()
-                        .location() as u32,
+                        .location(),
                     0.0,
                     0.0,
                     0.0,

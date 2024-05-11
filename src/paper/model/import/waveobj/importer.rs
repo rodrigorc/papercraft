@@ -113,9 +113,7 @@ impl Importer for WaveObjImporter {
     fn face_count(&self) -> usize {
         self.obj.faces().len()
     }
-    fn faces<'s>(
-        &'s self,
-    ) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's {
+    fn faces(&self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> {
         self.obj.faces().iter().map(|face| {
             let verts: Vec<_> = face
                 .vertices()

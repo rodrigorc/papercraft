@@ -857,10 +857,10 @@ impl Papercraft {
                 n.x * flap_cos_0 + n.y * flap_sin_0,
             );
             //90° is the original normal so switch the sin/cos in these rotations
-            let (flapsin_1, flap_cos_1) = a1.sin_cos();
+            let (flap_sin_1, flap_cos_1) = a1.sin_cos();
             let normal_1 = Vector2::new(
-                n.x * flapsin_1 + n.y * flap_cos_1,
-                -n.x * flap_cos_1 + n.y * flapsin_1,
+                n.x * flap_sin_1 + n.y * flap_cos_1,
+                -n.x * flap_cos_1 + n.y * flap_sin_1,
             );
 
             let side_0 = (base.0, base.0 + normal_0);
@@ -881,7 +881,7 @@ impl Papercraft {
                 }
 
                 // Check the intersections with the edges of the imaginary flap:
-                for (flap_sin, side) in [(flap_sin_0, side_0), (flapsin_1, side_1)] {
+                for (flap_sin, side) in [(flap_sin_0, side_0), (flap_sin_1, side_1)] {
                     let (_, o1, o2) = util_3d::line_line_intersection((other.p0, other.p1), side);
                     if (ZERO..=ONE).contains(&o1) && ZERO <= o2 {
                         minimum_width = minimum_width.min(o2 * flap_sin);

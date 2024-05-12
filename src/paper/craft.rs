@@ -299,6 +299,7 @@ impl Memoization {
         self.face_to_face_edge_matrix.borrow_mut().clear();
     }
     fn invalidate_islands(&self) {
+        self.flat_face_flap_dimensions.borrow_mut().clear();
         self.island_by_face.borrow_mut().clear();
     }
 }
@@ -828,8 +829,16 @@ impl Papercraft {
         let a1 = Rad::turn_div_2() - a1;
 
         let flap_angle = Rad::from(Deg(self.options.flap_angle));
-        let a0 = Rad(a0.0.min(flap_angle.0));
-        let a1 = Rad(a1.0.min(flap_angle.0));
+        let mut a0 = Rad(a0.0.min(flap_angle.0));
+        let mut a1 = Rad(a1.0.min(flap_angle.0));
+
+        if let Some((self_face, self_angle)) = self.self_edge_angle_in_2d(i_edge) {
+            if self_face == i_face_b {
+                a0 = Rad(a0.0.min(self_angle.0));
+            } else {
+                a1 = Rad(a1.0.min(self_angle.0));
+            }
+        };
 
         // ** Compute max flap width **
         //
@@ -1188,6 +1197,81 @@ impl Papercraft {
             ControlFlow::Continue(())
         });
         biggest_face.unwrap()
+    }
+
+    // Given an edge id, if both sides are on the same island and share a vertex,
+    // then return the angle they form, and the face that contains the shared vertex as v0 of that edge
+    // (the other side will be v1).
+    fn self_edge_angle_in_2d(&self, i_edge: EdgeIndex) -> Option<(FaceIndex, Rad<f32>)> {
+        let edge = &self.model()[i_edge];
+        let (f0, Some(f1)) = edge.faces() else {
+            return None;
+        };
+        let island0 = self.island_by_face(f0);
+        let island1 = self.island_by_face(f1);
+        if island0 != island1 {
+            return None;
+        }
+        let island = self.island_by_key(island0).unwrap();
+        #[derive(Copy, Clone)]
+        struct Line {
+            v0: Vector2,
+            v1: Vector2,
+            i_face: FaceIndex,
+        }
+        impl Line {
+            fn vector(&self) -> Vector2 {
+                self.v1 - self.v0
+            }
+            fn angle(&self, other: &Line) -> Rad<f32> {
+                self.vector().angle(other.vector())
+            }
+        }
+        let mut lines = Vec::new();
+        let scale = self.options().scale;
+        self.traverse_faces(island, |i_face, face, mx| {
+            if i_face != f0 && i_face != f1 {
+                return ControlFlow::Continue(());
+            }
+            let Some((v0, v1, _)) = face
+                .vertices_with_edges()
+                .find(|(_, _, i_e)| *i_e == i_edge)
+            else {
+                // Should not happen
+                return ControlFlow::Break(());
+            };
+            let plane = self.model().face_plane(face);
+            let tr = |v: VertexIndex| {
+                let v = &self.model()[v];
+                let v = plane.project(&v.pos(), scale);
+                mx.transform_point(Point2::from_vec(v)).to_vec()
+            };
+            let v0 = tr(v0);
+            let v1 = tr(v1);
+            lines.push(Line { v0, v1, i_face });
+            if lines.len() == 2 {
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        });
+
+        let &[l0, l1] = lines.as_slice() else {
+            // Should not happen
+            return None;
+        };
+        // Check if both sides of the edge share an angle
+        let (side, angle) = if l0.v0.distance2(l1.v1).abs() < 0.01 {
+            //dbg!((Deg::from(l1.angle(&l0)), Deg::from(l0.angle(&l1))));
+            (l0.i_face, l1.angle(&l0))
+        } else if l1.v0.distance2(l0.v1).abs() < 0.01 {
+            //dbg!((Deg::from(l0.angle(&l1)), Deg::from(l1.angle(&l0))));
+            (l1.i_face, l0.angle(&l1))
+        } else {
+            return None;
+        };
+        // Return the inner angle
+        let angle = Rad::turn_div_2() - angle;
+        Some((side, angle))
     }
 }
 

@@ -274,7 +274,7 @@ impl std::fmt::Display for EdgeId {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct FlapGeom {
     pub tan_0: f32,
     pub tan_1: f32,
@@ -282,25 +282,49 @@ pub struct FlapGeom {
     pub triangular: bool,
 }
 
+#[derive(Debug, Clone)]
+struct FlapEdgeData {
+    i_face: FaceIndex,
+    i_edge: EdgeIndex,
+    i_v0: VertexIndex,
+    i_v1: VertexIndex,
+    // Do not assume that these coordinates are the real ones in the paper, the movement of the island is not tracked.
+    p0: Vector2,
+    p1: Vector2,
+}
+
 #[derive(Default)]
 struct Memoization {
-    // These depend on the options, but not on the islands
-    flat_face_flap_dimensions: RefCell<FxHashMap<(FaceIndex, EdgeIndex), FlapGeom>>,
+    // This depends on the options, because of the scale, but not on the islands,
+    // because it is computed as if both faces are joined.
     face_to_face_edge_matrix: RefCell<FxHashMap<(EdgeIndex, FaceIndex, FaceIndex), Matrix3>>,
 
     // This depends on the islands, but not on the options
     // Indexed by FaceIndex
     island_by_face: RefCell<Vec<IslandKey>>,
+
+    // This depends on the options and the islands
+    flat_face_flap_dimensions:
+        RefCell<FxHashMap<IslandKey, FxHashMap<(FaceIndex, EdgeIndex), FlapGeom>>>,
+
+    // This depends on the islands, but not on the options
+    island_perimeters: RefCell<FxHashMap<IslandKey, Vec<FlapEdgeData>>>,
 }
 
 impl Memoization {
     fn invalidate_options(&self) {
-        self.flat_face_flap_dimensions.borrow_mut().clear();
         self.face_to_face_edge_matrix.borrow_mut().clear();
-    }
-    fn invalidate_islands(&self) {
         self.flat_face_flap_dimensions.borrow_mut().clear();
+    }
+    fn invalidate_islands(&self, islands: &[IslandKey]) {
         self.island_by_face.borrow_mut().clear();
+
+        let mut flat_face_flap_dimensions = self.flat_face_flap_dimensions.borrow_mut();
+        let mut island_perimeters = self.island_perimeters.borrow_mut();
+        for island in islands {
+            flat_face_flap_dimensions.remove(island);
+            island_perimeters.remove(island);
+        }
     }
 }
 
@@ -573,8 +597,8 @@ impl Papercraft {
                 new_island.translate(sign * Vector2::new(-v.y, v.x));
             }
         }
-        self.memo.invalidate_islands();
-        self.islands.insert(new_island);
+        let i_new_island = self.islands.insert(new_island);
+        self.memo.invalidate_islands(&[i_island, i_new_island]);
     }
 
     //Retuns a map from the island that disappears into the extra join data.
@@ -606,7 +630,7 @@ impl Papercraft {
 
         // Join both islands
         let i_island_a = self.island_by_face(i_face_a);
-        self.memo.invalidate_islands();
+        self.memo.invalidate_islands(&[i_island_a, i_island_b]);
         let mut island_b = self.islands.remove(i_island_b).unwrap();
 
         // Keep position of a or b?
@@ -739,14 +763,21 @@ impl Papercraft {
     }
     // Returns the max. angles of the flap sides, actually their cotangent, and the max. width.
     // Ideally it should return all the flap metrics
-    pub fn flat_face_flap_dimensions(&self, i_face_b: FaceIndex, i_edge: EdgeIndex) -> FlapGeom {
+    pub fn flat_face_flap_dimensions(
+        &self,
+        i_face_a: FaceIndex,
+        i_face_b: Option<FaceIndex>,
+        i_edge: EdgeIndex,
+    ) -> FlapGeom {
         // Try to use a memoized value
         let mut memo = self.memo.flat_face_flap_dimensions.borrow_mut();
         use std::collections::hash_map::Entry::*;
-        let res = match memo.entry((i_face_b, i_edge)) {
+        let i_island = self.island_by_face(i_face_a);
+        let island_data = memo.entry(i_island).or_default();
+        let res = match island_data.entry((i_face_a, i_edge)) {
             Occupied(o) => *o.get(),
             Vacant(v) => {
-                let value = self.flat_face_flap_dimensions_internal(i_face_b, i_edge);
+                let value = self.flat_face_flap_dimensions_internal(i_face_a, i_face_b, i_edge);
                 *v.insert(value)
             }
         };
@@ -767,77 +798,103 @@ impl Papercraft {
     }
     fn flat_face_flap_dimensions_internal(
         &self,
-        i_face_b: FaceIndex,
+        i_face_a: FaceIndex,
+        i_face_b: Option<FaceIndex>,
         i_edge: EdgeIndex,
     ) -> FlapGeom {
-        #[derive(Debug)]
-        struct EData {
-            i_edge: EdgeIndex,
-            i_v0: VertexIndex,
-            i_v1: VertexIndex,
-            p0: Vector2,
-            p1: Vector2,
-        }
         // Compute the flat-face_b contour
         let scale = self.options.scale;
-        let flat_face = self.get_flat_faces_with_matrix(i_face_b);
-        let flat_contour: Vec<EData> = flat_face
-            .iter()
-            .flat_map(|(f, _m)| {
-                let face = &self.model()[*f];
-                face.vertices_with_edges()
-                    .filter_map(|(i_v0, i_v1, i_edge)| {
-                        if self.edge_status(i_edge) == EdgeStatus::Hidden {
-                            return None;
-                        }
-                        let plane = self.model.face_plane(face);
-
-                        let p0 = plane.project(&self.model()[i_v0].pos(), scale);
-                        let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
-                        let p1 = plane.project(&self.model()[i_v1].pos(), scale);
-                        let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
-                        Some(EData {
-                            i_edge,
-                            i_v0,
-                            i_v1,
-                            p0,
-                            p1,
-                        })
-                    })
-            })
-            .collect();
-        // The selected edge data
-        let the_edge = flat_contour.iter().find(|d| d.i_edge == i_edge).unwrap();
-
-        // Adjacent edges data
-        let d0 = flat_contour
-            .iter()
-            .find(|d| the_edge.i_v0 == d.i_v1)
-            .unwrap();
-        let d1 = flat_contour
-            .iter()
-            .find(|d| the_edge.i_v1 == d.i_v0)
-            .unwrap();
-
-        // ** Compute max flap angles **
-        let e0 = d0.p1 - d0.p0;
-        let e1 = d1.p0 - d0.p1;
-        let e2 = d1.p1 - d1.p0;
-        let a0 = e1.angle(e0);
-        let a1 = e2.angle(e1);
-        let a0 = Rad::turn_div_2() - a0;
-        let a1 = Rad::turn_div_2() - a1;
-
         let flap_angle = Rad::from(Deg(self.options.flap_angle));
-        let mut a0 = Rad(a0.0.min(flap_angle.0));
-        let mut a1 = Rad(a1.0.min(flap_angle.0));
+        let mut a0 = flap_angle;
+        let mut a1 = flap_angle;
 
-        if let Some((self_face, self_angle)) = self.self_edge_angle_in_2d(i_edge) {
-            if self_face == i_face_b {
-                a0 = Rad(a0.0.min(self_angle.0));
-            } else {
-                a1 = Rad(a1.0.min(self_angle.0));
+        let (
+            perimeter,
+            perimeter_egde_base,
+            (angle_0, perimeter_egde_0),
+            (angle_1, perimeter_egde_1),
+        ) = self.self_collision_perimeter(i_edge, i_face_a);
+        if perimeter.is_empty() {
+            // should not happen
+            return FlapGeom::default();
+        }
+
+        a0 = Rad(a0.0.min(angle_0.0));
+        a1 = Rad(a1.0.min(angle_1.0));
+
+        let base = &perimeter[perimeter_egde_base];
+        let base = (base.p0, base.p1);
+        let base_vec = base.1 - base.0;
+
+        let flat_contour = if let Some(i_face_b) = i_face_b {
+            let flat_face = self.get_flat_faces_with_matrix(i_face_b);
+            let mut flat_contour: Vec<FlapEdgeData> = flat_face
+                .iter()
+                .flat_map(|(f, _)| {
+                    let face = &self.model()[*f];
+                    face.vertices_with_edges()
+                        .filter_map(|(i_v0, i_v1, i_edge)| {
+                            if self.edge_status(i_edge) == EdgeStatus::Hidden {
+                                return None;
+                            }
+                            let plane = self.model.face_plane(face);
+
+                            let p0 = plane.project(&self.model()[i_v0].pos(), scale);
+                            let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
+                            let p1 = plane.project(&self.model()[i_v1].pos(), scale);
+                            let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
+                            Some(FlapEdgeData {
+                                i_face: *f,
+                                i_edge,
+                                i_v0,
+                                i_v1,
+                                p0,
+                                p1,
+                            })
+                        })
+                })
+                .collect();
+            // The selected edge data
+            let the_edge = flat_contour.iter().find(|d| d.i_edge == i_edge).unwrap();
+
+            // Adjacent edges data
+            let d0 = flat_contour
+                .iter()
+                .find(|d| the_edge.i_v0 == d.i_v1)
+                .unwrap();
+            let d1 = flat_contour
+                .iter()
+                .find(|d| the_edge.i_v1 == d.i_v0)
+                .unwrap();
+
+            // ** Compute max flap angles **
+            let e0 = d0.p1 - d0.p0;
+            let e1 = d1.p0 - d0.p1;
+            let e2 = d1.p1 - d1.p0;
+            let angle0 = Rad::turn_div_2() - e1.angle(e0);
+            let angle1 = Rad::turn_div_2() - e2.angle(e1);
+
+            a0 = Rad(a0.0.min(angle0.0));
+            a1 = Rad(a1.0.min(angle1.0));
+
+            let d0_i_edge = d0.i_edge;
+            let d1_i_edge = d1.i_edge;
+            let d1_i_v1 = d1.i_v1;
+
+            // Convert the flat_contour to island coordinates, we know that this edge should match, inverted
+            let mx = Matrix3::from_translation(base.0)
+                * Matrix3::from_angle_z((d0.p1 - d1.p0).angle(base_vec))
+                * Matrix3::from_translation(-d1.p0);
+
+            for edata in &mut flat_contour {
+                edata.p0 = mx.transform_point(Point2::from_vec(edata.p0)).to_vec();
+                edata.p1 = mx.transform_point(Point2::from_vec(edata.p1)).to_vec();
             }
+
+            Some((flat_contour, d0_i_edge, d1_i_edge, d1_i_v1))
+        } else {
+            // It is a rim edge, no corresponding flat face
+            None
         };
 
         // ** Compute max flap width **
@@ -848,10 +905,9 @@ impl Papercraft {
         // an imaginary flap of 90° angle and infinite width.
         // This nearest point must be either a vertex or the intersection of an edge with the sides of the flap.
 
-        let base = (d0.p1, d1.p0);
-
         // Normalize the perpendicular to make easier to compute the distance later, then it is just the offset returned by util_3d.
-        let n = Vector2::new(e1.y, -e1.x).normalize();
+        let n = Vector2::new(-base_vec.y, base_vec.x).normalize();
+        let base_len = base_vec.magnitude();
 
         // (a0,a1) are the biggest angles that fit, and usually smaller angles will result in
         // smaller width too, but in some edge cases a smaller angle will result in a larger width,
@@ -872,8 +928,8 @@ impl Papercraft {
                 -n.x * flap_cos_1 + n.y * flap_sin_1,
             );
 
-            let side_0 = (base.0, base.0 + normal_0);
-            let side_1 = (base.1, base.1 + normal_1);
+            let side_0 = (base.1, base.1 + normal_0);
+            let side_1 = (base.0, base.0 + normal_1);
 
             // Collisions are checked with a [0..1] f32 interval, but we extend it by a little bit to
             // make for precision losses.
@@ -881,30 +937,62 @@ impl Papercraft {
             const ZERO: f32 = -EPSILON;
             const ONE: f32 = 1.0 + EPSILON;
 
-            for other in &flat_contour {
-                // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
-                // flap to avoid crossing those.
-                if other.i_edge == i_edge || other.i_edge == d0.i_edge || other.i_edge == d1.i_edge
+            if let Some((flat_contour, d0_edge, d1_edge, d1_i_v1)) = flat_contour.as_ref() {
+                for other in flat_contour {
+                    // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
+                    // flap to avoid crossing those.
+                    if other.i_edge == i_edge
+                        || other.i_edge == *d0_edge
+                        || other.i_edge == *d1_edge
+                    {
+                        continue;
+                    }
+
+                    // Check the intersections with the edges of the imaginary flap:
+                    for (flap_sin, side) in [(flap_sin_0, side_0), (flap_sin_1, side_1)] {
+                        let (_, o1, o2) =
+                            util_3d::line_line_intersection((other.p0, other.p1), side);
+                        if (ZERO..=ONE).contains(&o1) && ZERO <= o2 {
+                            minimum_width = minimum_width.min(o2 * flap_sin);
+                        }
+                    }
+
+                    // Check the vertices of the other edge.
+                    // We can skip the vertices shared with the adjacent edges to the base
+                    // And since the contour is contiguous every point appears twice, one as p0 and another as p1,
+                    // so we can check just one of them per edge
+                    if other.i_v0 != *d1_i_v1
+                        && util_3d::point_line_side(other.p0, side_0)
+                        && !util_3d::point_line_side(other.p0, side_1)
+                        && util_3d::point_line_side(other.p0, base)
+                    {
+                        let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
+                        if (ZERO..=ONE).contains(&seg_0_off) {
+                            minimum_width = minimum_width.min(seg_0_dist);
+                        }
+                    }
+                }
+            }
+
+            // Similar algorithm as with the flat_contour, but with the island perimeter
+            for (i_other, other) in perimeter.iter().enumerate() {
+                if i_other == perimeter_egde_0
+                    || i_other == perimeter_egde_base
+                    || i_other == perimeter_egde_1
                 {
                     continue;
                 }
-
-                // Check the intersections with the edges of the imaginary flap:
                 for (flap_sin, side) in [(flap_sin_0, side_0), (flap_sin_1, side_1)] {
                     let (_, o1, o2) = util_3d::line_line_intersection((other.p0, other.p1), side);
                     if (ZERO..=ONE).contains(&o1) && ZERO <= o2 {
                         minimum_width = minimum_width.min(o2 * flap_sin);
                     }
                 }
-
-                // Check the vertices of the other edge.
-                // We can skip the vertices shared with the adjacent edges to the base
-                // And since the contour is contiguous every edge appears twice, one as p0 and another as p1,
-                // so we can check just one of them per edge
-                if other.i_v0 != d1.i_v1
+                if (perimeter_egde_1 == usize::MAX
+                    || other.p0.distance2(perimeter[perimeter_egde_1].p1) > 1e-4)
                     && util_3d::point_line_side(other.p0, side_0)
                     && !util_3d::point_line_side(other.p0, side_1)
-                    && !util_3d::point_line_side(other.p0, base)
+                    && util_3d::point_line_side(other.p0, base)
                 {
                     let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
                     if (ZERO..=ONE).contains(&seg_0_off) {
@@ -914,7 +1002,6 @@ impl Papercraft {
             }
             minimum_width
         };
-        let base_len = e1.magnitude();
         let flap_area = |a0: Rad<f32>, a1: Rad<f32>, width: f32| -> f32 {
             if a0.0 <= 0.0 || a1.0 <= 0.0 {
                 return 0.0;
@@ -991,30 +1078,6 @@ impl Papercraft {
                 width,
                 triangular,
             }
-        }
-    }
-    pub fn flat_face_rim_flap_dimensions(&self, i_face: FaceIndex, i_edge: EdgeIndex) -> FlapGeom {
-        let flap_angle = Rad::from(Deg(self.options.flap_angle));
-        let tan = flap_angle.cot();
-        let face = &self.model[i_face];
-        let plane = self.model.face_plane(face);
-        let edge = &self.model[i_edge];
-        let (v0, v1) = self.model.edge_pos(edge);
-        let scale = self.options.scale;
-        let p0 = plane.project(&v0, scale);
-        let p1 = plane.project(&v1, scale);
-        let base_len = p0.distance(p1);
-        let mut width = self.options.flap_width;
-        let base2 = base_len - 2.0 * tan * width;
-        let triangular = base2 <= 0.0;
-        if triangular {
-            width = base_len / (2.0 * tan);
-        }
-        FlapGeom {
-            tan_0: tan,
-            tan_1: tan,
-            width,
-            triangular,
         }
     }
 
@@ -1199,79 +1262,104 @@ impl Papercraft {
         biggest_face.unwrap()
     }
 
-    // Given an edge id, if both sides are on the same island and share a vertex,
-    // then return the angle they form, and the face that contains the shared vertex as v0 of that edge
-    // (the other side will be v1).
-    fn self_edge_angle_in_2d(&self, i_edge: EdgeIndex) -> Option<(FaceIndex, Rad<f32>)> {
-        let edge = &self.model()[i_edge];
-        let (f0, Some(f1)) = edge.faces() else {
-            return None;
-        };
-        let island0 = self.island_by_face(f0);
-        let island1 = self.island_by_face(f1);
-        if island0 != island1 {
-            return None;
-        }
-        let island = self.island_by_key(island0).unwrap();
-        #[derive(Copy, Clone)]
-        struct Line {
-            v0: Vector2,
-            v1: Vector2,
-            i_face: FaceIndex,
-        }
-        impl Line {
-            fn vector(&self) -> Vector2 {
-                self.v1 - self.v0
-            }
-            fn angle(&self, other: &Line) -> Rad<f32> {
-                self.vector().angle(other.vector())
+    // Returns the island perimeter in paper size, but, beware! with an arbitrary position
+    fn island_perimeter(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
+        let mut memo = self.memo.island_perimeters.borrow_mut();
+        use std::collections::hash_map::Entry::*;
+        match memo.entry(island_key) {
+            Occupied(o) => o.get().clone(),
+            Vacant(v) => {
+                let value = self.island_perimeter_internal(island_key);
+                v.insert(value).clone()
             }
         }
-        let mut lines = Vec::new();
-        let scale = self.options().scale;
+    }
+
+    fn island_perimeter_internal(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
+        let island = self.island_by_key(island_key).unwrap();
+        let scale = self.options.scale;
+        let mut perimeter = Vec::new();
+
         self.traverse_faces(island, |i_face, face, mx| {
-            if i_face != f0 && i_face != f1 {
-                return ControlFlow::Continue(());
-            }
-            let Some((v0, v1, _)) = face
-                .vertices_with_edges()
-                .find(|(_, _, i_e)| *i_e == i_edge)
-            else {
-                // Should not happen
-                return ControlFlow::Break(());
-            };
-            let plane = self.model().face_plane(face);
+            let plane = self.model.face_plane(face);
             let tr = |v: VertexIndex| {
-                let v = &self.model()[v];
+                let v = &self.model[v];
                 let v = plane.project(&v.pos(), scale);
                 mx.transform_point(Point2::from_vec(v)).to_vec()
             };
-            let v0 = tr(v0);
-            let v1 = tr(v1);
-            lines.push(Line { v0, v1, i_face });
-            if lines.len() == 2 {
-                return ControlFlow::Break(());
+            for (i_v0, i_v1, i_e) in face.vertices_with_edges() {
+                let e = self.edge_status(i_e);
+                if !matches!(e, EdgeStatus::Cut(_)) {
+                    // we want the cut-contour, without flaps
+                    continue;
+                }
+                let edata = FlapEdgeData {
+                    i_face,
+                    i_edge: i_e,
+                    i_v0,
+                    i_v1,
+                    p0: tr(i_v0),
+                    p1: tr(i_v1),
+                };
+                perimeter.push(edata);
             }
             ControlFlow::Continue(())
         });
+        perimeter
+    }
 
-        let &[l0, l1] = lines.as_slice() else {
-            // Should not happen
-            return None;
+    // Given an edge, compute the island perimeter, and the angles that it forms with its adjacent edges
+    fn self_collision_perimeter(
+        &self,
+        i_edge: EdgeIndex,
+        i_face_a: FaceIndex,
+    ) -> (
+        Vec<FlapEdgeData>,
+        usize,
+        (Rad<f32>, usize),
+        (Rad<f32>, usize),
+    ) {
+        let island_key = self.island_by_face(i_face_a);
+        let perimeter = self.island_perimeter(island_key);
+        let base_on_paper = perimeter
+            .iter()
+            .position(|e| i_edge == e.i_edge && i_face_a == e.i_face);
+
+        let Some(base_on_paper_idx) = base_on_paper else {
+            // Should not happen, just in case
+            return (
+                Vec::new(),
+                usize::MAX,
+                (Rad::turn_div_2(), usize::MAX),
+                (Rad::turn_div_2(), usize::MAX),
+            );
         };
-        // Check if both sides of the edge share an angle
-        let (side, angle) = if l0.v0.distance2(l1.v1).abs() < 0.01 {
-            //dbg!((Deg::from(l1.angle(&l0)), Deg::from(l0.angle(&l1))));
-            (l0.i_face, l1.angle(&l0))
-        } else if l1.v0.distance2(l0.v1).abs() < 0.01 {
-            //dbg!((Deg::from(l0.angle(&l1)), Deg::from(l1.angle(&l0))));
-            (l1.i_face, l0.angle(&l1))
-        } else {
-            return None;
-        };
-        // Return the inner angle
-        let angle = Rad::turn_div_2() - angle;
-        Some((side, angle))
+
+        let base = &perimeter[base_on_paper_idx];
+        let base = (base.p0, base.p1);
+
+        // angle_{0,1} should always exist, but just in case...
+        let angle_0 = perimeter
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.p0.distance2(base.1) < 1e-4)
+            .map(|(i, e)| {
+                let a = Rad::turn_div_2() - (base.1 - base.0).angle(e.p1 - e.p0);
+                (a, i)
+            })
+            // should not happen
+            .unwrap_or((Rad::turn_div_2(), usize::MAX));
+        let angle_1 = perimeter
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.p1.distance2(base.0) < 1e-4)
+            .map(|(i, e)| {
+                let a = Rad::turn_div_2() - (e.p1 - e.p0).angle(base.1 - base.0);
+                (a, i)
+            })
+            // should not happen
+            .unwrap_or((Rad::turn_div_2(), usize::MAX));
+        (perimeter, base_on_paper_idx, angle_0, angle_1)
     }
 }
 

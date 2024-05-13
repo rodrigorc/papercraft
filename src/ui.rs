@@ -784,12 +784,9 @@ impl PapercraftContext {
 
             // Draw the flap?
             if let DrawFlap::Visible(maybe_i_face_b) = draw_flap {
-                let flap_geom = match maybe_i_face_b {
-                    Some(i_face_b) => self.papercraft.flat_face_flap_dimensions(i_face_b, i_edge),
-                    None => self
-                        .papercraft
-                        .flat_face_rim_flap_dimensions(i_face, i_edge),
-                };
+                let flap_geom =
+                    self.papercraft
+                        .flat_face_flap_dimensions(i_face, maybe_i_face_b, i_edge);
                 let FlapGeom {
                     tan_0,
                     tan_1,

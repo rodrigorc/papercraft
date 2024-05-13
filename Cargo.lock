@@ -657,9 +657,9 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "easy-imgui"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfa1adbbc945cae40594f687ab816d9f1e64300e5165bd7151bf815523c2f5d4"
+checksum = "a1fdc187211914cccda6deb76fefad9835e7646d7f8c7bcd4b01cfac81298dd0"
 dependencies = [
  "bitflags 2.5.0",
  "cgmath",
@@ -672,9 +672,9 @@ dependencies = [
 
 [[package]]
 name = "easy-imgui-renderer"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd5074eb4ffbe9eb1d8d95b6c4ba18036e2229d9155bec99083851fee3fa3a90"
+checksum = "eef18c5358bbdba3d9b0cbd41f7e672c3aaff54f6d9d6a791d4dc42c8a334f59"
 dependencies = [
  "anyhow",
  "cgmath",
@@ -687,9 +687,9 @@ dependencies = [
 
 [[package]]
 name = "easy-imgui-sys"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75c05f9230fc94afc38061ca52c38f71f109044b6d3075209170b8e8e0ea92dd"
+checksum = "e3385d6c46a19ecf665a301f3977172f66f9694e9608157ae8cfa7feff81d819"
 dependencies = [
  "bindgen",
  "cc",
@@ -699,9 +699,9 @@ dependencies = [
 
 [[package]]
 name = "easy-imgui-window"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ffcbfcbb26def0cbb11b38d9c98af04f19b46d8781e08dc0834f054d66f0772"
+checksum = "bf8f72c89c52f72495f4587e7ee2a03f29b6a13d8123431c6bcdd62d6a5510a0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1971,9 +1971,9 @@ checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "syn"
-version = "2.0.62"
+version = "2.0.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f660c3bfcefb88c538776b6685a0c472e3128b51e74d48793dc2a488196e8eb"
+checksum = "bf5be731623ca1a1fb7d8be6f261a3be6d3e2337b8a1f97be944d020c8fcb704"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use cgmath::{Angle, InnerSpace, Rad};
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
@@ -434,7 +434,7 @@ impl Model {
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()
     }
-    pub fn reload_textures<F: FnMut(&str) -> Result<DynamicImage>>(
+    pub fn reload_textures<F: FnMut(&str) -> Result<Option<DynamicImage>>>(
         &mut self,
         mut f: F,
     ) -> Result<()> {
@@ -442,8 +442,7 @@ impl Model {
             tex.pixbuf = if tex.file_name.is_empty() {
                 None
             } else {
-                let img = f(&tex.file_name)?;
-                Some(img)
+                f(&tex.file_name).with_context(|| tex.file_name.clone())?
             };
         }
         Ok(())

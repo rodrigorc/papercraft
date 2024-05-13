@@ -37,13 +37,15 @@ impl Papercraft {
         drop(zmodel);
 
         papercraft.model.reload_textures(|file_name| {
-            let mut ztex = zip.by_name(&format!("tex/{file_name}"))?;
+            let Ok(mut ztex) = zip.by_name(&format!("tex/{file_name}")) else {
+                return Ok(None);
+            };
             let mut data = Vec::new();
             ztex.read_to_end(&mut data)?;
             let img = image::io::Reader::new(std::io::Cursor::new(&data))
                 .with_guessed_format()?
                 .decode()?;
-            Ok(img)
+            Ok(Some(img))
         })?;
 
         papercraft.recompute_edge_ids();

@@ -2254,6 +2254,9 @@ impl GlobalContext {
             .with_context(|| format!("Error loading file {}", file_name.display()))?;
         self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
+        if let Some(o) = self.options_opened.as_mut() {
+            *o = self.data.papercraft().options().clone();
+        }
         self.rebuild = RebuildFlags::all();
         Ok(())
     }
@@ -2271,6 +2274,9 @@ impl GlobalContext {
         let (papercraft, is_native) = import_model_file(file_name)?;
         self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
+        if let Some(o) = self.options_opened.as_mut() {
+            *o = self.data.papercraft().options().clone();
+        }
         self.rebuild = RebuildFlags::all();
         Ok(is_native)
     }

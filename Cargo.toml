@@ -12,6 +12,13 @@ keywords = ["papercraft", "handcraft"]
 strip = "symbols"
 lto = true
 
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.zip]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
+
 [build-dependencies]
 cc = "1"
 bindgen = "0.69"

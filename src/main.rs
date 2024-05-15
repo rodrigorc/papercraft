@@ -1408,6 +1408,15 @@ impl GlobalContext {
                     }
                 }
                 if ui
+                    .menu_item_config("Paper")
+                    .shortcut("P")
+                    .selected(self.data.ui.draw_paper)
+                    .build()
+                {
+                    self.data.ui.draw_paper ^= true;
+                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                }
+                if ui
                     .menu_item_config("Highlight overlaps")
                     .shortcut("H")
                     .selected(self.data.ui.highlight_overlaps)
@@ -1461,6 +1470,10 @@ impl GlobalContext {
             }
             if ui.is_key_pressed(imgui::Key::H) {
                 self.data.ui.highlight_overlaps ^= true;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+            }
+            if ui.is_key_pressed(imgui::Key::P) {
+                self.data.ui.draw_paper ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
             }
             if ui.is_key_pressed(imgui::Key::T) && self.data.papercraft().options().texture {
@@ -1978,14 +1991,23 @@ impl GlobalContext {
             m: self.data.ui.trans_paper.ortho * self.data.ui.trans_paper.mx,
             tex: 0,
             frac_dash: 0.5,
-            line_color: Rgba::new(0.0, 0.0, 0.0, 0.0),
+            line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
             texturize: 0,
             notex_color: Rgba::new(0.75, 0.75, 0.75, 1.0),
         };
 
         unsafe {
-            self.gl.clear_color(0.7, 0.7, 0.7, 1.0);
-            self.gl.clear_stencil(1);
+            if self.data.ui.draw_paper {
+                self.gl.clear_color(0.7, 0.7, 0.7, 1.0);
+                // Out-of-paper area counts as a big imaginary piece, for overlapping purposes.
+                // The stencil starts with 1 and is reduced to 0 when drawing the pages.
+                self.gl.clear_stencil(1);
+            } else {
+                self.gl.clear_color(1.0, 1.0, 1.0, 1.0);
+                // If pages are not drawn, then out-of-paper doesn't count as an overlap.
+                // The stencil starts with 0 directly
+                self.gl.clear_stencil(0);
+            }
             self.gl.stencil_mask(0xff);
             self.gl.stencil_func(glow::ALWAYS, 0, 0);
             self.gl.disable(glow::STENCIL_TEST);
@@ -2009,26 +2031,28 @@ impl GlobalContext {
             }
 
             // The paper
-            self.gl.enable(glow::STENCIL_TEST);
-            self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::ZERO);
+            if self.data.ui.draw_paper {
+                self.gl.enable(glow::STENCIL_TEST);
+                self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::ZERO);
 
-            gl_fixs.prg_paper_solid.draw(
-                &u,
-                &self.data.gl_objs().paper_vertices_page,
-                glow::TRIANGLES,
-            );
+                gl_fixs.prg_paper_solid.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_page,
+                    glow::TRIANGLES,
+                );
 
-            self.gl.disable(glow::STENCIL_TEST);
+                self.gl.disable(glow::STENCIL_TEST);
 
-            u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
+                u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
 
-            gl_fixs.prg_paper_line.draw(
-                &u,
-                &self.data.gl_objs().paper_vertices_margin,
-                glow::LINES,
-            );
+                gl_fixs.prg_paper_line.draw(
+                    &u,
+                    &self.data.gl_objs().paper_vertices_margin,
+                    glow::LINES,
+                );
 
-            u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
+                u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
+            }
 
             // Line Flaps
             if self.data.ui.show_flaps {

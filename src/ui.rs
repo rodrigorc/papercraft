@@ -153,6 +153,7 @@ pub struct UiSettings {
     pub xray_selection: bool,
     pub show_texts: bool,
     pub highlight_overlaps: bool,
+    pub draw_paper: bool,
 }
 
 #[derive(Clone)]
@@ -514,6 +515,7 @@ impl PapercraftContext {
                 xray_selection: true,
                 show_texts: false,
                 highlight_overlaps: false,
+                draw_paper: true,
             },
         })
     }

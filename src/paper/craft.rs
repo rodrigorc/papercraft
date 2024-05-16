@@ -928,76 +928,70 @@ impl Papercraft {
                 -n.x * flap_cos_1 + n.y * flap_sin_1,
             );
 
+            // base is inverted here, because the flap goes to the outside, so side_0 is in the second base point, side_1 is in the first one.
             let side_0 = (base.1, base.1 + normal_0);
             let side_1 = (base.0, base.0 + normal_1);
 
             // Collisions are checked with a [0..1] f32 interval, but we extend it by a little bit to
             // make for precision losses.
+            // Ideally, we would want to make the (0..1) range a bit longer if the angle of `other` to the next edge
+            // is >180° and shorter if the angle is <180°, but doesn't seem to be worth it. Making it always a bit longer
+            // works for a more conservative solution.
             const EPSILON: f32 = 1e-4;
             const ZERO: f32 = -EPSILON;
             const ONE: f32 = 1.0 + EPSILON;
 
-            if let Some((flat_contour, d0_edge, d1_edge, d1_i_v1)) = flat_contour.as_ref() {
-                for other in flat_contour {
-                    // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
-                    // flap to avoid crossing those.
-                    if other.i_edge == i_edge
-                        || other.i_edge == *d0_edge
-                        || other.i_edge == *d1_edge
-                    {
-                        continue;
-                    }
+            // Compute the lines that will limit this flap
+            let from_flat_contour =
+                flat_contour
+                    .iter()
+                    .flat_map(|(flat_contour, d0_edge, d1_edge, d1_i_v1)| {
+                        flat_contour.iter().filter_map(|other| {
+                            // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
+                            // flap to avoid crossing those.
+                            if other.i_edge == i_edge
+                                || other.i_edge == *d0_edge
+                                || other.i_edge == *d1_edge
+                            {
+                                return None;
+                            }
+                            let check_base = other.i_v0 != *d1_i_v1;
+                            Some((other, check_base))
+                        })
+                    });
 
-                    // Check the intersections with the edges of the imaginary flap:
-                    for (flap_sin, side) in [(flap_sin_0, side_0), (flap_sin_1, side_1)] {
-                        let (_, o1, o2) =
-                            util_3d::line_line_intersection((other.p0, other.p1), side);
-                        if (ZERO..=ONE).contains(&o1) && ZERO <= o2 {
-                            minimum_width = minimum_width.min(o2 * flap_sin);
-                        }
-                    }
-
-                    // Check the vertices of the other edge.
-                    // We can skip the vertices shared with the adjacent edges to the base
-                    // And since the contour is contiguous every point appears twice, one as p0 and another as p1,
-                    // so we can check just one of them per edge
-                    if other.i_v0 != *d1_i_v1
-                        && util_3d::point_line_side(other.p0, side_0)
-                        && !util_3d::point_line_side(other.p0, side_1)
-                        && util_3d::point_line_side(other.p0, base)
-                    {
-                        let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
-                        if (ZERO..=ONE).contains(&seg_0_off) {
-                            minimum_width = minimum_width.min(seg_0_dist);
-                        }
-                    }
-                }
-            }
-
-            // Similar algorithm as with the flat_contour, but with the island perimeter
-            for (i_other, other) in perimeter.iter().enumerate() {
+            let from_perimeter = perimeter.iter().enumerate().filter_map(|(i_other, other)| {
                 if i_other == perimeter_egde_0
                     || i_other == perimeter_egde_base
                     || i_other == perimeter_egde_1
                 {
-                    continue;
+                    return None;
                 }
+                let check_base = perimeter_egde_1 != usize::MAX
+                    && other.p0.distance2(perimeter[perimeter_egde_1].p1) > 1e-4;
+                Some((other, check_base))
+            });
+
+            for (other, check_base) in from_flat_contour.chain(from_perimeter) {
+                // Check the intersections with the edges of the imaginary flap:
                 for (flap_sin, side) in [(flap_sin_0, side_0), (flap_sin_1, side_1)] {
                     let (_, o1, o2) = util_3d::line_line_intersection((other.p0, other.p1), side);
                     if (ZERO..=ONE).contains(&o1) && ZERO <= o2 {
                         minimum_width = minimum_width.min(o2 * flap_sin);
                     }
                 }
-                if (perimeter_egde_1 == usize::MAX
-                    || other.p0.distance2(perimeter[perimeter_egde_1].p1) > 1e-4)
+
+                // Check the vertices of the other edge.
+                // We can skip the vertices shared with the adjacent edges to the base
+                // And since the contour is contiguous every point appears twice, one as p0 and another as p1,
+                // so we can check just one of them per edge
+                if check_base
                     && util_3d::point_line_side(other.p0, side_0)
                     && !util_3d::point_line_side(other.p0, side_1)
                     && util_3d::point_line_side(other.p0, base)
                 {
-                    let (seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
-                    if (ZERO..=ONE).contains(&seg_0_off) {
-                        minimum_width = minimum_width.min(seg_0_dist);
-                    }
+                    let (_seg_0_off, seg_0_dist) = util_3d::point_line_distance(other.p0, base);
+                    minimum_width = minimum_width.min(seg_0_dist);
                 }
             }
             minimum_width
@@ -1019,8 +1013,6 @@ impl Papercraft {
             }
         };
 
-        let mut a0 = a0;
-        let mut a1 = a1;
         let mut width = compute_width(a0, a1);
         let mut area = flap_area(a0, a1, width);
         let (mut doing0, mut doing1) = (true, true);

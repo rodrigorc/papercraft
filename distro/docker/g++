@@ -1,0 +1,12 @@
+#!/bin/bash
+argc=$#
+argv=("$@")
+
+for (( j=0; j<argc; j++ )); do
+    if [ "${argv[j]}" = "-std=c++20" ]
+    then
+        argv[j]="-std=c++2a"
+    fi
+done
+
+exec /usr/bin/g++ "${argv[@]}"

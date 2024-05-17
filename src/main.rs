@@ -534,7 +534,7 @@ impl GlobalContext {
                 center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
                 ui.with_push(self.font_small, || {
-                    center_text(ui, "© Copyright 2022 - Rodrigo Rivas Costa", sz_full.x);
+                    center_text(ui, "© Copyright 2024 - Rodrigo Rivas Costa", sz_full.x);
                     center_text(
                         ui,
                         "This program comes with absolutely no warranty.",

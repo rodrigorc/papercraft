@@ -336,47 +336,47 @@ impl<'r, R: Read> Reader<'r, R> {
             }
         }
         self.version = read_u32(self.rdr)? as u8;
-        dbg!(self.version);
+        log::debug!("Version: {}", self.version);
         let mbcs = read_u32(self.rdr)?;
-        dbg!(mbcs);
+        log::debug!("MBCS: {}", mbcs);
         let _unk = read_u32(self.rdr)?;
         if self.version >= 5 {
             let designer = self.read_string()?;
-            dbg!(designer);
+            log::debug!("Designer: {}", designer);
             self.shift = read_u32(self.rdr)?;
-            dbg!(self.shift);
+            log::debug!("Shift: {}", self.shift);
         }
         let locale = self.read_string()?;
-        dbg!(locale);
+        log::debug!("Locale: {}", locale);
         let codepage = self.read_string()?;
-        dbg!(codepage);
+        log::debug!("Codepage: {}", codepage);
 
         let texlock = read_u32(self.rdr)?;
-        dbg!(texlock);
+        log::debug!("Texlock: {}", texlock);
         if self.version >= 6 {
             let show_startup_notes = read_bool(self.rdr)?;
-            dbg!(show_startup_notes);
+            log::debug!("ShowStartupNotes: {}", show_startup_notes);
             let password_flag = read_bool(self.rdr)?;
-            dbg!(password_flag);
+            log::debug!("PasswordFlag: {}", password_flag);
         }
         let key = self.read_string()?;
-        dbg!(key);
+        log::debug!("Key: {}", key);
         if self.version >= 6 {
             let v6_lock = read_u32(self.rdr)?;
-            dbg!(v6_lock);
+            log::debug!("V6Lock: {}", v6_lock);
             for _ in 0..v6_lock {
                 let _ = read_u64(self.rdr)?;
             }
         } else if self.version == 5 {
             let show_startup_notes = read_bool(self.rdr)?;
-            dbg!(show_startup_notes);
+            log::debug!("ShowStartupNotes: {}", show_startup_notes);
             let password_flag = read_bool(self.rdr)?;
-            dbg!(password_flag);
+            log::debug!("PasswordFlags: {}", password_flag);
         }
         let assembled_height = read_f64(self.rdr)?;
-        dbg!(assembled_height);
+        log::debug!("AssembledHeight: {}", assembled_height);
         let origin = read_vector3_f64(self.rdr)?;
-        dbg!(origin);
+        log::debug!("Origin: {:?}", origin);
 
         let n_objects = read_u32(self.rdr)?;
         let mut objs = Vec::with_capacity(n_objects as usize);

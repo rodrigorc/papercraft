@@ -1,0 +1,27 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+
+jobs:
+  papercraft:
+    name: ${{ inputs.name }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - name: Build
+        run: |
+          cargo build
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: papercraft
+          path: ./target/debug/papercraft
+

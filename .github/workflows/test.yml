@@ -1,0 +1,16 @@
+name: test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'Workflow'
+    tags:
+      - 'test'
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+    with:
+      name: ${{ github.ref_name }}

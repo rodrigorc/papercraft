@@ -114,7 +114,7 @@ fn default_edge_id_font_size() -> f32 {
     8.0
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PaperOptions {
     pub scale: f32,
     pub page_size: (f32, f32),

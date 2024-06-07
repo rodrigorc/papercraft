@@ -49,5 +49,5 @@ lazy_static = "1"
 # Use my fork of printpdf for now, that depends on image-0.25
 printpdf = { version = "0.7", features = ["embedded_images"], git = "https://github.com/rodrigorc/printpdf", rev = "6dcdb4d53e64d98feb91c51f717480dbddb57d7d" }
 
-easy-imgui-sys = "0.4"
-easy-imgui-window = { version = "0.4", features = ["freetype"] }
+easy-imgui-sys = "0.5"
+easy-imgui-window = { version = "0.5", features = ["freetype"] }

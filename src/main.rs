@@ -1311,6 +1311,7 @@ impl GlobalContext {
 
                 if ui
                     .menu_item_config("Document properties")
+                    .shortcut("Enter")
                     .selected(self.options_opened.is_some())
                     .build()
                 {
@@ -1440,59 +1441,87 @@ impl GlobalContext {
                 }
             });
         });
-        if !ui.is_popup_open_ex(None, imgui::PopupFlags::AnyPopup) {
+
+        // Modal pop-ups should disable the shortcuts
+        if !ui.is_blocking_modal() {
             if self.modifiable() {
-                if ui.is_key_pressed(imgui::Key::F5) {
+                if ui.shortcut_ex(imgui::Key::F5, imgui::InputFlags::RouteGlobal) {
                     self.set_mouse_mode(MouseMode::Face);
                 }
-                if ui.is_key_pressed(imgui::Key::F6) {
+                if ui.shortcut_ex(imgui::Key::F6, imgui::InputFlags::RouteGlobal) {
                     self.set_mouse_mode(MouseMode::Edge);
                 }
-                if ui.is_key_pressed(imgui::Key::F7) {
+                if ui.shortcut_ex(imgui::Key::F7, imgui::InputFlags::RouteGlobal) {
                     self.set_mouse_mode(MouseMode::Flap);
                 }
-                if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::Z) {
+                if ui.shortcut_ex(
+                    (imgui::KeyMod::Ctrl, imgui::Key::Z),
+                    imgui::InputFlags::RouteGlobal,
+                ) {
                     menu_actions.undo = true;
                 }
             }
-            if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::Q) {
+            if ui.shortcut_ex(
+                (imgui::KeyMod::Ctrl, imgui::Key::Q),
+                imgui::InputFlags::RouteGlobal,
+            ) {
                 menu_actions.quit = self.check_modified();
             }
-            if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::O) {
+            if ui.shortcut_ex(
+                (imgui::KeyMod::Ctrl, imgui::Key::O),
+                imgui::InputFlags::RouteGlobal,
+            ) {
                 menu_actions.open = self.check_modified();
             }
-            if ui.is_key_down(imgui::Key::ModCtrl) && ui.is_key_pressed(imgui::Key::S) {
+            if ui.shortcut_ex(
+                (imgui::KeyMod::Ctrl, imgui::Key::S),
+                imgui::InputFlags::RouteGlobal,
+            ) {
                 menu_actions.save = true;
             }
-            if ui.is_key_pressed(imgui::Key::X) {
+            if ui.shortcut_ex(imgui::Key::X, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.xray_selection ^= true;
                 self.add_rebuild(RebuildFlags::SELECTION);
             }
-            if ui.is_key_pressed(imgui::Key::H) {
+            if ui.shortcut_ex(imgui::Key::H, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.highlight_overlaps ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
             }
-            if ui.is_key_pressed(imgui::Key::P) {
+            if ui.shortcut_ex(imgui::Key::P, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.draw_paper ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
             }
-            if ui.is_key_pressed(imgui::Key::T) && self.data.papercraft().options().texture {
+            if self.data.papercraft().options().texture
+                && ui.shortcut_ex(imgui::Key::T, imgui::InputFlags::RouteGlobal)
+            {
                 self.data.ui.show_textures ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
             }
-            if ui.is_key_pressed(imgui::Key::D) {
+            if ui.shortcut_ex(imgui::Key::D, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_3d_lines ^= true;
                 self.add_rebuild(RebuildFlags::SCENE_REDRAW);
             }
-            if ui.is_key_pressed(imgui::Key::B) {
+            if ui.shortcut_ex(imgui::Key::B, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_flaps ^= true;
                 self.add_rebuild(RebuildFlags::PAPER);
             }
-            if ui.is_key_pressed(imgui::Key::E) {
+            if ui.shortcut_ex(imgui::Key::E, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_texts ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 if self.data.ui.show_texts {
                     self.add_rebuild(RebuildFlags::ISLANDS | RebuildFlags::PAPER);
+                }
+            }
+            if ui.shortcut_ex(imgui::Key::Enter, imgui::InputFlags::RouteGlobal) {
+                match &self.options_opened {
+                    None => {
+                        self.options_opened = Some(self.data.papercraft().options().clone());
+                    }
+                    // Pressing enter closes the options only if nothing is changed, else you should press Ok or Cancel
+                    Some(op) if op == self.data.papercraft().options() => {
+                        self.options_opened = None;
+                    }
+                    _ => {}
                 }
             }
         }

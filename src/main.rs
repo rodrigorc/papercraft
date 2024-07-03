@@ -30,7 +30,8 @@ fn to_cgv2(v: imgui::Vector2) -> cgmath::Vector2<f32> {
     cgmath::Vector2::new(v.x, v.y)
 }
 
-mod imgui_filedialog;
+use easy_imgui_filechooser as filechooser;
+
 mod paper;
 mod pdf_metrics;
 mod util_3d;
@@ -117,8 +118,7 @@ fn main() {
     imgui.set_allow_user_scaling(true);
     imgui.nav_enable_keyboard();
     if cli.light {
-        let mut style = imgui.style();
-        style.set_colors_light();
+        imgui.style().set_colors_light();
     }
 
     // Initialize papercraft status
@@ -142,11 +142,9 @@ fn main() {
     };
 
     let last_path = if let Some((_, path)) = &cmd_file_action {
-        path.parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(String::new)
+        path.parent().map(|p| p.to_owned()).unwrap_or_default()
     } else {
-        String::new()
+        PathBuf::new()
     };
 
     let gl_fixs = build_gl_fixs(&gl).unwrap();
@@ -174,9 +172,11 @@ fn main() {
         about_visible: false,
         option_button_height: 0.0,
         file_dialog: None,
+        file_dialog_confirm: None,
+        filechooser_atlas: Default::default(),
         file_action: None,
         last_path,
-        last_export: String::new(),
+        last_export: PathBuf::new(),
         error_message: None,
         confirmable_action: None,
         popup_time_start: Instant::now(),
@@ -360,6 +360,15 @@ impl FileAction {
             FileAction::GeneratePrintable => "Generating...",
         }
     }
+    fn is_save(&self) -> bool {
+        match self {
+            FileAction::OpenCraft
+            | FileAction::OpenCraftReadOnly
+            | FileAction::ImportModel
+            | FileAction::UpdateObj => false,
+            FileAction::SaveAsCraft | FileAction::ExportObj | FileAction::GeneratePrintable => true,
+        }
+    }
 }
 
 struct ConfirmableAction {
@@ -392,10 +401,12 @@ struct GlobalContext {
     // false, when doing an "Undo".
     option_button_height: f32,
     about_visible: bool,
-    file_dialog: Option<(imgui_filedialog::FileDialog, &'static str, FileAction)>,
+    file_dialog: Option<(filechooser::FileChooser, &'static str, FileAction)>,
+    file_dialog_confirm: Option<(FileAction, PathBuf)>,
+    filechooser_atlas: filechooser::CustomAtlas,
     file_action: Option<(FileAction, PathBuf)>,
-    last_path: String,
-    last_export: String,
+    last_path: PathBuf,
+    last_export: PathBuf,
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
     popup_time_start: Instant,
@@ -426,76 +437,87 @@ struct MenuActions {
     undo: bool,
 }
 
+// Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
+fn do_modal_dialog(
+    ui: &Ui,
+    title: &str,
+    message: &str,
+    cancel: Option<&str>,
+    ok: Option<&str>,
+) -> Option<bool> {
+    let mut output = None;
+    let mut opened = true;
+    ui.popup_modal_config(title)
+        .opened(Some(&mut opened))
+        .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
+        .with(|| {
+            let font_sz = ui.get_font_size();
+            ui.text(message);
+
+            ui.separator();
+
+            if let Some(cancel) = cancel {
+                if ui
+                    .button_config(cancel)
+                    .size(vec2(font_sz * 5.5, 0.0))
+                    .build()
+                    | ui.shortcut(imgui::Key::Escape)
+                {
+                    ui.close_current_popup();
+                    output = Some(false);
+                }
+            }
+            if let Some(ok) = ok {
+                if cancel.is_some() {
+                    ui.same_line();
+                }
+                if ui.button_config(ok).size(vec2(font_sz * 5.5, 0.0)).build()
+                    | ui.shortcut(imgui::Key::Enter)
+                    | ui.shortcut(imgui::Key::KeypadEnter)
+                {
+                    ui.close_current_popup();
+                    output = Some(true);
+                }
+            }
+        });
+    // Close button has been pressed
+    if !opened && output.is_none() {
+        output = Some(false);
+    }
+    output
+}
+
 #[allow(clippy::collapsible_if)]
 impl GlobalContext {
     fn modifiable(&self) -> bool {
         self.data.ui.mode != MouseMode::ReadOnly
     }
     fn build_modal_error_message(&mut self, ui: &Ui) {
-        ui.popup_modal_config("Error")
-            .close_button(true)
-            .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
-            .with(|| {
-                let font_sz = ui.get_font_size();
-
-                ui.text(self.error_message.as_deref().unwrap_or_default());
-
-                ui.separator();
-
-                if ui
-                    .button_config("OK")
-                    .size(vec2(font_sz * 5.5, 0.0))
-                    .build()
-                    || ui.is_key_pressed(imgui::Key::Enter)
-                    || ui.is_key_pressed(imgui::Key::KeypadEnter)
-                {
-                    if !ui.is_window_appearing() {
-                        ui.close_current_popup();
-                        self.error_message = None;
-                    }
-                }
-            });
+        let reply = do_modal_dialog(
+            ui,
+            "Error",
+            self.error_message.as_deref().unwrap_or_default(),
+            None,
+            Some("OK"),
+        );
+        match reply {
+            Some(_) => self.error_message = None,
+            None => (),
+        }
     }
     fn build_confirm_message(&mut self, ui: &Ui, menu_actions: &mut MenuActions) {
-        let mut closed = None;
         if let Some(action) = self.confirmable_action.take() {
-            let font_sz = ui.get_font_size();
-            ui.popup_modal_config(format!("{}###Confirm", action.title))
-                .close_button(true)
-                .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
-                .with(|| {
-                    ui.text(&action.message);
-
-                    ui.separator();
-
-                    if ui
-                        .button_config("Cancel")
-                        .size(vec2(font_sz * 5.5, 0.0))
-                        .build()
-                    {
-                        if !ui.is_window_appearing() {
-                            ui.close_current_popup();
-                            closed = Some(false);
-                        }
-                    }
-                    ui.same_line();
-                    if ui
-                        .button_config("Continue")
-                        .size(vec2(font_sz * 5.5, 0.0))
-                        .build()
-                    {
-                        if !ui.is_window_appearing() {
-                            ui.close_current_popup();
-                            closed = Some(true);
-                        }
-                    }
-                });
-            if let Some(cont) = closed {
-                if cont {
-                    (action.action)(menu_actions);
-                }
-            } else {
-                self.confirmable_action = Some(action);
+            let reply = do_modal_dialog(
+                ui,
+                &format!("{}###Confirm", action.title),
+                &action.message,
+                Some("Cancel"),
+                Some("Continue"),
+            );
+            match reply {
+                Some(true) => (action.action)(menu_actions),
+                Some(false) => (),
+                None => self.confirmable_action = Some(action),
             }
         }
     }
@@ -565,7 +587,8 @@ impl GlobalContext {
                 .with(|| {
                     ui.text("Please, wait...");
 
-                    // Give time to the fading modal, should be enough
+                    // Give time to the fading modal, because the action is blocking and will
+                    // freeze the UI for a while. This should be enough.
                     let run = self.popup_time_start.elapsed() > Duration::from_millis(250);
                     if run {
                         res = Some(self.run_file_action(ui, *action, file));
@@ -1665,15 +1688,11 @@ impl GlobalContext {
                 );
             }
             BoolWithConfirm::Confirmed => {
-                let fd = imgui_filedialog::Builder::new("fd")
-                    .filter("Papercraft (*.craft) {.craft},All files {.*}")
-                    .path(&self.last_path)
-                    .flags(
-                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON
-                            | imgui_filedialog::Flags::SHOW_READ_ONLY_CHECK
-                            | imgui_filedialog::Flags::NO_DIALOG,
-                    )
-                    .open();
+                let mut fd = filechooser::FileChooser::new();
+                let _ = fd.set_path(&self.last_path);
+                fd.add_flags(filechooser::Flags::SHOW_READ_ONLY);
+                fd.add_filter(filters::craft());
+                fd.add_filter(filters::all_files());
                 self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
                 open_file_dialog = true;
             }
@@ -1689,23 +1708,13 @@ impl GlobalContext {
             }
         }
         if menu_actions.save_as || save_as {
-            let fd = imgui_filedialog::Builder::new("fd")
-                .filter("Papercraft (*.craft) {.craft},All files {.*}")
-                .path(&self.last_path)
-                .flags(
-                    imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG,
-                )
-                .open();
+            let mut fd = filechooser::FileChooser::new();
+            let _ = fd.set_path(&self.last_path);
+            fd.add_filter(filters::craft());
+            fd.add_filter(filters::all_files());
             self.file_dialog = Some((fd, "Save as...", FileAction::SaveAsCraft));
             open_file_dialog = true;
         }
-        const LOAD_MODEL_FILTER: &str = "\
-            All models (*.obj *.pdo *.stl) {.obj,.pdo,.stl},\
-            Wavefront (*.obj) {.obj},\
-            Pepakura (*.pdo) {.pdo},\
-            Stl (*.stl) {.stl},\
-            All files {.*}\
-            ";
         match menu_actions.import_model {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(
@@ -1716,14 +1725,13 @@ impl GlobalContext {
                 );
             }
             BoolWithConfirm::Confirmed => {
-                let fd = imgui_filedialog::Builder::new("fd")
-                    .filter(LOAD_MODEL_FILTER)
-                    .path(&self.last_path)
-                    .flags(
-                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON
-                            | imgui_filedialog::Flags::NO_DIALOG,
-                    )
-                    .open();
+                let mut fd = filechooser::FileChooser::new();
+                let _ = fd.set_path(&self.last_path);
+                fd.add_filter(filters::all_models());
+                fd.add_filter(filters::wavefront());
+                fd.add_filter(filters::pepakura());
+                fd.add_filter(filters::stl());
+                fd.add_filter(filters::all_files());
                 self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportModel));
                 open_file_dialog = true;
             }
@@ -1738,53 +1746,43 @@ impl GlobalContext {
                 );
             }
             BoolWithConfirm::Confirmed => {
-                let fd = imgui_filedialog::Builder::new("fd")
-                    .filter(LOAD_MODEL_FILTER)
-                    .path(&self.last_path)
-                    .flags(
-                        imgui_filedialog::Flags::DISABLE_CREATE_DIRECTORY_BUTTON
-                            | imgui_filedialog::Flags::NO_DIALOG,
-                    )
-                    .open();
+                let mut fd = filechooser::FileChooser::new();
+                let _ = fd.set_path(&self.last_path);
+                fd.add_filter(filters::all_models());
+                fd.add_filter(filters::wavefront());
+                fd.add_filter(filters::pepakura());
+                fd.add_filter(filters::stl());
+                fd.add_filter(filters::all_files());
                 self.file_dialog = Some((fd, "Update with new OBJ...", FileAction::UpdateObj));
                 open_file_dialog = true;
             }
             BoolWithConfirm::None => {}
         }
         if menu_actions.export_obj {
-            let fd = imgui_filedialog::Builder::new("fd")
-                .filter("Wavefront (*.obj) {.obj},All files {.*}")
-                .path(&self.last_path)
-                .flags(
-                    imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG,
-                )
-                .open();
+            let mut fd = filechooser::FileChooser::new();
+            let _ = fd.set_path(&self.last_path);
+            fd.add_filter(filters::wavefront());
+            fd.add_filter(filters::all_files());
             self.file_dialog = Some((fd, "Export OBJ...", FileAction::ExportObj));
             open_file_dialog = true;
         }
         if menu_actions.generate_printable {
-            use std::borrow::Cow::{Borrowed, Owned};
+            use std::ffi::OsStr;
 
-            let (last_path, last_file) = if self.last_export.is_empty() {
-                (Borrowed(&self.last_path), Borrowed(""))
+            let (last_path, last_file) = if self.last_export.as_os_str().is_empty() {
+                (self.last_path.as_path(), OsStr::new(""))
             } else {
-                let path = PathBuf::from(&self.last_export);
-                let last_path = path
-                    .parent()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(String::new);
-                let last_file = path
-                    .file_name()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(String::new);
-                (Owned(last_path), Owned(last_file))
+                let last_path = self.last_export.parent().unwrap_or_else(|| Path::new(""));
+                let last_file = self.last_export.file_name().unwrap_or_default();
+                (last_path, last_file)
             };
-            let fd = imgui_filedialog::Builder::new("fd")
-                .filter("PDF document (*.pdf) {.pdf},SVG documents (*.svg) {.svg},PNG documents (*.png) {.png},All files {.*}")
-                .path(&last_path)
-                .file(&last_file)
-                .flags(imgui_filedialog::Flags::CONFIRM_OVERWRITE | imgui_filedialog::Flags::NO_DIALOG)
-                .open();
+            let mut fd = filechooser::FileChooser::new();
+            let _ = fd.set_path(&*last_path);
+            fd.set_file_name(last_file);
+            fd.add_filter(filters::pdf());
+            fd.add_filter(filters::svg());
+            fd.add_filter(filters::png());
+            fd.add_filter(filters::all_files());
             self.file_dialog = Some((fd, "Generate Printable...", FileAction::GeneratePrintable));
             open_file_dialog = true;
         }
@@ -1796,35 +1794,69 @@ impl GlobalContext {
         }
         if let Some((mut fd, title, action)) = self.file_dialog.take() {
             let dsp_size = ui.display_size();
-            let min_size = 0.75 * dsp_size;
-            let max_size = dsp_size;
+            let min_size = 0.25 * dsp_size;
+            let max_size = 0.90 * dsp_size;
             ui.set_next_window_size_constraints(min_size, max_size);
+            ui.set_next_window_size(0.75 * dsp_size, imgui::Cond::Once);
             ui.popup_modal_config(format!("{title}###file_dialog_modal"))
                 .close_button(true)
                 .with(|| {
                     let mut finish_file_dialog = false;
-                    let size = ui.get_content_region_avail();
-                    if let Some(fd2) = fd.display("fd", imgui::WindowFlags::empty(), size, size) {
-                        if fd2.ok() {
-                            if let Some(file) =
-                                fd2.file_path_name(imgui_filedialog::ResultMode::AddIfNoFileExt)
-                            {
-                                let action = if action == FileAction::OpenCraft && fd2.readonly() {
-                                    FileAction::OpenCraftReadOnly
-                                } else {
-                                    action
-                                };
-                                self.file_action = Some((action, file.into()));
-                                open_wait = true;
-                                if let Some(path) = fd2.current_path() {
-                                    self.last_path = path;
+                    let res = fd.do_ui(ui, &self.filechooser_atlas);
+                    match res {
+                        filechooser::Output::Continue => {}
+                        filechooser::Output::Cancel => {
+                            finish_file_dialog = true;
+                        }
+                        filechooser::Output::Ok => {
+                            let file = fd.full_path(filters::ext(fd.active_filter()));
+                            if let Some(path) = file.parent() {
+                                self.last_path = path.to_owned();
+                            }
+                            let action = if action == FileAction::OpenCraft && fd.read_only() {
+                                FileAction::OpenCraftReadOnly
+                            } else {
+                                action
+                            };
+                            // A confirmation dialog is shown if the user:
+                            // * Tries to open a file that doesn't exist.
+                            // * Tries to save a file that does exist.
+                            match (action.is_save(), file.exists()) {
+                                (true, true) | (false, false) => {
+                                    ui.open_popup("###FileDialogConfirm");
+                                    self.file_dialog_confirm = Some((action, file));
+                                }
+                                _ => {
+                                    finish_file_dialog = true;
+                                    open_wait = true;
+                                    self.file_action = Some((action, file));
                                 }
                             }
                         }
-                        finish_file_dialog = true;
                     }
-                    if ui.is_key_pressed(imgui::Key::Escape) {
-                        finish_file_dialog = true;
+
+                    if let Some(fdc) = self.file_dialog_confirm.take() {
+                        let name = fdc.1.file_name().unwrap_or_default().to_string_lossy();
+                        let reply = if fdc.0.is_save() {
+                            do_modal_dialog(ui,
+                                "Overwrite?###FileDialogConfirm",
+                                &format!("The file '{name}' already exists!\nWould you like to overwrite it?"),
+                                Some("Cancel"), Some("Continue"))
+                        } else {
+                            do_modal_dialog(ui,
+                                "Error!###FileDialogConfirm",
+                                &format!("The file '{name}' doesn't exist!"),
+                                Some("OK"), None)
+                        };
+                        match reply {
+                            Some(true) => {
+                                finish_file_dialog = true;
+                                open_wait = true;
+                                self.file_action = Some(fdc);
+                            }
+                            Some(false) => {}
+                            None => { self.file_dialog_confirm = Some(fdc); }
+                        }
                     }
                     if finish_file_dialog {
                         ui.close_current_popup();
@@ -2294,7 +2326,7 @@ impl GlobalContext {
 
                 let text_tex_id = Renderer::unmap_tex(ui.font_atlas().texture_id());
                 self.generate_printable(text_tex_id, file_name)?;
-                self.last_export = file_name.to_string_lossy().into_owned();
+                self.last_export = file_name.to_path_buf();
             }
         }
         Ok(())
@@ -3274,6 +3306,8 @@ impl imgui::UiBuilder for GlobalContext {
         self.icons_rect[2] = atlas.add_custom_rect_regular([W, H], |_, img| {
             img.copy_from(&*ICONS_IMG.view(0, H, W, H), 0, 0).unwrap();
         });
+
+        self.filechooser_atlas = filechooser::build_custom_atlas(atlas);
     }
     fn do_ui(&mut self, ui: &Ui) {
         //ui.show_demo_window(None);
@@ -3420,6 +3454,110 @@ impl TextBuilder for TextHelper<'_> {
             }
             vs.extend(q);
             x += r.advance_x();
+        }
+    }
+}
+
+mod filters {
+    use easy_imgui_filechooser::{Filter, FilterId, Pattern};
+
+    const ALL_FILES: FilterId = FilterId(0);
+    const ALL_MODELS: FilterId = FilterId(1);
+    const CRAFT: FilterId = FilterId(2);
+    const WAVEFRONT: FilterId = FilterId(3);
+    const PEPAKURA: FilterId = FilterId(4);
+    const STL: FilterId = FilterId(5);
+    const PDF: FilterId = FilterId(6);
+    const SVG: FilterId = FilterId(7);
+    const PNG: FilterId = FilterId(8);
+
+    pub fn ext(filter: Option<FilterId>) -> Option<&'static str> {
+        let ext = match filter? {
+            CRAFT => "craft",
+            WAVEFRONT => "obj",
+            PEPAKURA => "pdo",
+            STL => "stl",
+            PDF => "pdf",
+            SVG => "svg",
+            PNG => "png",
+            _ => return None,
+        };
+        Some(ext)
+    }
+
+    pub fn craft() -> Filter {
+        Filter {
+            id: CRAFT,
+            text: String::from("Papercraft (*.craft)"),
+            globs: vec![Pattern::new("*.craft").unwrap()],
+        }
+    }
+
+    pub fn all_models() -> Filter {
+        Filter {
+            id: ALL_MODELS,
+            text: String::from("All models (*.obj *.pdo *.stl)"),
+            globs: vec![
+                Pattern::new("*.obj").unwrap(),
+                Pattern::new("*.pdo").unwrap(),
+                Pattern::new("*.stl").unwrap(),
+            ],
+        }
+    }
+
+    pub fn wavefront() -> Filter {
+        Filter {
+            id: WAVEFRONT,
+            text: String::from("Wavefront (*.obj)"),
+            globs: vec![Pattern::new("*.obj").unwrap()],
+        }
+    }
+
+    pub fn pepakura() -> Filter {
+        Filter {
+            id: PEPAKURA,
+            text: String::from("Pepakura (*.pdo)"),
+            globs: vec![Pattern::new("*.pdo").unwrap()],
+        }
+    }
+
+    pub fn stl() -> Filter {
+        Filter {
+            id: STL,
+            text: String::from("Stl (*.stl)"),
+            globs: vec![Pattern::new("*.stl").unwrap()],
+        }
+    }
+
+    pub fn pdf() -> Filter {
+        Filter {
+            id: PDF,
+            text: String::from("PDF document (*.pdf)"),
+            globs: vec![Pattern::new("*.pdf").unwrap()],
+        }
+    }
+
+    pub fn svg() -> Filter {
+        Filter {
+            id: SVG,
+            text: String::from("SVG documents (*.svg)"),
+            globs: vec![Pattern::new("*.svg").unwrap()],
+        }
+    }
+
+    pub fn png() -> Filter {
+        Filter {
+            id: PNG,
+            text: String::from("PNG documents (*.png)"),
+            globs: vec![Pattern::new("*.png").unwrap()],
+        }
+    }
+
+    pub fn all_files() -> Filter {
+        Filter {
+            id: ALL_FILES,
+            text: String::from("All files"),
+            globs: vec![],
         }
     }
 }

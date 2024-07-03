@@ -1,3 +1,0 @@
-[submodule "thirdparty/ImGuiFileDialog"]
-	path = thirdparty/ImGuiFileDialog
-	url = https://github.com/rodrigorc/ImGuiFileDialog

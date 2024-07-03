@@ -1,10 +1,10 @@
 use std::env;
 use std::io::Result;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
+    println!("cargo:rerun-if-changed=build.rs");
     build_resource()?;
-    build_imgui_filedialog()?;
     build_helvetica()?;
     Ok(())
 }
@@ -44,7 +44,6 @@ fn build_resource() -> Result<()> {
             ));
         }
         println!("cargo:rustc-link-arg={}", output.display());
-        println!("cargo:rerun-if-changed=build.rs");
         for entry in std::fs::read_dir("res")? {
             let entry = entry?;
             println!("cargo:rerun-if-changed={}", entry.path().display());
@@ -53,76 +52,7 @@ fn build_resource() -> Result<()> {
     Ok(())
 }
 
-fn build_imgui_filedialog() -> Result<()> {
-    let dep_imgui_path =
-        env::var("DEP_IMGUI_THIRD_PARTY").expect("DEP_IMGUI_THIRD_PARTY not defined");
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let igfd_path = "thirdparty/ImGuiFileDialog";
-
-    bindgen::Builder::default()
-        .clang_args(["-x", "c++"])
-        .clang_arg(format!("-I{dep_imgui_path}"))
-        .clang_arg(format!("-I{igfd_path}"))
-        .header("ImGuiFileDialogWrapper.h")
-        .allowlist_recursively(false)
-        .allowlist_function("free") // standard libc free to release strings
-        //.allowlist_type("IGFD_.*")
-        //.allowlist_function("ImGuiFileDialog.*")
-        //.allowlist_file("thirdparty/ImGuiFileDialog/ImGuiFileDialog.h")
-        //.blocklist_function(".*")
-        //.blocklist_type(".*")
-        .allowlist_function("IGFD_.*")
-        .blocklist_function(".*Pane.*")
-        .blocklist_type("ImGuiFileDialog")
-        .allowlist_type("IGFD_Selection_Pair")
-        .allowlist_type("IGFD_Selection")
-        .allowlist_type("ImGuiFileDialogFlags.*")
-        .allowlist_type("IGFD_FileStyleFlags")
-        .allowlist_type("IGFD_ResultMode.*")
-        .generate()
-        .expect("Error ImGuiFileDialog building bindings")
-        .write_to_file(out_path.join("imgui_filedialog_bindings.rs"))
-        .expect("Error ImGuiFileDialog writing bindings");
-
-    cc::Build::new()
-        .cpp(true)
-        .include(dep_imgui_path)
-        .include(igfd_path)
-        .define("USE_EXPLORATION_BY_KEYS", None)
-        .define("IGFD_KEY_UP", "ImGuiKey_UpArrow")
-        .define("IGFD_KEY_DOWN", "ImGuiKey_DownArrow")
-        .define("IGFD_KEY_ENTER", "ImGuiKey_Enter")
-        .define("IGFD_KEY_BACKSPACE", "ImGuiKey_Backspace")
-        .define("USE_DIALOG_EXIT_WITH_KEY", None)
-        .define("IGFD_EXIT_KEY", "ImGuiKey_Escape")
-        .define("FILTER_COMBO_WIDTH", "200.0f")
-        .define("dirNameString", r#""Directory Path:""#)
-        .define(
-            "OverWriteDialogTitleString",
-            r#""The file already exists!""#,
-        )
-        .define(
-            "OverWriteDialogMessageString",
-            r#""Would you like to overwrite it?""#,
-        )
-        .define("okButtonWidth", "100.0f")
-        .define("cancelButtonWidth", "100.0f")
-        .define("fileSizeBytes", r#""B""#)
-        .define("fileSizeKiloBytes", r#""KiB""#)
-        .define("fileSizeMegaBytes", r#""MiB""#)
-        .define("fileSizeGigaBytes", r#""GiB""#)
-        .warnings(false)
-        .file(Path::new(igfd_path).join("ImGuiFileDialog.cpp"))
-        .compile("imguifd");
-
-    println!("cargo:rerun-if-changed=ImGuiFileDialogWrapper.h");
-    for entry in std::fs::read_dir(igfd_path)? {
-        let entry = entry?;
-        println!("cargo:rerun-if-changed={}", entry.path().display());
-    }
-    Ok(())
-}
-
+// Metrics for well-known PDF fonts are in AFM files
 fn build_helvetica() -> Result<()> {
     use std::{
         collections::HashMap,

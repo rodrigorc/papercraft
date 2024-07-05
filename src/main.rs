@@ -9,20 +9,24 @@ use easy_imgui_window::{
         },
         Renderer,
     },
-    winit::{self, event_loop::EventLoopBuilder},
-    MainWindow, MainWindowWithRenderer,
+    winit,
 };
 use image::{DynamicImage, EncodableLayout, GenericImage, GenericImageView};
 use lazy_static::lazy_static;
-use std::io::{Read, Write};
 use std::{
-    cell::RefCell,
+    io::{Read, Write},
+    sync::atomic::AtomicPtr,
+};
+use std::{
     path::{Path, PathBuf},
-    rc::Rc,
     time::{Duration, Instant},
 };
+use winit::{
+    event::WindowEvent,
+    event_loop::{EventLoop, EventLoopProxy},
+};
 
-type Ui = imgui::Ui<GlobalContext>;
+type Ui = imgui::Ui<Box<GlobalContext>>;
 
 static MULTISAMPLES: &[i32] = &[16, 8, 4, 2];
 
@@ -93,140 +97,179 @@ struct Cli {
 }
 
 fn main() {
-    env_logger::init();
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
+        .init();
 
     let cli = Cli::parse();
 
-    let event_loop = EventLoopBuilder::new().build().unwrap();
-    let window = MainWindow::new(&event_loop, "Papercraft").unwrap();
+    let event_loop = EventLoop::new().unwrap();
+    let proxy = event_loop.create_proxy();
 
+    let data = AppData { proxy, cli };
+    let mut main = easy_imgui_window::AppHandler::<Box<GlobalContext>>::new(data);
     let icon = winit::window::Icon::from_rgba(
         LOGO_IMG.as_bytes().to_owned(),
         LOGO_IMG.width(),
         LOGO_IMG.height(),
     )
     .unwrap();
-    window.window().set_window_icon(Some(icon));
-    window.window().set_ime_allowed(true);
-    let mut window = MainWindowWithRenderer::new(window);
+    let attrs = main.attributes();
+    attrs.window_icon = Some(icon);
+    attrs.title = String::from("Papercraft");
 
-    let renderer = window.renderer();
-    renderer.set_background_color(Some(Color::BLACK));
-    let gl = renderer.gl_context().clone();
-    let imgui = renderer.imgui();
-    let mut imgui = unsafe { imgui.set_current() };
-    imgui.set_allow_user_scaling(true);
-    imgui.nav_enable_keyboard();
-    if cli.light {
-        imgui.style().set_colors_light();
-    }
-
-    // Initialize papercraft status
-    let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
-    let cmd_file_action = match cli {
-        Cli {
-            name: Some(name),
-            read_only: false,
-            ..
-        } => Some((FileAction::ImportModel, name)),
-        Cli {
-            name: Some(name),
-            read_only: true,
-            ..
-        } => {
-            // This will be rewritten when/if the file is loaded, but setting it here avoids a UI flicker
-            data.ui.mode = MouseMode::ReadOnly;
-            Some((FileAction::OpenCraftReadOnly, name))
-        }
-        _ => None,
-    };
-
-    let last_path = if let Some((_, path)) = &cmd_file_action {
-        path.parent().map(|p| p.to_owned()).unwrap_or_default()
-    } else {
-        PathBuf::new()
-    };
-
-    let gl_fixs = build_gl_fixs(&gl).unwrap();
-    let ctx = Rc::new(RefCell::new(GlobalContext {
-        gl,
-        gl_fixs,
-        font_default: imgui::FontId::default(),
-        font_big: imgui::FontId::default(),
-        font_small: imgui::FontId::default(),
-        font_text: imgui::FontId::default(),
-        font_text_line_scale: 1.0,
-        icons_rect: [imgui::CustomRectIndex::default(); 3],
-        logo_rect: imgui::CustomRectIndex::default(),
-        data,
-        file_name: None,
-        rebuild: RebuildFlags::all(),
-        splitter_pos: 1.0,
-        sz_full: vec2(2.0, 1.0),
-        sz_scene: vec2(1.0, 1.0),
-        sz_paper: vec2(1.0, 1.0),
-        scene_ui_status: Canvas3dStatus::default(),
-        paper_ui_status: Canvas3dStatus::default(),
-        options_opened: None,
-        options_applied: None,
-        about_visible: false,
-        option_button_height: 0.0,
-        file_dialog: None,
-        file_dialog_confirm: None,
-        filechooser_atlas: Default::default(),
-        file_action: None,
-        last_path,
-        last_export: PathBuf::new(),
-        error_message: None,
-        confirmable_action: None,
-        popup_time_start: Instant::now(),
-        cmd_file_action,
-        quit_requested: BoolWithConfirm::None,
-        title: String::new(),
+    let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        event_loop.run_app(&mut main).unwrap();
     }));
-    unsafe {
-        install_crash_backup(event_loop.create_proxy(), &ctx);
+    // If it crashes try to save a backup
+    if let Err(e) = maybe_fatal {
+        CTX.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Release);
+        if let Some(ctx) = &main.app() {
+            ctx.save_backup_on_panic();
+        }
+        std::panic::resume_unwind(e);
     }
-    event_loop
-        .run(move |event, w| {
-            // Main loop, if it panics or somewhat crashes, try to save a backup
-            let mut ctx = ctx.borrow_mut();
+}
 
-            let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                // Default message handling
-                let loop_res = window.do_event(&mut *ctx, &event);
+struct AppData {
+    proxy: EventLoopProxy<()>,
+    cli: Cli,
+}
 
-                if let Some(new_title) = ctx.updated_title() {
-                    window.main_window().window().set_title(new_title);
-                }
-                if let Some((options, push_undo)) = ctx.options_applied.take() {
-                    ctx.data.set_papercraft_options(options, push_undo);
-                    ctx.add_rebuild(RebuildFlags::all());
-                    window.renderer().imgui().invalidate_font_atlas();
-                }
+static CTX: AtomicPtr<GlobalContext> = AtomicPtr::new(std::ptr::null_mut());
 
-                // manually handle a few messages
-                if let winit::event::Event::UserEvent(()) = &event {
-                    //Fatal signal: it is about to be aborted, just stop whatever it is doing and
-                    //let the crash handler do its job.
-                    loop {
-                        std::thread::park();
-                    }
-                }
-                if loop_res.window_closed && ctx.quit_requested == BoolWithConfirm::None {
-                    let quit = ctx.check_modified();
-                    ctx.quit_requested = quit;
-                }
-                if ctx.quit_requested == BoolWithConfirm::Confirmed {
-                    w.exit();
-                }
-            }));
-            if let Err(e) = maybe_fatal {
-                ctx.save_backup_on_panic();
-                std::panic::resume_unwind(e);
+impl easy_imgui_window::Application for Box<GlobalContext> {
+    type UserEvent = ();
+    type Data = AppData;
+
+    fn new(args: easy_imgui_window::Args<AppData>) -> Box<GlobalContext> {
+        let easy_imgui_window::Args {
+            window,
+            data: AppData { proxy, cli },
+            ..
+        } = args;
+
+        window.main_window().window().set_ime_allowed(true);
+        let renderer = window.renderer();
+        renderer.set_background_color(Some(Color::BLACK));
+        let gl = renderer.gl_context().clone();
+        let imgui = renderer.imgui();
+        let mut imgui = unsafe { imgui.set_current() };
+        imgui.set_allow_user_scaling(true);
+        imgui.nav_enable_keyboard();
+        if cli.light {
+            imgui.style().set_colors_light();
+        }
+
+        // Initialize papercraft status
+        let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
+        let cmd_file_action = match cli {
+            Cli {
+                name: Some(name),
+                read_only: false,
+                ..
+            } => Some((FileAction::ImportModel, name.to_owned())),
+            Cli {
+                name: Some(name),
+                read_only: true,
+                ..
+            } => {
+                // This will be rewritten when/if the file is loaded, but setting it here avoids a UI flicker
+                data.ui.mode = MouseMode::ReadOnly;
+                Some((FileAction::OpenCraftReadOnly, name.to_owned()))
             }
-        })
-        .unwrap();
+            _ => None,
+        };
+
+        let last_path = if let Some((_, path)) = &cmd_file_action {
+            path.parent().map(|p| p.to_owned()).unwrap_or_default()
+        } else {
+            PathBuf::new()
+        };
+
+        let gl_fixs = build_gl_fixs(&gl).unwrap();
+        let ctx = GlobalContext {
+            gl,
+            gl_fixs,
+            font_default: imgui::FontId::default(),
+            font_big: imgui::FontId::default(),
+            font_small: imgui::FontId::default(),
+            font_text: imgui::FontId::default(),
+            font_text_line_scale: 1.0,
+            icons_rect: [imgui::CustomRectIndex::default(); 3],
+            logo_rect: imgui::CustomRectIndex::default(),
+            data,
+            file_name: None,
+            rebuild: RebuildFlags::all(),
+            splitter_pos: 1.0,
+            sz_full: vec2(2.0, 1.0),
+            sz_scene: vec2(1.0, 1.0),
+            sz_paper: vec2(1.0, 1.0),
+            scene_ui_status: Canvas3dStatus::default(),
+            paper_ui_status: Canvas3dStatus::default(),
+            options_opened: None,
+            options_applied: None,
+            about_visible: false,
+            option_button_height: 0.0,
+            file_dialog: None,
+            file_dialog_confirm: None,
+            filechooser_atlas: Default::default(),
+            file_action: None,
+            last_path,
+            last_export: PathBuf::new(),
+            error_message: None,
+            confirmable_action: None,
+            popup_time_start: Instant::now(),
+            cmd_file_action,
+            quit_requested: BoolWithConfirm::None,
+            title: String::new(),
+        };
+        let mut ctx = Box::new(ctx);
+        // SAFETY: This code will only be run once, and the ctx is in a box,
+        // so it will not be moved around memory.
+        // Using the pointer will still be technical UB, probably, but hopefully
+        // we'll never need it.
+        unsafe {
+            CTX.store(&mut *ctx, std::sync::atomic::Ordering::Release);
+            install_crash_backup(proxy.clone());
+        }
+        ctx
+    }
+    fn window_event(
+        &mut self,
+        args: easy_imgui_window::Args<AppData>,
+        _event: WindowEvent,
+        res: easy_imgui_window::EventResult,
+    ) {
+        let easy_imgui_window::Args {
+            window, event_loop, ..
+        } = args;
+
+        if let Some(new_title) = self.updated_title() {
+            window.main_window().window().set_title(new_title);
+        }
+        if let Some((options, push_undo)) = self.options_applied.take() {
+            self.data.set_papercraft_options(options, push_undo);
+            self.add_rebuild(RebuildFlags::all());
+            window.renderer().imgui().invalidate_font_atlas();
+        }
+
+        if res.window_closed && self.quit_requested == BoolWithConfirm::None {
+            let quit = self.check_modified();
+            self.quit_requested = quit;
+        }
+        if self.quit_requested == BoolWithConfirm::Confirmed {
+            event_loop.exit();
+        }
+    }
+    fn user_event(&mut self, _args: easy_imgui_window::Args<AppData>, _: ()) {
+        //Fatal signal: it is about to be aborted, just stop whatever it is doing and
+        //let the crash handler do its job.
+        loop {
+            std::thread::park();
+        }
+    }
 }
 
 fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
@@ -493,16 +536,11 @@ impl GlobalContext {
         self.data.ui.mode != MouseMode::ReadOnly
     }
     fn build_modal_error_message(&mut self, ui: &Ui) {
-        let reply = do_modal_dialog(
-            ui,
-            "Error",
-            self.error_message.as_deref().unwrap_or_default(),
-            None,
-            Some("OK"),
-        );
-        match reply {
-            Some(_) => self.error_message = None,
-            None => (),
+        if let Some(error_message) = self.error_message.take() {
+            let reply = do_modal_dialog(ui, "Error", &error_message, None, Some("OK"));
+            if reply.is_none() {
+                self.error_message = Some(error_message);
+            }
         }
     }
     fn build_confirm_message(&mut self, ui: &Ui, menu_actions: &mut MenuActions) {
@@ -1777,7 +1815,7 @@ impl GlobalContext {
                 (last_path, last_file)
             };
             let mut fd = filechooser::FileChooser::new();
-            let _ = fd.set_path(&*last_path);
+            let _ = fd.set_path(last_path);
             fd.set_file_name(last_file);
             fd.add_filter(filters::pdf());
             fd.add_filter(filters::svg());
@@ -2321,7 +2359,7 @@ impl GlobalContext {
                 //TODO: should pass show_texts as argument?
                 let old_show_texts = self.data.ui.show_texts;
                 self.data.ui.show_texts = true;
-                self.pre_render(ui, RebuildFlags::all());
+                self.pre_render_flags(ui, RebuildFlags::all());
                 self.data.ui.show_texts = old_show_texts;
 
                 let text_tex_id = Renderer::unmap_tex(ui.font_atlas().texture_id());
@@ -3009,22 +3047,24 @@ impl GlobalContext {
         Ok(())
     }
     fn save_backup_on_panic(&self) {
+        log::info!("Crashing! trying to backup the current document");
         if !self.data.modified {
+            log::info!("backup not needed");
             return;
         }
         let mut dir = std::env::temp_dir();
         dir.push(format!("crashed-{}.craft", std::process::id()));
-        eprintln!(
+        log::error!(
             "Papercraft panicked! Saving backup at \"{}\"",
             dir.display()
         );
         if let Err(e) = self.save_as_craft(&dir) {
-            eprintln!("backup failed with {e:?}");
+            log::error!("backup failed with {e:?}");
         } else {
-            eprintln!("backup complete");
+            log::error!("backup complete");
         }
     }
-    fn pre_render(&mut self, ui: &Ui, rebuild: RebuildFlags) {
+    fn pre_render_flags(&mut self, ui: &Ui, rebuild: RebuildFlags) {
         let text_helper = TextHelper {
             ui,
             font_text_line_scale: self.font_text_line_scale,
@@ -3233,44 +3273,35 @@ struct PrintableText {
 
 #[cfg(target_os = "linux")]
 #[inline(never)]
-unsafe fn install_crash_backup(
-    event_loop: winit::event_loop::EventLoopProxy<()>,
-    ctx: &Rc<RefCell<GlobalContext>>,
-) {
+unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>) {
     // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
     // the user's data, what's the worst that could happen?
-    // The `ctx` is not Send because of the Rc, the RefCell and the GlContext inside, but we won't touch any of these...
-    struct SendWrapper<T>(T);
-    unsafe impl<T> Send for SendWrapper<T> {}
-    let ctx = SendWrapper(Rc::clone(ctx));
     use signal_hook::consts::signal::*;
     use signal_hook::iterator::Signals;
     std::thread::spawn(move || {
         let sigs = vec![SIGHUP, SIGINT, SIGTERM];
-        let mut signals = Signals::new(sigs).unwrap();
-        let _ = signals.into_iter().next();
-        let _ = event_loop.send_event(());
-        let _ = std::thread::Builder::new().spawn(move || {
-            let _ = signals.into_iter().next();
-            eprintln!("Double signal, aborting!");
+        let Ok(mut signals) = Signals::new(sigs) else {
+            return;
+        };
+        let signal = signals.into_iter().next().unwrap();
+        log::error!(
+            "Got signal {}",
+            signal_hook::low_level::signal_name(signal).unwrap_or(&signal.to_string())
+        );
+
+        // Lock the main loop
+        if event_loop.send_event(()).is_ok() {
+            let ctx = unsafe { &*CTX.load(std::sync::atomic::Ordering::Acquire) };
+            ctx.save_backup_on_panic();
             std::process::abort();
-        });
-        // the RefCell is probably borrowed, use it anyway :-/
-        let ctx = ctx;
-        let ctx = unsafe { &*ctx.0.as_ptr() };
-        ctx.save_backup_on_panic();
-        std::process::abort();
+        }
     });
 }
 
 #[cfg(not(target_os = "linux"))]
-unsafe fn install_crash_backup(
-    _event_loop: winit::event_loop::EventLoopProxy<()>,
-    _ctx: &Rc<RefCell<GlobalContext>>,
-) {
-}
+unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<()>) {}
 
-impl imgui::UiBuilder for GlobalContext {
+impl imgui::UiBuilder for Box<GlobalContext> {
     fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {
         self.add_rebuild(RebuildFlags::all());
 
@@ -3345,7 +3376,7 @@ impl imgui::UiBuilder for GlobalContext {
                     .rebuild
                     .intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER)
                 {
-                    self.pre_render(ui, self.rebuild);
+                    self.pre_render_flags(ui, self.rebuild);
                     let vp = glr::PushViewport::new(&self.gl);
                     if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
                         let _draw_fb_binder = BinderDrawFramebuffer::bind(&self.gl_fixs.fbo_scene);

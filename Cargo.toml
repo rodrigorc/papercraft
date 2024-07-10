@@ -12,6 +12,11 @@ keywords = ["papercraft", "handcraft"]
 strip = "symbols"
 lto = true
 
+[features]
+# In linux this is basically free, but in Windows this adds a bunch of dependencies
+# for little gain.
+freetype=["easy-imgui-window/freetype"]
+
 [profile.dev.package.image]
 opt-level = 3
 [profile.dev.package.zip]
@@ -50,5 +55,5 @@ lazy_static = "1"
 printpdf = { version = "0.7", features = ["embedded_images"], git = "https://github.com/rodrigorc/printpdf", rev = "6dcdb4d53e64d98feb91c51f717480dbddb57d7d" }
 
 easy-imgui-sys = "0.6"
-easy-imgui-window = { version = "0.6", features = ["freetype"] }
+easy-imgui-window = "0.6"
 easy-imgui-filechooser = "0.1"

@@ -1,6 +1,6 @@
 [package]
 name = "papercraft"
-version = "2.6.0"
+version = "2.7.0"
 authors = ["Rodrigo Rivas Costa <rodrigorivascosta@gmail.com>"]
 edition = "2021"
 license = "GPL-3.0-or-later"

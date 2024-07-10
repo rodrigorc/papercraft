@@ -1,0 +1,59 @@
+name: BuildRelease
+
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        type: string
+        required: true
+
+jobs:
+  build_linux:
+    name: BuildLinux
+    uses: ./.github/workflows/build_linux.yml
+    with:
+      name: ${{ inputs.tag_name }}
+  build_win32:
+    name: BuildWin32
+    uses: ./.github/workflows/build_win32.yml
+    with:
+      name: ${{ inputs.tag_name }}
+  build_win64:
+    name: BuildWin64
+    uses: ./.github/workflows/build_win64.yml
+    with:
+      name: ${{ inputs.tag_name }}
+  build_macos:
+    name: BuildMacOS
+    uses: ./.github/workflows/build_macos.yml
+    with:
+      name: ${{ inputs.tag_name }}
+  release:
+    name: Release
+    needs: [build_linux, build_win32, build_win64, build_macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.tag_name }}-x86_64.AppImage
+      - name: Download Win32
+        uses: actions/download-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.tag_name }}-win32.zip
+      - name: Download Win64
+        uses: actions/download-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.tag_name }}-win64.zip
+      - name: Download MacOS
+        uses: actions/download-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.tag_name }}-MacOS.dmg
+      - name: Upload all to release
+        uses: svenstaro/upload-release-action@2.9.0
+        with:
+          tag: ${{ inputs.tag_name }}
+          prerelease: true
+          file_glob: true
+          file: Papercraft-${{ inputs.tag_name }}-*
+

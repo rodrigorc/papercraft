@@ -1,0 +1,49 @@
+name: BuildWin64
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+
+jobs:
+  papercraft:
+    name: ${{ inputs.name }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install pre-requisites
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 libz-mingw-w64-dev
+          sudo ln -s /usr/lib/gcc/x86_64-w64-mingw32/10-win32/include/c++ /usr/x86_64-w64-mingw32/include/c++
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - name: Build Win64
+        run: |
+          env PKG_CONFIG_ALLOW_CROSS="1" \
+              PKG_CONFIG_LIBDIR="/usr/x86_64-w64-mingw32/lib/pkgconfig/" \
+              WINDRES=x86_64-w64-mingw32-windres \
+              RUSTFLAGS="-Clink-arg=-mwindows" \
+              CARGO_TARGET_DIR=win64target \
+              cargo build --release --target x86_64-pc-windows-gnu
+      - name: Pkg win64
+        run: |
+          mkdir -p pkg64/papercraft
+          cd pkg64/papercraft
+          ln -s ../../win64target/x86_64-pc-windows-gnu/release/papercraft.exe .
+          ln -s /usr/lib/gcc/x86_64-w64-mingw32/10-win32/libstdc++-6.dll .
+          ln -s /usr/lib/gcc/x86_64-w64-mingw32/10-win32/libgcc_s_seh-1.dll .
+          mkdir examples
+          cd examples
+          ln -s ../../../examples/*.craft .
+          cd ../..
+          zip -r "../Papercraft-${{ inputs.name }}-win64.zip" papercraft
+      - name: Upload artifact win64
+        uses: actions/upload-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.name }}-win64.zip
+          path: Papercraft-${{ inputs.name }}-win64.zip
+          if-no-files-found: error

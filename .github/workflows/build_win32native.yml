@@ -1,0 +1,40 @@
+name: BuildWin32Native
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        required: true
+        type: string
+
+jobs:
+  papercraft:
+    name: ${{ inputs.name }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - name: VS
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build Win32
+        run: |
+          $env:RC="rc.exe"
+          cargo build --release --target=i686-pc-windows-msvc
+      - name: Pkg win32
+        run: |
+          mkdir pkg32/papercraft
+          cd pkg32/papercraft
+          copy ../../target/i686-pc-windows-msvc/release/papercraft.exe .
+          mkdir examples
+          cd examples
+          copy ../../../examples/*.craft .
+          cd ../..
+          7z a "../Papercraft-${{ inputs.name }}-win32.zip" papercraft
+      - name: Upload artifact win32
+        uses: actions/upload-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.name }}-win32.zip
+          path: Papercraft-${{ inputs.name }}-win32.zip
+          if-no-files-found: error

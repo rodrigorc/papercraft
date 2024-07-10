@@ -1,0 +1,40 @@
+name: BuildWin64Native
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        required: true
+        type: string
+
+jobs:
+  papercraft:
+    name: ${{ inputs.name }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - name: VS
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build Win64
+        run: |
+          $env:RC="rc.exe"
+          cargo build --release --target=x86_64-pc-windows-msvc
+      - name: Pkg win64
+        run: |
+          mkdir pkg64/papercraft
+          cd pkg64/papercraft
+          copy ../../target/x86_64-pc-windows-msvc/release/papercraft.exe .
+          mkdir examples
+          cd examples
+          copy ../../../examples/*.craft .
+          cd ../..
+          7z a "../Papercraft-${{ inputs.name }}-win64.zip" papercraft
+      - name: Upload artifact win64
+        uses: actions/upload-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.name }}-win64.zip
+          path: Papercraft-${{ inputs.name }}-win64.zip
+          if-no-files-found: error

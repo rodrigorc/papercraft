@@ -13,10 +13,7 @@ use easy_imgui_window::{
 };
 use image::{DynamicImage, EncodableLayout, GenericImage, GenericImageView};
 use lazy_static::lazy_static;
-use std::{
-    io::{Read, Write},
-    sync::atomic::AtomicPtr,
-};
+use std::{io::Write, sync::atomic::AtomicPtr};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -49,21 +46,9 @@ lazy_static! {
         load_image_from_memory(include_bytes!("papercraft.png"), true).unwrap();
     static ref ICONS_IMG: image::RgbaImage =
         load_image_from_memory(include_bytes!("icons.png"), true).unwrap();
-    static ref KARLA_TTF: Vec<u8> = {
-        let mut ttf = Vec::new();
-        flate2::read::ZlibDecoder::new(include_bytes!("Karla-Regular.ttf.z").as_slice())
-            .read_to_end(&mut ttf)
-            .unwrap();
-        ttf
-    };
-    static ref COPYRIGHT_TTF: Vec<u8> = {
-        let mut ttf = Vec::new();
-        flate2::read::ZlibDecoder::new(include_bytes!("copyright.ttf.z").as_slice())
-            .read_to_end(&mut ttf)
-            .unwrap();
-        ttf
-    };
 }
+
+const KARLA_TTF: &[u8] = include_bytes!("Karla-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
 
 use paper::{
@@ -3307,10 +3292,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
 
         self.font_default = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 18.0));
         self.font_big = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 28.0));
-        self.font_small = atlas.add_font_collection([
-            imgui::FontInfo::new(&*KARLA_TTF, 12.0),
-            imgui::FontInfo::new(&*COPYRIGHT_TTF, 12.0),
-        ]);
+        self.font_small = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 12.0));
         let options = self.data.papercraft().options();
 
         // Do not go too big or Dear ImGui will assert!

@@ -42,7 +42,7 @@ impl Papercraft {
             };
             let mut data = Vec::new();
             ztex.read_to_end(&mut data)?;
-            let img = image::io::Reader::new(std::io::Cursor::new(&data))
+            let img = image::ImageReader::new(std::io::Cursor::new(&data))
                 .with_guessed_format()?
                 .decode()?;
             Ok(Some(img))

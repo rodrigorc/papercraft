@@ -35,7 +35,7 @@ impl WaveObjImporter {
                 if let Some(map) = lib.map() {
                     let err_map = || format!("Error reading texture file {map}");
                     if let Some(map) = data::solve_find_matlib_file(map.as_ref(), &matlib) {
-                        let img = image::io::Reader::open(&map)
+                        let img = image::ImageReader::open(&map)
                             .with_context(err_map)?
                             .with_guessed_format()
                             .with_context(err_map)?

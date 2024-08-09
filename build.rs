@@ -6,6 +6,7 @@ fn main() -> Result<()> {
     println!("cargo:rerun-if-changed=build.rs");
     build_resource()?;
     build_helvetica()?;
+    build_locales()?;
     Ok(())
 }
 
@@ -142,5 +143,12 @@ fn build_helvetica() -> Result<()> {
         write!(out, "],")?;
     }
     writeln!(out, "];")?;
+    Ok(())
+}
+
+fn build_locales() -> Result<()> {
+    let output_dir = std::env::var("OUT_DIR").unwrap();
+    let out = PathBuf::from(&output_dir).join("locale/translators.rs");
+    include_po::generate_locales_from_dir("locales", out).unwrap();
     Ok(())
 }

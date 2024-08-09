@@ -27,6 +27,7 @@ use crate::{
     PrintableText, TextAlign,
 };
 use crate::{TextBuilder, FONT_SIZE};
+use tr::tr;
 
 // In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
 const FLAP_LINE_WIDTH: f32 = 0.2;
@@ -1142,7 +1143,7 @@ impl PapercraftContext {
                     let x = page_size_mm.x - margin_right;
                     let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
                         .min(page_size_mm.y - FONT_SIZE);
-                    let text = format!("Page {}/{}", page + 1, page_count);
+                    let text = tr!("Page {}/{}", page + 1, page_count);
                     let t = PrintableText {
                         size: FONT_SIZE,
                         pos: page_pos + Vector2::new(x, y),
@@ -2303,8 +2304,8 @@ impl GLObjects {
     }
 }
 
-pub fn signature() -> &'static str {
-    "Created with Papercraft. https://github.com/rodrigorc/papercraft"
+pub fn signature() -> String {
+    tr!("Created with Papercraft. https://github.com/rodrigorc/papercraft")
 }
 
 enum FlapVertices {

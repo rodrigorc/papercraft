@@ -18,6 +18,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+use tr::tr;
 use winit::{
     event::WindowEvent,
     event_loop::{EventLoop, EventLoopProxy},
@@ -33,6 +34,7 @@ fn to_cgv2(v: imgui::Vector2) -> cgmath::Vector2<f32> {
 
 use easy_imgui_filechooser as filechooser;
 
+mod config;
 mod paper;
 mod pdf_metrics;
 mod util_3d;
@@ -68,18 +70,22 @@ struct Cli {
     name: Option<PathBuf>,
 
     #[arg(
-        long,
-        help = "Uses Dear ImGui light theme instead of the default dark one"
-    )]
-    light: bool,
-
-    #[arg(
         short,
         long,
-        help = "Prevents editing of the model, useful as reference to build a real model"
+        help = tr!("Prevents editing of the model, useful as reference to build a real model")
     )]
     read_only: bool,
 }
+
+include!(concat!(env!("OUT_DIR"), "/locale/translators.rs"));
+
+fn set_locale(locale: &str) {
+    log::info!("Change locale to {locale}");
+    translators::set_locale(locale);
+    easy_imgui_filechooser::set_locale(locale);
+}
+
+static LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("es", "Español")];
 
 fn main() {
     env_logger::Builder::new()
@@ -87,12 +93,17 @@ fn main() {
         .parse_default_env()
         .init();
 
+    let config = config::Config::load_or_default();
+    log::info!("Restored config {config:?}");
+    // Set the preferred language now for early messages
+    set_locale(&config.locale);
+
     let cli = Cli::parse();
 
     let event_loop = EventLoop::new().unwrap();
     let proxy = event_loop.create_proxy();
 
-    let data = AppData { proxy, cli };
+    let data = AppData { proxy, cli, config };
     let mut main = easy_imgui_window::AppHandler::<Box<GlobalContext>>::new(data);
     let icon = winit::window::Icon::from_rgba(
         LOGO_IMG.as_bytes().to_owned(),
@@ -102,7 +113,7 @@ fn main() {
     .unwrap();
     let attrs = main.attributes();
     attrs.window_icon = Some(icon);
-    attrs.title = String::from("Papercraft");
+    attrs.title = tr!("Papercraft");
 
     let maybe_fatal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         event_loop.run_app(&mut main).unwrap();
@@ -120,6 +131,7 @@ fn main() {
 struct AppData {
     proxy: EventLoopProxy<()>,
     cli: Cli,
+    config: config::Config,
 }
 
 static CTX: AtomicPtr<GlobalContext> = AtomicPtr::new(std::ptr::null_mut());
@@ -131,7 +143,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
     fn new(args: easy_imgui_window::Args<AppData>) -> Box<GlobalContext> {
         let easy_imgui_window::Args {
             window,
-            data: AppData { proxy, cli },
+            data: AppData { proxy, cli, config },
             ..
         } = args;
 
@@ -143,9 +155,6 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         let mut imgui = unsafe { imgui.set_current() };
         imgui.set_allow_user_scaling(true);
         imgui.nav_enable_keyboard();
-        if cli.light {
-            imgui.style().set_colors_light();
-        }
 
         // Initialize papercraft status
         let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
@@ -175,6 +184,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
 
         let gl_fixs = build_gl_fixs(&gl).unwrap();
         let ctx = GlobalContext {
+            config: config.clone(),
             gl,
             gl_fixs,
             font_default: imgui::FontId::default(),
@@ -193,6 +203,9 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             sz_paper: vec2(1.0, 1.0),
             scene_ui_status: Canvas3dStatus::default(),
             paper_ui_status: Canvas3dStatus::default(),
+            config_opened: None,
+            // Apply the configuration as soon as possible
+            config_applied: Some(config.clone()),
             options_opened: None,
             options_applied: None,
             about_visible: false,
@@ -238,6 +251,20 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             self.data.set_papercraft_options(options, push_undo);
             self.add_rebuild(RebuildFlags::all());
             window.renderer().imgui().invalidate_font_atlas();
+        }
+        if let Some(new_config) = self.config_applied.take() {
+            self.config = new_config;
+            set_locale(&self.config.locale);
+            let mut imgui = unsafe { window.renderer().imgui().set_current() };
+            if self.config.light_mode {
+                imgui.style().set_colors_light();
+            } else {
+                imgui.style().set_colors_dark();
+            }
+            match self.config.save() {
+                Ok(_) => log::info!("Saved config {:?}", self.config),
+                Err(e) => log::error!("Error saving config {e}"),
+            }
         }
 
         if res.window_closed && self.quit_requested == BoolWithConfirm::None {
@@ -378,14 +405,14 @@ enum FileAction {
 }
 
 impl FileAction {
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
         match self {
-            FileAction::OpenCraft | FileAction::OpenCraftReadOnly => "Opening...",
-            FileAction::SaveAsCraft => "Saving...",
-            FileAction::ImportModel => "Importing...",
-            FileAction::UpdateObj => "Updating...",
-            FileAction::ExportObj => "Exporting...",
-            FileAction::GeneratePrintable => "Generating...",
+            FileAction::OpenCraft | FileAction::OpenCraftReadOnly => tr!("Opening..."),
+            FileAction::SaveAsCraft => tr!("Saving..."),
+            FileAction::ImportModel => tr!("Importing..."),
+            FileAction::UpdateObj => tr!("Updating..."),
+            FileAction::ExportObj => tr!("Exporting..."),
+            FileAction::GeneratePrintable => tr!("Generating..."),
         }
     }
     fn is_save(&self) -> bool {
@@ -406,6 +433,7 @@ struct ConfirmableAction {
 }
 
 struct GlobalContext {
+    config: config::Config,
     gl: GlContext,
     gl_fixs: GLFixedObjects,
     font_default: imgui::FontId,
@@ -424,12 +452,15 @@ struct GlobalContext {
     sz_paper: Vector2,
     scene_ui_status: Canvas3dStatus,
     paper_ui_status: Canvas3dStatus,
+    config_opened: Option<config::Config>,
+    config_applied: Option<config::Config>,
     options_opened: Option<PaperOptions>,
-    options_applied: Option<(PaperOptions, bool)>, // the .1 is true if the Options was accepted,
+    // the .1 is true if the Options was accepted,
     // false, when doing an "Undo".
+    options_applied: Option<(PaperOptions, bool)>,
     option_button_height: f32,
     about_visible: bool,
-    file_dialog: Option<(filechooser::FileChooser, &'static str, FileAction)>,
+    file_dialog: Option<(filechooser::FileChooser, String, FileAction)>,
     file_dialog_confirm: Option<(FileAction, PathBuf)>,
     filechooser_atlas: filechooser::CustomAtlas,
     file_action: Option<(FileAction, PathBuf)>,
@@ -468,7 +499,7 @@ struct MenuActions {
 // Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
 fn do_modal_dialog(
     ui: &Ui,
-    title: &str,
+    title: String,
     message: &str,
     cancel: Option<&str>,
     ok: Option<&str>,
@@ -483,8 +514,9 @@ fn do_modal_dialog(
             ui.text(message);
 
             ui.separator();
-
+            let mut has_cancel = false;
             if let Some(cancel) = cancel {
+                has_cancel = true;
                 if ui
                     .button_config(cancel)
                     .size(vec2(font_sz * 5.5, 0.0))
@@ -496,7 +528,7 @@ fn do_modal_dialog(
                 }
             }
             if let Some(ok) = ok {
-                if cancel.is_some() {
+                if has_cancel {
                     ui.same_line();
                 }
                 if ui.button_config(ok).size(vec2(font_sz * 5.5, 0.0)).build()
@@ -522,7 +554,13 @@ impl GlobalContext {
     }
     fn build_modal_error_message(&mut self, ui: &Ui) {
         if let Some(error_message) = self.error_message.take() {
-            let reply = do_modal_dialog(ui, "Error", &error_message, None, Some("OK"));
+            let reply = do_modal_dialog(
+                ui,
+                tr!("Error") + "###error",
+                &error_message,
+                None,
+                Some(&tr!("OK")),
+            );
             if reply.is_none() {
                 self.error_message = Some(error_message);
             }
@@ -532,10 +570,10 @@ impl GlobalContext {
         if let Some(action) = self.confirmable_action.take() {
             let reply = do_modal_dialog(
                 ui,
-                &format!("{}###Confirm", action.title),
+                format!("{}###Confirm", action.title),
                 &action.message,
-                Some("Cancel"),
-                Some("Continue"),
+                Some(&tr!("Cancel")),
+                Some(&tr!("Continue")),
             );
             match reply {
                 Some(true) => (action.action)(menu_actions),
@@ -549,7 +587,7 @@ impl GlobalContext {
         if !self.about_visible {
             return;
         }
-        ui.window_config("About...###about")
+        ui.window_config(tr!("About...") + "###about")
             .open(&mut self.about_visible)
             .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
             .with(|| {
@@ -564,22 +602,23 @@ impl GlobalContext {
                 ui.image_with_custom_rect_config(self.logo_rect, logo_scale)
                     .build();
                 ui.with_push(self.font_big, || {
-                    center_text(ui, "Papercraft", sz_full.x);
+                    center_text(ui, &tr!("Papercraft"), sz_full.x);
                 });
 
                 advance_cursor(ui, 0.0, 1.0);
-                center_text(
-                    ui,
-                    &format!("Version {}", env!("CARGO_PKG_VERSION")),
-                    sz_full.x,
-                );
+                center_text(ui, &tr!("Version {}", env!("CARGO_PKG_VERSION")), sz_full.x);
                 advance_cursor(ui, 0.0, 1.0);
                 center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
                 center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
+                // Keep the legal text untranslated
                 ui.with_push(self.font_small, || {
-                    center_text(ui, "© Copyright 2024 - Rodrigo Rivas Costa", sz_full.x);
+                    center_text(
+                        ui,
+                        "© Copyright 2024 - Rodrigo Rivas Costa",
+                        sz_full.x,
+                    );
                     center_text(
                         ui,
                         "This program comes with absolutely no warranty.",
@@ -608,7 +647,7 @@ impl GlobalContext {
             ui.popup_modal_config(format!("{title}###Wait"))
                 .flags(imgui::WindowFlags::NoResize)
                 .with(|| {
-                    ui.text("Please, wait...");
+                    ui.text(&tr!("Please, wait..."));
 
                     // Give time to the fading modal, because the action is blocking and will
                     // freeze the UI for a while. This should be enough.
@@ -629,7 +668,7 @@ impl GlobalContext {
                 }
                 Some(Err(e)) => {
                     self.error_message = Some(format!("{e:?}"));
-                    ui.open_popup("Error");
+                    ui.open_popup("###error");
                 }
             }
         }
@@ -890,13 +929,14 @@ impl GlobalContext {
         advance_cursor(ui, 0.25, 0.0);
 
         let status_text = match self.data.ui.mode {
-            MouseMode::Face => "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it.",
-            MouseMode::Edge => "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads.",
-            MouseMode::Flap => "Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide a flap.",
-            MouseMode::ReadOnly => "View mode. Click to highlight a piece. Move the mouse over an edge to highlight the matching pair.",
+            MouseMode::Face => tr!("Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it."),
+            MouseMode::Edge => tr!("Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads."),
+            MouseMode::Flap => tr!("Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide a flap."),
+            MouseMode::ReadOnly => tr!("View mode. Click to highlight a piece. Move the mouse over an edge to highlight the matching pair."),
         };
-        ui.text(status_text);
+        ui.text(&status_text);
 
+        self.build_config_dialog(ui);
         self.build_options_dialog(ui);
         self.build_modal_error_message(ui);
         self.build_modal_wait_message_and_run_file_action(ui);
@@ -906,6 +946,41 @@ impl GlobalContext {
         menu_actions
     }
 
+    fn build_config_dialog(&mut self, ui: &Ui) {
+        let Some(config) = self.config_opened.as_mut() else {
+            return;
+        };
+        let mut opened = true;
+        let mut applied = false;
+        ui.set_next_window_size(vec2(400.0, 200.0), imgui::Cond::Once);
+        ui.window_config(tr!("Settings") + "###settings")
+            .open(&mut opened)
+            .flags(imgui::WindowFlags::NoScrollbar | imgui::WindowFlags::AlwaysAutoResize)
+            .with(|| {
+                let mut cur = LANGUAGES
+                    .iter()
+                    .find(|(s, _)| *s == config.locale)
+                    .unwrap_or(&LANGUAGES[0]);
+                if ui.combo(tr!("Language"), LANGUAGES, |(_, n)| *n, &mut cur) {
+                    config.locale = String::from(cur.0);
+                    applied = true;
+                }
+                if ui.combo(
+                    tr!("Theme"),
+                    [false, true],
+                    |b| if b { tr!("Theme" => "Light") } else { tr!("Theme" => "Dark") },
+                    &mut config.light_mode,
+                ) {
+                    applied = true;
+                }
+            });
+        if applied {
+            self.config_applied = Some(config.clone());
+        }
+        if !opened {
+            self.config_opened = None;
+        }
+    }
     fn build_options_dialog(&mut self, ui: &Ui) {
         let options = match self.options_opened.take() {
             Some(o) => o,
@@ -921,7 +996,7 @@ impl GlobalContext {
             },
             imgui::Cond::Once,
         );
-        ui.window_config("Document properties###options")
+        ui.window_config(tr!("Document properties") + "###options")
             .open(&mut options_opened)
             .flags(imgui::WindowFlags::NoScrollbar)
             .with_always(|opened| {
@@ -973,7 +1048,13 @@ impl GlobalContext {
         );
         let model_size = (bbox.1 - bbox.0) * options.scale;
         let Vector3 { x, y, z } = model_size;
-        ui.text(&format!("Number of pieces: {n_pieces}\nNumber of flaps: {n_flaps}\nReal size (mm): {x:.0} x {y:.0} x {z:.0}"));
+        let size = format!("{x:.0} x {y:.0} x {z:.0}");
+        ui.text(&tr!(
+            "Number of pieces: {0}\nNumber of flaps: {1}\nReal size (mm): {2}",
+            n_pieces,
+            n_flaps,
+            size
+        ));
     }
 
     fn build_full_options_inner_dialog(
@@ -987,40 +1068,40 @@ impl GlobalContext {
             .size(vec2(size.x, -self.option_button_height))
             .window_flags(imgui::WindowFlags::HorizontalScrollbar)
             .with(|| {
-                ui.tree_node_config("Model")
+                ui.tree_node_config(tr!("Model") + "###model")
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config("Scale", &mut options.scale)
+                        ui.input_float_config(tr!("Scale") + "###scale", &mut options.scale)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         options.scale = options.scale.max(0.0);
                         ui.same_line_ex(0.0, font_sz * 3.0);
                         ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
-                            ui.checkbox("Textured", &mut options.texture);
+                            ui.checkbox(tr!("Textured"), &mut options.texture);
                             ui.same_line_ex(0.0, font_sz * 3.0);
-                            ui.checkbox("Texture filter", &mut options.tex_filter);
+                            ui.checkbox(tr!("Texture filter"), &mut options.tex_filter);
                         });
 
-                        ui.tree_node_config("Flaps").with(|| {
+                        ui.tree_node_config(tr!("Flaps") + "###flaps").with(|| {
                             static FLAP_STYLES: &[FlapStyle] = &[
                                 FlapStyle::Textured,
                                 FlapStyle::HalfTextured,
                                 FlapStyle::White,
                                 FlapStyle::None,
                             ];
-                            fn fmt_flap_style(s: FlapStyle) -> &'static str {
+                            fn fmt_flap_style(s: FlapStyle) -> String {
                                 match s {
-                                    FlapStyle::Textured => "Textured",
-                                    FlapStyle::HalfTextured => "Half textured",
-                                    FlapStyle::White => "White",
-                                    FlapStyle::None => "None",
+                                    FlapStyle::Textured => tr!("FlapStyle" => "Textured"),
+                                    FlapStyle::HalfTextured => tr!("FlapStyle" => "Half textured"),
+                                    FlapStyle::White => tr!("FlapStyle" => "White"),
+                                    FlapStyle::None => tr!("FlapStyle" => "None"),
                                 }
                             }
 
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.combo(
-                                "Style",
+                                tr!("Style"),
                                 FLAP_STYLES.iter().copied(),
                                 fmt_flap_style,
                                 &mut options.flap_style,
@@ -1028,25 +1109,31 @@ impl GlobalContext {
 
                             ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
                             ui.set_next_item_width(font_sz * 8.0);
-                            ui.slider_float_config("Shadow", &mut options.shadow_flap_alpha)
+                            ui.slider_float_config(tr!("Shadow"), &mut options.shadow_flap_alpha)
                                 .range(0.0, 1.0)
                                 .display_format(imgui::FloatFormat::F(2))
                                 .build();
 
                             ui.set_next_item_width(font_sz * 8.0);
-                            ui.input_float_config("Width", &mut options.flap_width)
-                                .display_format(imgui::FloatFormat::G)
-                                .build();
+                            ui.input_float_config(
+                                tr!("Width") + "###width",
+                                &mut options.flap_width,
+                            )
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
                             options.flap_width = options.flap_width.max(0.0);
 
                             ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
                             ui.set_next_item_width(font_sz * 8.0);
-                            ui.input_float_config("Angle", &mut options.flap_angle)
-                                .display_format(imgui::FloatFormat::G)
-                                .build();
+                            ui.input_float_config(
+                                tr!("Angle") + "###angle",
+                                &mut options.flap_angle,
+                            )
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
                             options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
                         });
-                        ui.tree_node_config("Folds").with(|| {
+                        ui.tree_node_config(tr!("Folds") + "###folds").with(|| {
                             static FOLD_STYLES: &[FoldStyle] = &[
                                 FoldStyle::Full,
                                 FoldStyle::FullAndOut,
@@ -1055,20 +1142,22 @@ impl GlobalContext {
                                 FoldStyle::InAndOut,
                                 FoldStyle::None,
                             ];
-                            fn fmt_fold_style(s: FoldStyle) -> &'static str {
+                            fn fmt_fold_style(s: FoldStyle) -> String {
                                 match s {
-                                    FoldStyle::Full => "Full line",
-                                    FoldStyle::FullAndOut => "Full & out segment",
-                                    FoldStyle::Out => "Out segment",
-                                    FoldStyle::In => "In segment",
-                                    FoldStyle::InAndOut => "Out & in segment",
-                                    FoldStyle::None => "None",
+                                    FoldStyle::Full => tr!("FoldStyle" => "Full line"),
+                                    FoldStyle::FullAndOut => {
+                                        tr!("FoldStyle" => "Full & out segment")
+                                    }
+                                    FoldStyle::Out => tr!("FoldStyle" => "Out segment"),
+                                    FoldStyle::In => tr!("FoldStyle" => "In segment"),
+                                    FoldStyle::InAndOut => tr!("FoldStyle" => "Out & in segment"),
+                                    FoldStyle::None => tr!("FoldStyle" => "None"),
                                 }
                             }
 
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.combo(
-                                "Style",
+                                tr!("Style"),
                                 FOLD_STYLES.iter().copied(),
                                 fmt_fold_style,
                                 &mut options.fold_style,
@@ -1079,75 +1168,84 @@ impl GlobalContext {
                             ui.with_disabled(
                                 matches!(options.fold_style, FoldStyle::None | FoldStyle::Full),
                                 || {
-                                    ui.input_float_config("Length", &mut options.fold_line_len)
-                                        .display_format(imgui::FloatFormat::G)
-                                        .build();
+                                    ui.input_float_config(
+                                        tr!("Length") + "###length",
+                                        &mut options.fold_line_len,
+                                    )
+                                    .display_format(imgui::FloatFormat::G)
+                                    .build();
                                     options.fold_line_len = options.fold_line_len.max(0.0);
                                 },
                             );
                             ui.same_line_ex(0.0, font_sz * 1.5);
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
-                                ui.input_float_config("Line width", &mut options.fold_line_width)
-                                    .display_format(imgui::FloatFormat::G)
-                                    .build();
+                                ui.input_float_config(
+                                    tr!("Line width") + "###linewidth",
+                                    &mut options.fold_line_width,
+                                )
+                                .display_format(imgui::FloatFormat::G)
+                                .build();
                                 options.fold_line_width = options.fold_line_width.max(0.0);
                             });
 
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.input_float_config(
-                                "Hidden fold angle",
+                                tr!("Hidden fold angle") + "###hiddenangle",
                                 &mut options.hidden_line_angle,
                             )
                             .display_format(imgui::FloatFormat::G)
                             .build();
                             options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
                         });
-                        ui.tree_node_config("Information").with(|| {
-                            self.build_read_only_options_inner_dialog(ui, &options);
-                        });
+                        ui.tree_node_config(tr!("Information") + "###info")
+                            .with(|| {
+                                self.build_read_only_options_inner_dialog(ui, &options);
+                            });
                     });
-                ui.tree_node_config("Layout")
+                ui.tree_node_config(tr!("Layout") + "###layout")
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 5.5);
 
                         let mut i = options.pages as _;
-                        ui.input_int_config("Pages", &mut i).build();
+                        ui.input_int_config(tr!("Pages") + "###pages", &mut i)
+                            .build();
                         options.pages = i.clamp(1, 1000) as _;
 
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 5.5);
 
                         let mut i = options.page_cols as _;
-                        ui.input_int_config("Columns", &mut i).build();
+                        ui.input_int_config(tr!("Columns") + "###cols", &mut i)
+                            .build();
                         options.page_cols = i.clamp(1, options.pages as _) as _;
 
                         ui.set_next_item_width(font_sz * 11.0);
                         ui.checkbox(
-                            "Print Papercraft signature",
+                            tr!("Print Papercraft signature"),
                             &mut options.show_self_promotion,
                         );
 
                         ui.same_line_ex(0.0, font_sz * 3.0);
                         ui.set_next_item_width(font_sz * 11.0);
-                        ui.checkbox("Print page number", &mut options.show_page_number);
+                        ui.checkbox(tr!("Print page number"), &mut options.show_page_number);
 
                         static EDGE_ID_POSITIONS: &[EdgeIdPosition] = &[
                             EdgeIdPosition::None,
                             EdgeIdPosition::Outside,
                             EdgeIdPosition::Inside,
                         ];
-                        fn fmt_edge_id_position(s: EdgeIdPosition) -> &'static str {
+                        fn fmt_edge_id_position(s: EdgeIdPosition) -> String {
                             match s {
-                                EdgeIdPosition::None => "None",
-                                EdgeIdPosition::Outside => "Outside",
-                                EdgeIdPosition::Inside => "Inside",
+                                EdgeIdPosition::None => tr!("EdgeIdPos" => "None"),
+                                EdgeIdPosition::Outside => tr!("EdgeIdPos" => "Outside"),
+                                EdgeIdPosition::Inside => tr!("EdgeIdPos" => "Inside"),
                             }
                         }
                         ui.set_next_item_width(font_sz * 6.0);
                         ui.combo(
-                            "Edge id position",
+                            tr!("Edge id position"),
                             EDGE_ID_POSITIONS.iter().copied(),
                             fmt_edge_id_position,
                             &mut options.edge_id_position,
@@ -1158,7 +1256,7 @@ impl GlobalContext {
                         ui.set_next_item_width(font_sz * 3.0);
                         ui.with_disabled(options.edge_id_position == EdgeIdPosition::None, || {
                             ui.input_float_config(
-                                "Edge id font size (pt)",
+                                tr!("Edge id font size (pt)") + "###edgefont",
                                 &mut options.edge_id_font_size,
                             )
                             .display_format(imgui::FloatFormat::G)
@@ -1166,24 +1264,27 @@ impl GlobalContext {
                             options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
                         });
                     });
-                ui.tree_node_config("Paper size")
+                ui.tree_node_config(tr!("Paper size") + "###papersize")
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config("Width", &mut options.page_size.0)
+                        ui.input_float_config(tr!("Width") + "###width", &mut options.page_size.0)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         options.page_size.0 = options.page_size.0.max(1.0);
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config("Height", &mut options.page_size.1)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                        ui.input_float_config(
+                            tr!("Height") + "###height",
+                            &mut options.page_size.1,
+                        )
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
                         options.page_size.1 = options.page_size.1.max(1.0);
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 5.5);
                         let mut resolution = options.resolution as f32;
-                        ui.input_float_config("DPI", &mut resolution)
+                        ui.input_float_config(tr!("DPI") + "###dpi", &mut resolution)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         options.resolution = (resolution as u32).max(1);
@@ -1242,36 +1343,36 @@ impl GlobalContext {
                                 }
                             });
                         let mut new_portrait = portrait;
-                        if ui.radio_button_config("Portrait", portrait).build() {
+                        if ui.radio_button_config(tr!("Portrait"), portrait).build() {
                             new_portrait = true;
                         }
-                        if ui.radio_button_config("Landscape", !portrait).build() {
+                        if ui.radio_button_config(tr!("Landscape"), !portrait).build() {
                             new_portrait = false;
                         }
                         if portrait != new_portrait {
                             std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
                         }
                     });
-                ui.tree_node_config("Margins")
+                ui.tree_node_config(tr!("Margins") + "###margins")
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config("Top", &mut options.margin.0)
+                        ui.input_float_config(tr!("Top") + "###top", &mut options.margin.0)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config("Left", &mut options.margin.1)
+                        ui.input_float_config(tr!("Left") + "###left", &mut options.margin.1)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config("Right", &mut options.margin.2)
+                        ui.input_float_config(tr!("Right") + "###right", &mut options.margin.2)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config("Bottom", &mut options.margin.3)
+                        ui.input_float_config(tr!("Bottom") + "###bottom", &mut options.margin.3)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                     });
@@ -1282,15 +1383,23 @@ impl GlobalContext {
 
         let pos1 = Vector2::from(ui.get_cursor_screen_pos());
         ui.separator();
-        if ui.button_config("OK").size(vec2(100.0, 0.0)).build() {
+        if ui.button_config(tr!("OK")).size(vec2(100.0, 0.0)).build() {
             apply_options = options_opened.take();
         }
         ui.same_line();
-        if ui.button_config("Cancel").size(vec2(100.0, 0.0)).build() {
+        if ui
+            .button_config(tr!("Cancel"))
+            .size(vec2(100.0, 0.0))
+            .build()
+        {
             options_opened = None;
         }
         ui.same_line();
-        if ui.button_config("Apply").size(vec2(100.0, 0.0)).build() {
+        if ui
+            .button_config(tr!("Apply"))
+            .size(vec2(100.0, 0.0))
+            .build()
+        {
             apply_options.clone_from(&options_opened);
         }
         // Compute the height of the buttons to avoid having an external scrollbar
@@ -1311,41 +1420,56 @@ impl GlobalContext {
         let mut menu_actions = MenuActions::default();
 
         ui.with_menu_bar(|| {
-            ui.menu_config("File").with(|| {
-                if ui.menu_item_config("Open...").shortcut("Ctrl+O").build() {
+            ui.menu_config(tr!("File")).with(|| {
+                if ui
+                    .menu_item_config(tr!("Open..."))
+                    .shortcut("Ctrl+O")
+                    .build()
+                {
                     menu_actions.open = self.check_modified();
                 }
                 ui.with_disabled(self.data.papercraft().model().is_empty(), || {
-                    if ui.menu_item_config("Save").shortcut("Ctrl+S").build() {
+                    if ui.menu_item_config(tr!("Save")).shortcut("Ctrl+S").build() {
                         menu_actions.save = true;
                     }
-                    if ui.menu_item_config("Save as...").build() {
+                    if ui.menu_item_config(tr!("Save as...")).build() {
                         menu_actions.save_as = true;
                     }
                 });
                 if self.modifiable() {
-                    if ui.menu_item_config("Import model...").build() {
+                    if ui.menu_item_config(tr!("Import model...")).build() {
                         menu_actions.import_model = self.check_modified();
                     }
-                    if ui.menu_item_config("Update with new model...").build() {
+                    if ui.menu_item_config(tr!("Update with new model...")).build() {
                         menu_actions.update_model = self.check_modified();
                     }
                 }
-                if ui.menu_item_config("Export OBJ...").build() {
+                if ui.menu_item_config(tr!("Export model...")).build() {
                     menu_actions.export_obj = true;
                 }
-                if ui.menu_item_config("Generate Printable...").build() {
+                if ui.menu_item_config(tr!("Generate Printable...")).build() {
                     menu_actions.generate_printable = true;
                 }
                 ui.separator();
-                if ui.menu_item_config("Quit").shortcut("Ctrl+Q").build() {
+                if ui
+                    .menu_item_config(tr!("Settings..."))
+                    .selected(self.config_opened.is_some())
+                    .build()
+                {
+                    self.config_opened = match self.config_opened {
+                        Some(_) => None,
+                        None => Some(self.config.clone()),
+                    };
+                }
+                ui.separator();
+                if ui.menu_item_config(tr!("Quit")).shortcut("Ctrl+Q").build() {
                     menu_actions.quit = self.check_modified();
                 }
             });
-            ui.menu_config("Edit").with(|| {
+            ui.menu_config(tr!("Edit")).with(|| {
                 if self.modifiable() {
                     if ui
-                        .menu_item_config("Undo")
+                        .menu_item_config(tr!("Undo"))
                         .shortcut("Ctrl+Z")
                         .enabled(self.data.can_undo())
                         .build()
@@ -1356,7 +1480,7 @@ impl GlobalContext {
                 }
 
                 if ui
-                    .menu_item_config("Document properties")
+                    .menu_item_config(tr!("Document properties"))
                     .shortcut("Enter")
                     .selected(self.options_opened.is_some())
                     .build()
@@ -1371,7 +1495,7 @@ impl GlobalContext {
                     ui.separator();
 
                     if ui
-                        .menu_item_config("Face/Island")
+                        .menu_item_config(tr!("Face/Island"))
                         .shortcut("F5")
                         .selected(self.data.ui.mode == MouseMode::Face)
                         .build()
@@ -1379,7 +1503,7 @@ impl GlobalContext {
                         self.set_mouse_mode(MouseMode::Face);
                     }
                     if ui
-                        .menu_item_config("Split/Join edge")
+                        .menu_item_config(tr!("Split/Join edge"))
                         .shortcut("F6")
                         .selected(self.data.ui.mode == MouseMode::Edge)
                         .build()
@@ -1387,7 +1511,7 @@ impl GlobalContext {
                         self.set_mouse_mode(MouseMode::Edge);
                     }
                     if ui
-                        .menu_item_config("Flaps")
+                        .menu_item_config(tr!("Flaps"))
                         .shortcut("F7")
                         .selected(self.data.ui.mode == MouseMode::Flap)
                         .build()
@@ -1397,16 +1521,16 @@ impl GlobalContext {
 
                     ui.separator();
 
-                    if ui.menu_item_config("Repack pieces").build() {
+                    if ui.menu_item_config(tr!("Repack pieces")).build() {
                         let undo = self.data.pack_islands();
                         self.data.push_undo_action(undo);
                         self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
                     }
                 }
             });
-            ui.menu_config("View").with(|| {
+            ui.menu_config(tr!("View")).with(|| {
                 if ui
-                    .menu_item_config("Textures")
+                    .menu_item_config(tr!("Textures"))
                     .shortcut("T")
                     .enabled(self.data.papercraft().options().texture)
                     .selected(self.data.ui.show_textures)
@@ -1416,7 +1540,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
                 if ui
-                    .menu_item_config("3D lines")
+                    .menu_item_config(tr!("3D lines"))
                     .shortcut("D")
                     .selected(self.data.ui.show_3d_lines)
                     .build()
@@ -1425,7 +1549,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 }
                 if ui
-                    .menu_item_config("Flaps")
+                    .menu_item_config(tr!("Flaps"))
                     .shortcut("B")
                     .selected(self.data.ui.show_flaps)
                     .build()
@@ -1434,7 +1558,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::PAPER);
                 }
                 if ui
-                    .menu_item_config("X-ray selection")
+                    .menu_item_config(tr!("X-ray selection"))
                     .shortcut("X")
                     .selected(self.data.ui.xray_selection)
                     .build()
@@ -1443,7 +1567,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::SELECTION);
                 }
                 if ui
-                    .menu_item_config("Texts")
+                    .menu_item_config(tr!("Texts"))
                     .shortcut("E")
                     .selected(self.data.ui.show_texts)
                     .build()
@@ -1455,7 +1579,7 @@ impl GlobalContext {
                     }
                 }
                 if ui
-                    .menu_item_config("Paper")
+                    .menu_item_config(tr!("Paper"))
                     .shortcut("P")
                     .selected(self.data.ui.draw_paper)
                     .build()
@@ -1464,7 +1588,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 }
                 if ui
-                    .menu_item_config("Highlight overlaps")
+                    .menu_item_config(tr!("Highlight overlaps"))
                     .shortcut("H")
                     .selected(self.data.ui.highlight_overlaps)
                     .build()
@@ -1472,14 +1596,14 @@ impl GlobalContext {
                     self.data.ui.highlight_overlaps ^= true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 }
-                if ui.menu_item_config("Reset views").build() {
+                if ui.menu_item_config(tr!("Reset views")).build() {
                     menu_actions.reset_views = true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
             });
-            ui.menu_config("Help").with(|| {
+            ui.menu_config(tr!("Help")).with(|| {
                 if ui
-                    .menu_item_config("About...")
+                    .menu_item_config(tr!("About..."))
                     .selected(self.about_visible)
                     .build()
                 {
@@ -1664,13 +1788,13 @@ impl GlobalContext {
     fn open_confirmation_dialog(
         &mut self,
         ui: &Ui,
-        title: &str,
-        message: &str,
+        title: String,
+        message: String,
         f: impl Fn(&mut MenuActions) + 'static,
     ) {
         self.confirmable_action = Some(ConfirmableAction {
-            title: title.to_owned(),
-            message: message.to_owned(),
+            title: title.into(),
+            message: message.into(),
             action: Box::new(f),
         });
         ui.open_popup("###Confirm");
@@ -1705,8 +1829,8 @@ impl GlobalContext {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(
                     ui,
-                    "Load model",
-                    "The model has not been save, continue anyway?",
+                    tr!("Load model"),
+                    tr!("The model has not been save, continue anyway?"),
                     |a| a.open = BoolWithConfirm::Confirmed,
                 );
             }
@@ -1716,7 +1840,7 @@ impl GlobalContext {
                 fd.add_flags(filechooser::Flags::SHOW_READ_ONLY);
                 fd.add_filter(filters::craft());
                 fd.add_filter(filters::all_files());
-                self.file_dialog = Some((fd, "Open...", FileAction::OpenCraft));
+                self.file_dialog = Some((fd, tr!("Open..."), FileAction::OpenCraft));
                 open_file_dialog = true;
             }
             BoolWithConfirm::None => {}
@@ -1735,15 +1859,15 @@ impl GlobalContext {
             let _ = fd.set_path(&self.last_path);
             fd.add_filter(filters::craft());
             fd.add_filter(filters::all_files());
-            self.file_dialog = Some((fd, "Save as...", FileAction::SaveAsCraft));
+            self.file_dialog = Some((fd, tr!("Save as..."), FileAction::SaveAsCraft));
             open_file_dialog = true;
         }
         match menu_actions.import_model {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(
                     ui,
-                    "Import model",
-                    "The model has not been save, continue anyway?",
+                    tr!("Import model"),
+                    tr!("The model has not been save, continue anyway?"),
                     |a| a.import_model = BoolWithConfirm::Confirmed,
                 );
             }
@@ -1755,7 +1879,7 @@ impl GlobalContext {
                 fd.add_filter(filters::pepakura());
                 fd.add_filter(filters::stl());
                 fd.add_filter(filters::all_files());
-                self.file_dialog = Some((fd, "Import OBJ...", FileAction::ImportModel));
+                self.file_dialog = Some((fd, tr!("Import model..."), FileAction::ImportModel));
                 open_file_dialog = true;
             }
             BoolWithConfirm::None => {}
@@ -1763,8 +1887,8 @@ impl GlobalContext {
         match menu_actions.update_model {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(ui,
-                    "Update model",
-                    "This model is not saved and this operation cannot be undone.\nContinue anyway?",
+                    tr!("Update model"),
+                    tr!("This model is not saved and this operation cannot be undone.\nContinue anyway?"),
                     |a| a.update_model = BoolWithConfirm::Confirmed
                 );
             }
@@ -1776,7 +1900,8 @@ impl GlobalContext {
                 fd.add_filter(filters::pepakura());
                 fd.add_filter(filters::stl());
                 fd.add_filter(filters::all_files());
-                self.file_dialog = Some((fd, "Update with new OBJ...", FileAction::UpdateObj));
+                self.file_dialog =
+                    Some((fd, tr!("Update with new model..."), FileAction::UpdateObj));
                 open_file_dialog = true;
             }
             BoolWithConfirm::None => {}
@@ -1786,7 +1911,7 @@ impl GlobalContext {
             let _ = fd.set_path(&self.last_path);
             fd.add_filter(filters::wavefront());
             fd.add_filter(filters::all_files());
-            self.file_dialog = Some((fd, "Export OBJ...", FileAction::ExportObj));
+            self.file_dialog = Some((fd, tr!("Export model..."), FileAction::ExportObj));
             open_file_dialog = true;
         }
         if menu_actions.generate_printable {
@@ -1806,7 +1931,11 @@ impl GlobalContext {
             fd.add_filter(filters::svg());
             fd.add_filter(filters::png());
             fd.add_filter(filters::all_files());
-            self.file_dialog = Some((fd, "Generate Printable...", FileAction::GeneratePrintable));
+            self.file_dialog = Some((
+                fd,
+                tr!("Generate Printable..."),
+                FileAction::GeneratePrintable,
+            ));
             open_file_dialog = true;
         }
 
@@ -1862,14 +1991,14 @@ impl GlobalContext {
                         let name = fdc.1.file_name().unwrap_or_default().to_string_lossy();
                         let reply = if fdc.0.is_save() {
                             do_modal_dialog(ui,
-                                "Overwrite?###FileDialogConfirm",
-                                &format!("The file '{name}' already exists!\nWould you like to overwrite it?"),
-                                Some("Cancel"), Some("Continue"))
+                                tr!("Overwrite?") + "###FileDialogConfirm",
+                                &tr!("The file '{}' already exists!\nWould you like to overwrite it?", name),
+                                Some(&tr!("Cancel")), Some(&tr!("Continue")))
                         } else {
                             do_modal_dialog(ui,
-                                "Error!###FileDialogConfirm",
-                                &format!("The file '{name}' doesn't exist!"),
-                                Some("OK"), None)
+                                tr!("Error!") + "###FileDialogConfirm",
+                                &tr!("The file '{}' doesn't exist!", name),
+                                Some(&tr!("OK")), None)
                         };
                         match reply {
                             Some(true) => {
@@ -2274,7 +2403,7 @@ impl GlobalContext {
         } else {
             ""
         };
-        let app_name = "Papercraft";
+        let app_name = tr!("Papercraft");
         match &self.file_name {
             Some(f) => {
                 let name = if let Some(name) = f.file_name() {
@@ -2356,10 +2485,10 @@ impl GlobalContext {
     }
     fn open_craft(&mut self, file_name: &Path) -> anyhow::Result<()> {
         let fs = std::fs::File::open(file_name)
-            .with_context(|| format!("Error opening file {}", file_name.display()))?;
+            .with_context(|| tr!("Error opening file {}", file_name.display()))?;
         let fs = std::io::BufReader::new(fs);
         let papercraft = Papercraft::load(fs)
-            .with_context(|| format!("Error loading file {}", file_name.display()))?;
+            .with_context(|| tr!("Error loading file {}", file_name.display()))?;
         self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
         if let Some(o) = self.options_opened.as_mut() {
@@ -2370,12 +2499,12 @@ impl GlobalContext {
     }
     fn save_as_craft(&self, file_name: &Path) -> anyhow::Result<()> {
         let f = std::fs::File::create(file_name)
-            .with_context(|| format!("Error creating file {}", file_name.display()))?;
+            .with_context(|| tr!("Error creating file {}", file_name.display()))?;
         let f = std::io::BufWriter::new(f);
         self.data
             .papercraft()
             .save(f)
-            .with_context(|| format!("Error saving file {}", file_name.display()))?;
+            .with_context(|| tr!("Error saving file {}", file_name.display()))?;
         Ok(())
     }
     fn import_model(&mut self, file_name: &Path) -> anyhow::Result<bool> {
@@ -2404,7 +2533,7 @@ impl GlobalContext {
         self.data
             .papercraft()
             .export_waveobj(file_name.as_ref())
-            .with_context(|| format!("Error exporting to {}", file_name.display()))?;
+            .with_context(|| tr!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
 
@@ -2422,11 +2551,14 @@ impl GlobalContext {
             Some("svg") => self.generate_svg(file_name),
             Some("png") => self.generate_png(text_tex_id, file_name),
             _ => anyhow::bail!(
-                "Don't know how to write the format of {}",
-                file_name.display()
+                "{}",
+                tr!(
+                    "Don't know how to write the format of {}",
+                    file_name.display()
+                )
             ),
         };
-        res.with_context(|| format!("Error exporting to {}", file_name.display()))?;
+        res.with_context(|| tr!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }
     fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
@@ -2748,7 +2880,7 @@ impl GlobalContext {
 
                     break 'check_aa Some((rbo2, fbo2));
                 }
-                println!("No multisample!");
+                log::warn!("No multisample!");
                 self.gl.renderbuffer_storage(
                     rb_binder.target(),
                     glow::RGBA8,
@@ -2942,7 +3074,7 @@ impl GlobalContext {
                     let x = page_size_mm.x - margin_right;
                     let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
                         .min(page_size_mm.y - FONT_SIZE);
-                    let text = format!("Page {}/{}", page + 1, page_count);
+                    let text = tr!("Page {}/{}", page + 1, page_count);
                     texts.push(PrintableText {
                         size: FONT_SIZE,
                         pos: Vector2::new(x, y),
@@ -3328,7 +3460,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
         let vw = ui.get_main_viewport();
         let sz = vw.size(); //&ui.get_content_region_avail();
         ui.set_next_window_size(sz, imgui::Cond::Always);
-        ui.window_config("Papercraft")
+        ui.window_config("papercraft")
             .flags(
                 imgui::WindowFlags::NoDecoration
                     | imgui::WindowFlags::NoResize
@@ -3381,8 +3513,8 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                         self.quit_requested = BoolWithConfirm::None;
                         self.open_confirmation_dialog(
                             ui,
-                            "Quit?",
-                            "The model has not been save, continue anyway?",
+                            tr!("Quit?"),
+                            tr!("The model has not been save, continue anyway?"),
                             |a| a.quit = BoolWithConfirm::Confirmed,
                         );
                     }
@@ -3473,6 +3605,7 @@ impl TextBuilder for TextHelper<'_> {
 
 mod filters {
     use easy_imgui_filechooser::{Filter, FilterId, Pattern};
+    use tr::tr;
 
     const ALL_FILES: FilterId = FilterId(0);
     const ALL_MODELS: FilterId = FilterId(1);
@@ -3501,7 +3634,7 @@ mod filters {
     pub fn craft() -> Filter {
         Filter {
             id: CRAFT,
-            text: String::from("Papercraft (*.craft)"),
+            text: tr!("Papercraft") + "(*.craft)",
             globs: vec![Pattern::new("*.craft").unwrap()],
         }
     }
@@ -3509,7 +3642,7 @@ mod filters {
     pub fn all_models() -> Filter {
         Filter {
             id: ALL_MODELS,
-            text: String::from("All models (*.obj *.pdo *.stl)"),
+            text: tr!("All models") + "(*.obj *.pdo *.stl)",
             globs: vec![
                 Pattern::new("*.obj").unwrap(),
                 Pattern::new("*.pdo").unwrap(),
@@ -3521,7 +3654,7 @@ mod filters {
     pub fn wavefront() -> Filter {
         Filter {
             id: WAVEFRONT,
-            text: String::from("Wavefront (*.obj)"),
+            text: tr!("Wavefront") + "(*.obj)",
             globs: vec![Pattern::new("*.obj").unwrap()],
         }
     }
@@ -3529,7 +3662,7 @@ mod filters {
     pub fn pepakura() -> Filter {
         Filter {
             id: PEPAKURA,
-            text: String::from("Pepakura (*.pdo)"),
+            text: tr!("Pepakura") + "(*.pdo)",
             globs: vec![Pattern::new("*.pdo").unwrap()],
         }
     }
@@ -3537,7 +3670,7 @@ mod filters {
     pub fn stl() -> Filter {
         Filter {
             id: STL,
-            text: String::from("Stl (*.stl)"),
+            text: tr!("Stl") + "(*.stl)",
             globs: vec![Pattern::new("*.stl").unwrap()],
         }
     }
@@ -3545,7 +3678,7 @@ mod filters {
     pub fn pdf() -> Filter {
         Filter {
             id: PDF,
-            text: String::from("PDF document (*.pdf)"),
+            text: tr!("PDF documents") + "(*.pdf)",
             globs: vec![Pattern::new("*.pdf").unwrap()],
         }
     }
@@ -3553,7 +3686,7 @@ mod filters {
     pub fn svg() -> Filter {
         Filter {
             id: SVG,
-            text: String::from("SVG documents (*.svg)"),
+            text: tr!("SVG images") + "(*.svg)",
             globs: vec![Pattern::new("*.svg").unwrap()],
         }
     }
@@ -3561,7 +3694,7 @@ mod filters {
     pub fn png() -> Filter {
         Filter {
             id: PNG,
-            text: String::from("PNG documents (*.png)"),
+            text: tr!("PNG images") + "(*.png)",
             globs: vec![Pattern::new("*.png").unwrap()],
         }
     }
@@ -3569,7 +3702,7 @@ mod filters {
     pub fn all_files() -> Filter {
         Filter {
             id: ALL_FILES,
-            text: String::from("All files"),
+            text: tr!("All files"),
             globs: vec![],
         }
     }

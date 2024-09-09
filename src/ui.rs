@@ -1129,7 +1129,7 @@ impl PapercraftContext {
                     let x = margin_left;
                     let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
                         .min(page_size_mm.y - FONT_SIZE);
-                    let text = String::from(signature());
+                    let text = signature();
                     let t = PrintableText {
                         size: FONT_SIZE,
                         pos: page_pos + Vector2::new(x, y),

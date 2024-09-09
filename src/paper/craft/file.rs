@@ -18,7 +18,7 @@ impl Papercraft {
         for tex in self.model.textures() {
             if let Some(pixbuf) = tex.pixbuf() {
                 let file_name = tex.file_name();
-                zip.start_file(&format!("tex/{file_name}"), options)?;
+                zip.start_file(format!("tex/{file_name}"), options)?;
                 let mut data = Vec::new();
                 let format =
                     image::ImageFormat::from_path(file_name).unwrap_or(image::ImageFormat::Png);

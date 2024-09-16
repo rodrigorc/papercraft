@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use cgmath::{prelude::*, Deg, Rad};
 use easy_imgui_window::{
-    easy_imgui::{self as imgui, vec2, Color, MouseButton, Vector2},
+    easy_imgui::{self as imgui, id, lbl, lbl_id, vec2, Color, MouseButton, Vector2},
     easy_imgui_renderer::{
         glow::{self, HasContext},
         glr::{
@@ -499,14 +499,15 @@ struct MenuActions {
 // Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
 fn do_modal_dialog(
     ui: &Ui,
-    title: String,
+    title: &str,
+    id: &str,
     message: &str,
     cancel: Option<&str>,
     ok: Option<&str>,
 ) -> Option<bool> {
     let mut output = None;
     let mut opened = true;
-    ui.popup_modal_config(title)
+    ui.popup_modal_config(lbl_id(title, id))
         .opened(Some(&mut opened))
         .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
         .with(|| {
@@ -514,11 +515,10 @@ fn do_modal_dialog(
             ui.text(message);
 
             ui.separator();
-            let mut has_cancel = false;
+
             if let Some(cancel) = cancel {
-                has_cancel = true;
                 if ui
-                    .button_config(cancel)
+                    .button_config(lbl_id(cancel, "cancel"))
                     .size(vec2(font_sz * 5.5, 0.0))
                     .build()
                     | ui.shortcut(imgui::Key::Escape)
@@ -528,10 +528,13 @@ fn do_modal_dialog(
                 }
             }
             if let Some(ok) = ok {
-                if has_cancel {
+                if cancel.is_some() {
                     ui.same_line();
                 }
-                if ui.button_config(ok).size(vec2(font_sz * 5.5, 0.0)).build()
+                if ui
+                    .button_config(lbl_id(ok, "ok"))
+                    .size(vec2(font_sz * 5.5, 0.0))
+                    .build()
                     | ui.shortcut(imgui::Key::Enter)
                     | ui.shortcut(imgui::Key::KeypadEnter)
                 {
@@ -556,7 +559,8 @@ impl GlobalContext {
         if let Some(error_message) = self.error_message.take() {
             let reply = do_modal_dialog(
                 ui,
-                tr!("Error") + "###error",
+                &tr!("Error"),
+                "error",
                 &error_message,
                 None,
                 Some(&tr!("OK")),
@@ -570,7 +574,8 @@ impl GlobalContext {
         if let Some(action) = self.confirmable_action.take() {
             let reply = do_modal_dialog(
                 ui,
-                format!("{}###Confirm", action.title),
+                &action.title,
+                "Confirm",
                 &action.message,
                 Some(&tr!("Cancel")),
                 Some(&tr!("Continue")),
@@ -587,7 +592,7 @@ impl GlobalContext {
         if !self.about_visible {
             return;
         }
-        ui.window_config(tr!("About...") + "###about")
+        ui.window_config(lbl_id(tr!("About..."), "about"))
             .open(&mut self.about_visible)
             .flags(imgui::WindowFlags::NoResize | imgui::WindowFlags::AlwaysAutoResize)
             .with(|| {
@@ -640,7 +645,7 @@ impl GlobalContext {
             let mut res = None;
             // Build the modal itself
             ui.set_next_window_size(vec2(150.0, 0.0), imgui::Cond::Once);
-            ui.popup_modal_config(format!("{title}###Wait"))
+            ui.popup_modal_config(lbl_id(title, "Wait"))
                 .flags(imgui::WindowFlags::NoResize)
                 .with(|| {
                     ui.text(&tr!("Please, wait..."));
@@ -664,7 +669,7 @@ impl GlobalContext {
                 }
                 Some(Err(e)) => {
                     self.error_message = Some(format!("{e:?}"));
-                    ui.open_popup("###error");
+                    ui.open_popup(id("error"));
                 }
             }
         }
@@ -692,7 +697,7 @@ impl GlobalContext {
                     ),
                 ),
                 || {
-                    ui.child_config("toolbar")
+                    ui.child_config(lbl("toolbar"))
                         .child_flags(
                             imgui::ChildFlags::AlwaysUseWindowPadding
                                 | imgui::ChildFlags::AutoResizeY,
@@ -777,7 +782,7 @@ impl GlobalContext {
             ),
             || {
                 let sz = vec2(0.0, -ui.get_frame_height());
-                ui.child_config("main_area").size(sz).with(|| {
+                ui.child_config(lbl("main_area")).size(sz).with(|| {
                     let sz_full = ui.get_content_region_avail();
                     if self.sz_full != sz_full {
                         if self.sz_full.x > 1.0 {
@@ -793,7 +798,7 @@ impl GlobalContext {
 
                     ui.same_line();
 
-                    ui.button_config("##vsplitter")
+                    ui.button_config(lbl_id("", "vsplitter"))
                         .size(vec2(font_sz / 2.0, -1.0))
                         .build();
                     if ui.is_item_active() {
@@ -949,7 +954,7 @@ impl GlobalContext {
         let mut opened = true;
         let mut applied = false;
         ui.set_next_window_size(vec2(400.0, 200.0), imgui::Cond::Once);
-        ui.window_config(tr!("Settings") + "###settings")
+        ui.window_config(lbl_id(tr!("Settings"), "settings"))
             .open(&mut opened)
             .flags(imgui::WindowFlags::NoScrollbar | imgui::WindowFlags::AlwaysAutoResize)
             .with(|| {
@@ -957,12 +962,17 @@ impl GlobalContext {
                     .iter()
                     .find(|(s, _)| *s == config.locale)
                     .unwrap_or(&LANGUAGES[0]);
-                if ui.combo(tr!("Language"), LANGUAGES, |(_, n)| *n, &mut cur) {
+                if ui.combo(
+                    lbl_id(tr!("Language"), "language"),
+                    LANGUAGES,
+                    |(_, n)| *n,
+                    &mut cur,
+                ) {
                     config.locale = String::from(cur.0);
                     applied = true;
                 }
                 if ui.combo(
-                    tr!("Theme"),
+                    lbl_id(tr!("Theme"), "theme"),
                     [false, true],
                     |b| {
                         if b {
@@ -998,7 +1008,7 @@ impl GlobalContext {
             },
             imgui::Cond::Once,
         );
-        ui.window_config(tr!("Document properties") + "###options")
+        ui.window_config(lbl_id(tr!("Document properties"), "options"))
             .open(&mut options_opened)
             .flags(imgui::WindowFlags::NoScrollbar)
             .with_always(|opened| {
@@ -1066,26 +1076,29 @@ impl GlobalContext {
     ) -> (Option<PaperOptions>, Option<PaperOptions>) {
         let size = Vector2::from(ui.get_content_region_avail());
         let font_sz = ui.get_font_size();
-        ui.child_config("options")
+        ui.child_config(lbl("options"))
             .size(vec2(size.x, -self.option_button_height))
             .window_flags(imgui::WindowFlags::HorizontalScrollbar)
             .with(|| {
-                ui.tree_node_config(tr!("Model") + "###model")
+                ui.tree_node_config(lbl_id(tr!("Model"), "model"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config(tr!("Scale") + "###scale", &mut options.scale)
+                        ui.input_float_config(lbl_id(tr!("Scale"), "scale"), &mut options.scale)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         options.scale = options.scale.max(0.0);
                         ui.same_line_ex(0.0, font_sz * 3.0);
                         ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
-                            ui.checkbox(tr!("Textured"), &mut options.texture);
+                            ui.checkbox(lbl_id(tr!("Textured"), "textured"), &mut options.texture);
                             ui.same_line_ex(0.0, font_sz * 3.0);
-                            ui.checkbox(tr!("Texture filter"), &mut options.tex_filter);
+                            ui.checkbox(
+                                lbl_id(tr!("Texture filter"), "tex_filter"),
+                                &mut options.tex_filter,
+                            );
                         });
 
-                        ui.tree_node_config(tr!("Flaps") + "###flaps").with(|| {
+                        ui.tree_node_config(lbl_id(tr!("Flaps"), "flaps")).with(|| {
                             static FLAP_STYLES: &[FlapStyle] = &[
                                 FlapStyle::Textured,
                                 FlapStyle::HalfTextured,
@@ -1103,7 +1116,7 @@ impl GlobalContext {
 
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.combo(
-                                tr!("Style"),
+                                lbl_id(tr!("Style"), "style"),
                                 FLAP_STYLES.iter().copied(),
                                 fmt_flap_style,
                                 &mut options.flap_style,
@@ -1111,14 +1124,17 @@ impl GlobalContext {
 
                             ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
                             ui.set_next_item_width(font_sz * 8.0);
-                            ui.slider_float_config(tr!("Shadow"), &mut options.shadow_flap_alpha)
-                                .range(0.0, 1.0)
-                                .display_format(imgui::FloatFormat::F(2))
-                                .build();
+                            ui.slider_float_config(
+                                lbl_id(tr!("Shadow"), "shadow"),
+                                &mut options.shadow_flap_alpha,
+                            )
+                            .range(0.0, 1.0)
+                            .display_format(imgui::FloatFormat::F(2))
+                            .build();
 
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.input_float_config(
-                                tr!("Width") + "###width",
+                                lbl_id(tr!("Width"), "width"),
                                 &mut options.flap_width,
                             )
                             .display_format(imgui::FloatFormat::G)
@@ -1128,14 +1144,14 @@ impl GlobalContext {
                             ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.input_float_config(
-                                tr!("Angle") + "###angle",
+                                lbl_id(tr!("Angle"), "angle"),
                                 &mut options.flap_angle,
                             )
                             .display_format(imgui::FloatFormat::G)
                             .build();
                             options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
                         });
-                        ui.tree_node_config(tr!("Folds") + "###folds").with(|| {
+                        ui.tree_node_config(lbl_id(tr!("Folds"), "folds")).with(|| {
                             static FOLD_STYLES: &[FoldStyle] = &[
                                 FoldStyle::Full,
                                 FoldStyle::FullAndOut,
@@ -1159,7 +1175,7 @@ impl GlobalContext {
 
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.combo(
-                                tr!("Style"),
+                                lbl_id(tr!("Style"), "style"),
                                 FOLD_STYLES.iter().copied(),
                                 fmt_fold_style,
                                 &mut options.fold_style,
@@ -1171,7 +1187,7 @@ impl GlobalContext {
                                 matches!(options.fold_style, FoldStyle::None | FoldStyle::Full),
                                 || {
                                     ui.input_float_config(
-                                        tr!("Length") + "###length",
+                                        lbl_id(tr!("Length"), "length"),
                                         &mut options.fold_line_len,
                                     )
                                     .display_format(imgui::FloatFormat::G)
@@ -1183,7 +1199,7 @@ impl GlobalContext {
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
                                 ui.input_float_config(
-                                    tr!("Line width") + "###linewidth",
+                                    lbl_id(tr!("Line width"), "linewidth"),
                                     &mut options.fold_line_width,
                                 )
                                 .display_format(imgui::FloatFormat::G)
@@ -1193,25 +1209,25 @@ impl GlobalContext {
 
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.input_float_config(
-                                tr!("Hidden fold angle") + "###hiddenangle",
+                                lbl_id(tr!("Hidden fold angle"), "hiddenangle"),
                                 &mut options.hidden_line_angle,
                             )
                             .display_format(imgui::FloatFormat::G)
                             .build();
                             options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
                         });
-                        ui.tree_node_config(tr!("Information") + "###info")
+                        ui.tree_node_config(lbl_id(tr!("Information"), "info"))
                             .with(|| {
                                 self.build_read_only_options_inner_dialog(ui, &options);
                             });
                     });
-                ui.tree_node_config(tr!("Layout") + "###layout")
+                ui.tree_node_config(lbl_id(tr!("Layout"), "layout"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 5.5);
 
                         let mut i = options.pages as _;
-                        ui.input_int_config(tr!("Pages") + "###pages", &mut i)
+                        ui.input_int_config(lbl_id(tr!("Pages"), "pages"), &mut i)
                             .build();
                         options.pages = i.clamp(1, 1000) as _;
 
@@ -1219,19 +1235,22 @@ impl GlobalContext {
                         ui.set_next_item_width(font_sz * 5.5);
 
                         let mut i = options.page_cols as _;
-                        ui.input_int_config(tr!("Columns") + "###cols", &mut i)
+                        ui.input_int_config(lbl_id(tr!("Columns"), "cols"), &mut i)
                             .build();
                         options.page_cols = i.clamp(1, options.pages as _) as _;
 
                         ui.set_next_item_width(font_sz * 11.0);
                         ui.checkbox(
-                            tr!("Print Papercraft signature"),
+                            lbl_id(tr!("Print Papercraft signature"), "signature"),
                             &mut options.show_self_promotion,
                         );
 
                         ui.same_line_ex(0.0, font_sz * 3.0);
                         ui.set_next_item_width(font_sz * 11.0);
-                        ui.checkbox(tr!("Print page number"), &mut options.show_page_number);
+                        ui.checkbox(
+                            lbl_id(tr!("Print page number"), "page_num"),
+                            &mut options.show_page_number,
+                        );
 
                         static EDGE_ID_POSITIONS: &[EdgeIdPosition] = &[
                             EdgeIdPosition::None,
@@ -1247,7 +1266,7 @@ impl GlobalContext {
                         }
                         ui.set_next_item_width(font_sz * 6.0);
                         ui.combo(
-                            tr!("Edge id position"),
+                            lbl_id(tr!("Edge id position"), "edge_id_pos"),
                             EDGE_ID_POSITIONS.iter().copied(),
                             fmt_edge_id_position,
                             &mut options.edge_id_position,
@@ -1258,7 +1277,7 @@ impl GlobalContext {
                         ui.set_next_item_width(font_sz * 3.0);
                         ui.with_disabled(options.edge_id_position == EdgeIdPosition::None, || {
                             ui.input_float_config(
-                                tr!("Edge id font size (pt)") + "###edgefont",
+                                lbl_id(tr!("Edge id font size (pt)"), "edgefont"),
                                 &mut options.edge_id_font_size,
                             )
                             .display_format(imgui::FloatFormat::G)
@@ -1266,18 +1285,21 @@ impl GlobalContext {
                             options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
                         });
                     });
-                ui.tree_node_config(tr!("Paper size") + "###papersize")
+                ui.tree_node_config(lbl_id(tr!("Paper size"), "papersize"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config(tr!("Width") + "###width", &mut options.page_size.0)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                        ui.input_float_config(
+                            lbl_id(tr!("Width"), "width"),
+                            &mut options.page_size.0,
+                        )
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
                         options.page_size.0 = options.page_size.0.max(1.0);
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 5.5);
                         ui.input_float_config(
-                            tr!("Height") + "###height",
+                            lbl_id(tr!("Height"), "height"),
                             &mut options.page_size.1,
                         )
                         .display_format(imgui::FloatFormat::G)
@@ -1286,7 +1308,7 @@ impl GlobalContext {
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 5.5);
                         let mut resolution = options.resolution as f32;
-                        ui.input_float_config(tr!("DPI") + "###dpi", &mut resolution)
+                        ui.input_float_config(lbl_id(tr!("DPI"), "dpi"), &mut resolution)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         options.resolution = (resolution as u32).max(1);
@@ -1321,12 +1343,12 @@ impl GlobalContext {
                             s.size == paper_size || s.size == vec2(paper_size.y, paper_size.x)
                         });
                         ui.set_next_item_width(font_sz * 8.0);
-                        ui.combo_config("##Paper")
+                        ui.combo_config(lbl_id("", "Paper"))
                             .preview_value_opt(paper_size.map(|p| p.name))
                             .with(|| {
                                 for op in PAPER_SIZES {
                                     if ui
-                                        .selectable_config(op.name)
+                                        .selectable_config(lbl(op.name))
                                         .selected(
                                             paper_size
                                                 .map(|p| std::ptr::eq(p, op))
@@ -1345,38 +1367,47 @@ impl GlobalContext {
                                 }
                             });
                         let mut new_portrait = portrait;
-                        if ui.radio_button_config(tr!("Portrait"), portrait).build() {
+                        if ui
+                            .radio_button_config(lbl_id(tr!("Portrait"), "portrait"), portrait)
+                            .build()
+                        {
                             new_portrait = true;
                         }
-                        if ui.radio_button_config(tr!("Landscape"), !portrait).build() {
+                        if ui
+                            .radio_button_config(lbl_id(tr!("Landscape"), "landscape"), !portrait)
+                            .build()
+                        {
                             new_portrait = false;
                         }
                         if portrait != new_portrait {
                             std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
                         }
                     });
-                ui.tree_node_config(tr!("Margins") + "###margins")
+                ui.tree_node_config(lbl_id(tr!("Margins"), "margins"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(tr!("Top") + "###top", &mut options.margin.0)
+                        ui.input_float_config(lbl_id(tr!("Top"), "top"), &mut options.margin.0)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(tr!("Left") + "###left", &mut options.margin.1)
+                        ui.input_float_config(lbl_id(tr!("Left"), "left"), &mut options.margin.1)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(tr!("Right") + "###right", &mut options.margin.2)
+                        ui.input_float_config(lbl_id(tr!("Right"), "right"), &mut options.margin.2)
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         ui.same_line_ex(0.0, font_sz * 1.5);
                         ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(tr!("Bottom") + "###bottom", &mut options.margin.3)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                        ui.input_float_config(
+                            lbl_id(tr!("Bottom"), "bottom"),
+                            &mut options.margin.3,
+                        )
+                        .display_format(imgui::FloatFormat::G)
+                        .build();
                     });
             });
 
@@ -1385,12 +1416,16 @@ impl GlobalContext {
 
         let pos1 = Vector2::from(ui.get_cursor_screen_pos());
         ui.separator();
-        if ui.button_config(tr!("OK")).size(vec2(100.0, 0.0)).build() {
+        if ui
+            .button_config(lbl_id(tr!("OK"), "ok"))
+            .size(vec2(100.0, 0.0))
+            .build()
+        {
             apply_options = options_opened.take();
         }
         ui.same_line();
         if ui
-            .button_config(tr!("Cancel"))
+            .button_config(lbl_id(tr!("Cancel"), "cancel"))
             .size(vec2(100.0, 0.0))
             .build()
         {
@@ -1398,7 +1433,7 @@ impl GlobalContext {
         }
         ui.same_line();
         if ui
-            .button_config(tr!("Apply"))
+            .button_config(lbl_id(tr!("Apply"), "apply"))
             .size(vec2(100.0, 0.0))
             .build()
         {
@@ -1422,39 +1457,49 @@ impl GlobalContext {
         let mut menu_actions = MenuActions::default();
 
         ui.with_menu_bar(|| {
-            ui.menu_config(tr!("File")).with(|| {
+            ui.menu_config(lbl(tr!("File"))).with(|| {
                 if ui
-                    .menu_item_config(tr!("Open..."))
+                    .menu_item_config(lbl(tr!("Open...")))
                     .shortcut("Ctrl+O")
                     .build()
                 {
                     menu_actions.open = self.check_modified();
                 }
                 ui.with_disabled(self.data.papercraft().model().is_empty(), || {
-                    if ui.menu_item_config(tr!("Save")).shortcut("Ctrl+S").build() {
+                    if ui
+                        .menu_item_config(lbl(tr!("Save")))
+                        .shortcut("Ctrl+S")
+                        .build()
+                    {
                         menu_actions.save = true;
                     }
-                    if ui.menu_item_config(tr!("Save as...")).build() {
+                    if ui.menu_item_config(lbl(tr!("Save as..."))).build() {
                         menu_actions.save_as = true;
                     }
                 });
                 if self.modifiable() {
-                    if ui.menu_item_config(tr!("Import model...")).build() {
+                    if ui.menu_item_config(lbl(tr!("Import model..."))).build() {
                         menu_actions.import_model = self.check_modified();
                     }
-                    if ui.menu_item_config(tr!("Update with new model...")).build() {
+                    if ui
+                        .menu_item_config(lbl(tr!("Update with new model...")))
+                        .build()
+                    {
                         menu_actions.update_model = self.check_modified();
                     }
                 }
-                if ui.menu_item_config(tr!("Export model...")).build() {
+                if ui.menu_item_config(lbl(tr!("Export model..."))).build() {
                     menu_actions.export_obj = true;
                 }
-                if ui.menu_item_config(tr!("Generate Printable...")).build() {
+                if ui
+                    .menu_item_config(lbl(tr!("Generate Printable...")))
+                    .build()
+                {
                     menu_actions.generate_printable = true;
                 }
                 ui.separator();
                 if ui
-                    .menu_item_config(tr!("Settings..."))
+                    .menu_item_config(lbl(tr!("Settings...")))
                     .selected(self.config_opened.is_some())
                     .build()
                 {
@@ -1464,14 +1509,18 @@ impl GlobalContext {
                     };
                 }
                 ui.separator();
-                if ui.menu_item_config(tr!("Quit")).shortcut("Ctrl+Q").build() {
+                if ui
+                    .menu_item_config(lbl(tr!("Quit")))
+                    .shortcut("Ctrl+Q")
+                    .build()
+                {
                     menu_actions.quit = self.check_modified();
                 }
             });
-            ui.menu_config(tr!("Edit")).with(|| {
+            ui.menu_config(lbl(tr!("Edit"))).with(|| {
                 if self.modifiable() {
                     if ui
-                        .menu_item_config(tr!("Undo"))
+                        .menu_item_config(lbl(tr!("Undo")))
                         .shortcut("Ctrl+Z")
                         .enabled(self.data.can_undo())
                         .build()
@@ -1482,7 +1531,7 @@ impl GlobalContext {
                 }
 
                 if ui
-                    .menu_item_config(tr!("Document properties"))
+                    .menu_item_config(lbl(tr!("Document properties")))
                     .shortcut("Enter")
                     .selected(self.options_opened.is_some())
                     .build()
@@ -1497,7 +1546,7 @@ impl GlobalContext {
                     ui.separator();
 
                     if ui
-                        .menu_item_config(tr!("Face/Island"))
+                        .menu_item_config(lbl(tr!("Face/Island")))
                         .shortcut("F5")
                         .selected(self.data.ui.mode == MouseMode::Face)
                         .build()
@@ -1505,7 +1554,7 @@ impl GlobalContext {
                         self.set_mouse_mode(MouseMode::Face);
                     }
                     if ui
-                        .menu_item_config(tr!("Split/Join edge"))
+                        .menu_item_config(lbl(tr!("Split/Join edge")))
                         .shortcut("F6")
                         .selected(self.data.ui.mode == MouseMode::Edge)
                         .build()
@@ -1513,7 +1562,7 @@ impl GlobalContext {
                         self.set_mouse_mode(MouseMode::Edge);
                     }
                     if ui
-                        .menu_item_config(tr!("Flaps"))
+                        .menu_item_config(lbl(tr!("Flaps")))
                         .shortcut("F7")
                         .selected(self.data.ui.mode == MouseMode::Flap)
                         .build()
@@ -1523,16 +1572,16 @@ impl GlobalContext {
 
                     ui.separator();
 
-                    if ui.menu_item_config(tr!("Repack pieces")).build() {
+                    if ui.menu_item_config(lbl(tr!("Repack pieces"))).build() {
                         let undo = self.data.pack_islands();
                         self.data.push_undo_action(undo);
                         self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
                     }
                 }
             });
-            ui.menu_config(tr!("View")).with(|| {
+            ui.menu_config(lbl(tr!("View"))).with(|| {
                 if ui
-                    .menu_item_config(tr!("Textures"))
+                    .menu_item_config(lbl(tr!("Textures")))
                     .shortcut("T")
                     .enabled(self.data.papercraft().options().texture)
                     .selected(self.data.ui.show_textures)
@@ -1542,7 +1591,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
                 if ui
-                    .menu_item_config(tr!("3D lines"))
+                    .menu_item_config(lbl(tr!("3D lines")))
                     .shortcut("D")
                     .selected(self.data.ui.show_3d_lines)
                     .build()
@@ -1551,7 +1600,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::SCENE_REDRAW);
                 }
                 if ui
-                    .menu_item_config(tr!("Flaps"))
+                    .menu_item_config(lbl(tr!("Flaps")))
                     .shortcut("B")
                     .selected(self.data.ui.show_flaps)
                     .build()
@@ -1560,7 +1609,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::PAPER);
                 }
                 if ui
-                    .menu_item_config(tr!("X-ray selection"))
+                    .menu_item_config(lbl(tr!("X-ray selection")))
                     .shortcut("X")
                     .selected(self.data.ui.xray_selection)
                     .build()
@@ -1569,7 +1618,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::SELECTION);
                 }
                 if ui
-                    .menu_item_config(tr!("Texts"))
+                    .menu_item_config(lbl(tr!("Texts")))
                     .shortcut("E")
                     .selected(self.data.ui.show_texts)
                     .build()
@@ -1581,7 +1630,7 @@ impl GlobalContext {
                     }
                 }
                 if ui
-                    .menu_item_config(tr!("Paper"))
+                    .menu_item_config(lbl(tr!("Paper")))
                     .shortcut("P")
                     .selected(self.data.ui.draw_paper)
                     .build()
@@ -1590,7 +1639,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 }
                 if ui
-                    .menu_item_config(tr!("Highlight overlaps"))
+                    .menu_item_config(lbl(tr!("Highlight overlaps")))
                     .shortcut("H")
                     .selected(self.data.ui.highlight_overlaps)
                     .build()
@@ -1598,14 +1647,14 @@ impl GlobalContext {
                     self.data.ui.highlight_overlaps ^= true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW);
                 }
-                if ui.menu_item_config(tr!("Reset views")).build() {
+                if ui.menu_item_config(lbl(tr!("Reset views"))).build() {
                     menu_actions.reset_views = true;
                     self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
                 }
             });
-            ui.menu_config(tr!("Help")).with(|| {
+            ui.menu_config(lbl(tr!("Help"))).with(|| {
                 if ui
-                    .menu_item_config(tr!("About..."))
+                    .menu_item_config(lbl(tr!("About...")))
                     .selected(self.about_visible)
                     .build()
                 {
@@ -1702,9 +1751,9 @@ impl GlobalContext {
 
     fn build_scene(&mut self, ui: &Ui, width: f32) {
         let w = ui
-            .child_config("scene")
+            .child_config(lbl("scene"))
             .size(vec2(width, 0.0))
-            .child_flags(imgui::ChildFlags::Border)
+            .child_flags(imgui::ChildFlags::Borders)
             .with(|| {
                 let scale = ui.display_scale();
                 let pos = scale * ui.get_cursor_screen_pos();
@@ -1746,8 +1795,8 @@ impl GlobalContext {
 
     fn build_paper(&mut self, ui: &Ui) {
         let r = ui
-            .child_config("paper")
-            .child_flags(imgui::ChildFlags::Border)
+            .child_config(lbl("paper"))
+            .child_flags(imgui::ChildFlags::Borders)
             .with(|| {
                 let scale = ui.display_scale();
                 let pos = scale * ui.get_cursor_screen_pos();
@@ -1790,16 +1839,16 @@ impl GlobalContext {
     fn open_confirmation_dialog(
         &mut self,
         ui: &Ui,
-        title: String,
-        message: String,
+        title: &str,
+        message: &str,
         f: impl Fn(&mut MenuActions) + 'static,
     ) {
         self.confirmable_action = Some(ConfirmableAction {
-            title,
-            message,
+            title: title.to_owned(),
+            message: message.to_owned(),
             action: Box::new(f),
         });
-        ui.open_popup("###Confirm");
+        ui.open_popup(id("Confirm"));
     }
 
     fn run_menu_actions(&mut self, ui: &Ui, menu_actions: &MenuActions) {
@@ -1831,8 +1880,8 @@ impl GlobalContext {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(
                     ui,
-                    tr!("Load model"),
-                    tr!("The model has not been save, continue anyway?"),
+                    &tr!("Load model"),
+                    &tr!("The model has not been save, continue anyway?"),
                     |a| a.open = BoolWithConfirm::Confirmed,
                 );
             }
@@ -1868,8 +1917,8 @@ impl GlobalContext {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(
                     ui,
-                    tr!("Import model"),
-                    tr!("The model has not been save, continue anyway?"),
+                    &tr!("Import model"),
+                    &tr!("The model has not been save, continue anyway?"),
                     |a| a.import_model = BoolWithConfirm::Confirmed,
                 );
             }
@@ -1889,8 +1938,8 @@ impl GlobalContext {
         match menu_actions.update_model {
             BoolWithConfirm::Requested => {
                 self.open_confirmation_dialog(ui,
-                    tr!("Update model"),
-                    tr!("This model is not saved and this operation cannot be undone.\nContinue anyway?"),
+                    &tr!("Update model"),
+                    &tr!("This model is not saved and this operation cannot be undone.\nContinue anyway?"),
                     |a| a.update_model = BoolWithConfirm::Confirmed
                 );
             }
@@ -1944,7 +1993,7 @@ impl GlobalContext {
         // There are two Wait modals and two Error modals. One pair over the FileDialog, the other to be opened directly ("Save").
 
         if open_file_dialog {
-            ui.open_popup("###file_dialog_modal");
+            ui.open_popup(id("file_dialog_modal"));
         }
         if let Some((mut fd, title, action)) = self.file_dialog.take() {
             let dsp_size = ui.display_size();
@@ -1952,7 +2001,7 @@ impl GlobalContext {
             let max_size = 0.90 * dsp_size;
             ui.set_next_window_size_constraints(min_size, max_size);
             ui.set_next_window_size(0.75 * dsp_size, imgui::Cond::Once);
-            ui.popup_modal_config(format!("{title}###file_dialog_modal"))
+            ui.popup_modal_config(lbl_id(&title, "file_dialog_modal"))
                 .close_button(true)
                 .with(|| {
                     let mut finish_file_dialog = false;
@@ -1977,7 +2026,7 @@ impl GlobalContext {
                             // * Tries to save a file that does exist.
                             match (action.is_save(), file.exists()) {
                                 (true, true) | (false, false) => {
-                                    ui.open_popup("###FileDialogConfirm");
+                                    ui.open_popup(id("FileDialogConfirm"));
                                     self.file_dialog_confirm = Some((action, file));
                                 }
                                 _ => {
@@ -1993,12 +2042,12 @@ impl GlobalContext {
                         let name = fdc.1.file_name().unwrap_or_default().to_string_lossy();
                         let reply = if fdc.0.is_save() {
                             do_modal_dialog(ui,
-                                tr!("Overwrite?") + "###FileDialogConfirm",
+                                &tr!("Overwrite?"), "FileDialogConfirm",
                                 &tr!("The file '{}' already exists!\nWould you like to overwrite it?", name),
-                                Some(&tr!("Cancel")), Some(&tr!("Continue")))
+                                Some("Cancel"), Some("Continue"))
                         } else {
                             do_modal_dialog(ui,
-                                tr!("Error!") + "###FileDialogConfirm",
+                                &tr!("Error!"), "FileDialogConfirm",
                                 &tr!("The file '{}' doesn't exist!", name),
                                 Some(&tr!("OK")), None)
                         };
@@ -2021,7 +2070,7 @@ impl GlobalContext {
         }
         if open_wait {
             self.popup_time_start = Instant::now();
-            ui.open_popup("###Wait");
+            ui.open_popup(id("Wait"));
         }
     }
 
@@ -3063,7 +3112,7 @@ impl GlobalContext {
                     let x = margin_left;
                     let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
                         .min(page_size_mm.y - FONT_SIZE);
-                    let text = signature();
+                    let text = String::from(signature());
                     texts.push(PrintableText {
                         size: FONT_SIZE,
                         pos: Vector2::new(x, y),
@@ -3424,15 +3473,15 @@ impl imgui::UiBuilder for Box<GlobalContext> {
     fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {
         self.add_rebuild(RebuildFlags::all());
 
-        self.font_default = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 18.0));
-        self.font_big = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 28.0));
-        self.font_small = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 12.0));
+        self.font_default = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 18.0));
+        self.font_big = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 28.0));
+        self.font_small = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 12.0));
         let options = self.data.papercraft().options();
 
         // Do not go too big or Dear ImGui will assert!
         let edge_id_font_size =
             (options.edge_id_font_size * options.resolution as f32 / 72.0).min(350.0);
-        self.font_text = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, edge_id_font_size));
+        self.font_text = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, edge_id_font_size));
         // This is eye-balled, depending on the particular font
         self.font_text_line_scale = 0.80;
 
@@ -3462,7 +3511,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
         let vw = ui.get_main_viewport();
         let sz = vw.size(); //&ui.get_content_region_avail();
         ui.set_next_window_size(sz, imgui::Cond::Always);
-        ui.window_config("papercraft")
+        ui.window_config(lbl("papercraft"))
             .flags(
                 imgui::WindowFlags::NoDecoration
                     | imgui::WindowFlags::NoResize
@@ -3481,7 +3530,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                 if let Some(cmd_file_action) = self.cmd_file_action.take() {
                     self.popup_time_start = Instant::now();
                     self.file_action = Some(cmd_file_action);
-                    ui.open_popup("###Wait");
+                    ui.open_popup(id("Wait"));
                 }
 
                 let menu_actions = self.build_ui(ui);
@@ -3515,8 +3564,8 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                         self.quit_requested = BoolWithConfirm::None;
                         self.open_confirmation_dialog(
                             ui,
-                            tr!("Quit?"),
-                            tr!("The model has not been save, continue anyway?"),
+                            &tr!("Quit?"),
+                            &tr!("The model has not been save, continue anyway?"),
                             |a| a.quit = BoolWithConfirm::Confirmed,
                         );
                     }

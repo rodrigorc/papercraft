@@ -714,7 +714,7 @@ impl GlobalContext {
                                         ui.style().color(imgui::ColorId::ButtonActive);
                                     if ui
                                         .image_button_with_custom_rect_config(
-                                            "Face",
+                                            id("Face"),
                                             self.icons_rect[0],
                                             1.0,
                                         )
@@ -730,7 +730,7 @@ impl GlobalContext {
                                     ui.same_line();
                                     if ui
                                         .image_button_with_custom_rect_config(
-                                            "Edge",
+                                            id("Edge"),
                                             self.icons_rect[1],
                                             1.0,
                                         )
@@ -746,7 +746,7 @@ impl GlobalContext {
                                     ui.same_line();
                                     if ui
                                         .image_button_with_custom_rect_config(
-                                            "Tab",
+                                            id("Tab"),
                                             self.icons_rect[2],
                                             1.0,
                                         )

@@ -10,7 +10,7 @@ use model::import::Importer;
 impl Papercraft {
     pub fn save<W: Write + Seek>(&self, w: W) -> Result<()> {
         let mut zip = zip::ZipWriter::new(w);
-        let options = zip::write::FileOptions::default();
+        let options = zip::write::SimpleFileOptions::default();
 
         zip.start_file("model.json", options)?;
         serde_json::to_writer(&mut zip, self)?;

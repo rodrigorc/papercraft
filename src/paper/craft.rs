@@ -315,6 +315,7 @@ impl Memoization {
     fn invalidate_options(&self) {
         self.face_to_face_edge_matrix.borrow_mut().clear();
         self.flat_face_flap_dimensions.borrow_mut().clear();
+        self.island_perimeters.borrow_mut().clear();
     }
     fn invalidate_islands(&self, islands: &[IslandKey]) {
         self.island_by_face.borrow_mut().clear();

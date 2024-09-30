@@ -120,6 +120,18 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct SetSelectionFlags: u32 {
+        // CLICKED means not hovering
+        const CLICKED = 0x0001;
+        // RELEASE should be combined with CLICKED
+        const RELEASED = 0x0002;
+        const ADD_TO_SEL = 0x0004;
+        const ALT_PRESSED = 0x0008;
+    }
+}
+
 //Objects that are recreated when a new model is loaded
 pub struct PapercraftContext {
     // The model
@@ -137,6 +149,8 @@ pub struct PapercraftContext {
     grabbed_island: Option<Vec<UndoAction>>,
     last_cursor_pos: Vector2,
     rotation_center: Option<Vector2>,
+    // The island that has just been selected
+    just_selected: Option<IslandKey>,
 
     pub ui: UiSettings,
 }
@@ -506,6 +520,7 @@ impl PapercraftContext {
             grabbed_island: None,
             last_cursor_pos: Vector2::zero(),
             rotation_center: None,
+            just_selected: None,
             ui: UiSettings {
                 mode: MouseMode::Face,
                 trans_scene,
@@ -1425,14 +1440,17 @@ impl PapercraftContext {
     pub fn set_selection(
         &mut self,
         selection: ClickResult,
-        clicked: bool,
-        add_to_sel: bool,
-        alt_pressed: bool,
+        flags: SetSelectionFlags,
     ) -> RebuildFlags {
         let mut island_changed = false;
+
+        let just_selected = self.just_selected.take();
         let (new_edges, new_face) = match selection {
             ClickResult::None => {
-                if clicked && !add_to_sel && !self.selected_islands.is_empty() {
+                if flags.contains(SetSelectionFlags::CLICKED)
+                    && !flags.contains(SetSelectionFlags::ADD_TO_SEL)
+                    && !self.selected_islands.is_empty()
+                {
                     self.selected_islands.clear();
                     island_changed = true;
                 }
@@ -1440,21 +1458,33 @@ impl PapercraftContext {
             }
             ClickResult::Face(i_face) => {
                 let i_island = self.papercraft.island_by_face(i_face);
-                if clicked {
-                    if add_to_sel {
-                        if let Some(_n) = self.selected_islands.iter().position(|i| *i == i_island)
-                        {
-                            //unselect the island?
+                if flags.contains(SetSelectionFlags::CLICKED) {
+                    if flags.contains(SetSelectionFlags::ADD_TO_SEL) {
+                        if let Some(n) = self.selected_islands.iter().position(|i| *i == i_island) {
+                            if flags.contains(SetSelectionFlags::RELEASED)
+                                && just_selected != Some(i_island)
+                            {
+                                self.selected_islands.swap_remove(n);
+                                island_changed = true;
+                            }
                         } else {
                             self.selected_islands.push(i_island);
+                            self.just_selected = Some(i_island);
                             island_changed = true;
                         }
                     } else {
-                        self.selected_islands = vec![i_island];
-                        island_changed = true;
+                        // If the clicked island is already selected do nothing on click, but select on release.
+                        // This makes it easier to move several islands, because the user doesn't need to hold Ctrl to move them.
+                        if !self.selected_islands.contains(&i_island)
+                            || flags.contains(SetSelectionFlags::RELEASED)
+                        {
+                            self.selected_islands = vec![i_island];
+                            self.just_selected = Some(i_island);
+                            island_changed = true;
+                        }
                     }
                 }
-                let edges = if alt_pressed {
+                let edges = if flags.contains(SetSelectionFlags::ALT_PRESSED) {
                     let island = self.papercraft.island_by_key(i_island).unwrap();
                     Some(self.papercraft.island_edges(island))
                 } else {
@@ -1463,7 +1493,7 @@ impl PapercraftContext {
                 (edges, Some(i_face))
             }
             ClickResult::Edge(i_edge, maybe_i_face) => {
-                let edges = match (alt_pressed, maybe_i_face) {
+                let edges = match (flags.contains(SetSelectionFlags::ALT_PRESSED), maybe_i_face) {
                     (true, Some(i_face)) => {
                         let i_island = self.papercraft.island_by_face(i_face);
                         let island = self.papercraft.island_by_key(i_island).unwrap();
@@ -1727,7 +1757,12 @@ impl PapercraftContext {
     ) -> RebuildFlags {
         self.last_cursor_pos = pos;
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
-        self.set_selection(selection, false, false, alt_pressed)
+        let flags = if alt_pressed {
+            SetSelectionFlags::ALT_PRESSED
+        } else {
+            SetSelectionFlags::empty()
+        };
+        self.set_selection(selection, flags)
     }
     #[must_use]
     pub fn scene_button1_click_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
@@ -1824,6 +1859,12 @@ impl PapercraftContext {
         add_to_sel: bool,
     ) -> RebuildFlags {
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
+        let flags = if add_to_sel {
+            SetSelectionFlags::ADD_TO_SEL
+        } else {
+            SetSelectionFlags::empty()
+        };
+        let flags = flags | SetSelectionFlags::CLICKED | SetSelectionFlags::RELEASED;
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 self.do_edge_action(i_edge, i_face, shift_action)
@@ -1832,11 +1873,9 @@ impl PapercraftContext {
                 self.do_flap_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
-                self.set_selection(ClickResult::Face(f), true, add_to_sel, false)
+                self.set_selection(ClickResult::Face(f), flags)
             }
-            (_, ClickResult::None) => {
-                self.set_selection(ClickResult::None, true, add_to_sel, false)
-            }
+            (_, ClickResult::None) => self.set_selection(ClickResult::None, flags),
             _ => RebuildFlags::empty(),
         }
     }
@@ -1936,6 +1975,7 @@ impl PapercraftContext {
         }
         RebuildFlags::PAPER
     }
+    #[must_use]
     pub fn paper_button1_click_event(
         &mut self,
         size: Vector2,
@@ -1945,6 +1985,13 @@ impl PapercraftContext {
         modifiable: bool,
     ) -> RebuildFlags {
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
+        let flags = if add_to_sel {
+            SetSelectionFlags::ADD_TO_SEL
+        } else {
+            SetSelectionFlags::empty()
+        };
+        let flags = flags | SetSelectionFlags::CLICKED;
+
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 self.grabbed_island = None;
@@ -1954,7 +2001,7 @@ impl PapercraftContext {
                 self.do_flap_action(i_edge, shift_action)
             }
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
-                let flags = self.set_selection(ClickResult::Face(f), true, add_to_sel, false);
+                let flags = self.set_selection(ClickResult::Face(f), flags);
                 if modifiable {
                     let undo_action: Vec<_> = self
                         .selected_islands
@@ -1976,7 +2023,29 @@ impl PapercraftContext {
             }
             (_, ClickResult::None) => {
                 self.grabbed_island = None;
-                self.set_selection(ClickResult::None, true, add_to_sel, false)
+                self.set_selection(ClickResult::None, flags)
+            }
+            _ => RebuildFlags::empty(),
+        }
+    }
+    #[must_use]
+    pub fn paper_button1_release_event(
+        &mut self,
+        size: Vector2,
+        pos: Vector2,
+        _shift_action: bool,
+        add_to_sel: bool,
+    ) -> RebuildFlags {
+        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
+        let flags = if add_to_sel {
+            SetSelectionFlags::ADD_TO_SEL
+        } else {
+            SetSelectionFlags::empty()
+        };
+        let flags = flags | SetSelectionFlags::CLICKED | SetSelectionFlags::RELEASED;
+        match (self.ui.mode, selection) {
+            (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
+                self.set_selection(ClickResult::Face(f), flags)
             }
             _ => RebuildFlags::empty(),
         }
@@ -2005,7 +2074,12 @@ impl PapercraftContext {
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         self.rotation_center = None;
         self.grabbed_island = None;
-        self.set_selection(selection, false, false, alt_pressed)
+        let flags = if alt_pressed {
+            SetSelectionFlags::ALT_PRESSED
+        } else {
+            SetSelectionFlags::empty()
+        };
+        self.set_selection(selection, flags)
     }
 
     #[must_use]

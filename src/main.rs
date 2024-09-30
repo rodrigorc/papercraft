@@ -2148,6 +2148,12 @@ impl GlobalContext {
                     self.modifiable(),
                 )
             }
+            Canvas3dAction::Released(MouseButton::Left) => self.data.paper_button1_release_event(
+                self.sz_paper,
+                mouse_pos,
+                shift_down,
+                control_down,
+            ),
             Canvas3dAction::Pressed(MouseButton::Right)
             | Canvas3dAction::Dragging(MouseButton::Right) => {
                 self.data.paper_button2_event(self.sz_paper, mouse_pos)

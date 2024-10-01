@@ -77,12 +77,25 @@ fn build_helvetica() -> Result<()> {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let out = File::create(out_path.join("helvetica_afm.rs"))?;
     let mut out = BufWriter::new(out);
+
+    let mut widths = HashMap::<u16, u32>::new(); // Unicode to width
+    let mut names = HashMap::<String, u16>::new(); // name to Unicode
+    let mut kerns = HashMap::<u16, Vec<(u16, i32)>>::new(); // Unicode to list of (Unicode, kerning)
+
+    println!("cargo:rerun-if-changed=thirdparty/afm/names.txt");
+    let char_names = File::open("thirdparty/afm/names.txt").unwrap();
+    let char_names = BufReader::new(char_names);
+    for line in char_names.lines() {
+        let line = line.unwrap();
+        let pieces: Vec<&str> = line.split('\t').collect();
+        let name = pieces[0];
+        let code = u16::from_str_radix(&pieces[1], 16).unwrap();
+        names.insert(name.to_owned(), code);
+    }
+
+    println!("cargo:rerun-if-changed=thirdparty/afm/Helvetica.afm");
     let afm = File::open("thirdparty/afm/Helvetica.afm").unwrap();
     let afm = BufReader::new(afm);
-
-    let mut widths = [0; 128];
-    let mut names = HashMap::new();
-    let mut kerns = vec![Vec::new(); 128];
 
     for line in afm.lines() {
         let line = line.unwrap();
@@ -93,10 +106,8 @@ fn build_helvetica() -> Result<()> {
         }
         match words0[0] {
             "C" => {
-                let code: i32 = words0[1].parse().unwrap();
-                if !(0..128).contains(&code) {
-                    continue;
-                }
+                let mut width: Option<u32> = None;
+                let mut name: Option<&str> = None;
                 for piece in &pieces[1..] {
                     let words: Vec<&str> = piece.split_ascii_whitespace().collect();
                     if words.is_empty() {
@@ -104,15 +115,19 @@ fn build_helvetica() -> Result<()> {
                     }
                     match words[0] {
                         "WX" => {
-                            let width: u32 = words[1].parse().unwrap();
-                            widths[code as usize] = width;
+                            width = Some(words[1].parse().unwrap());
                         }
                         "N" => {
-                            let name = words[1];
-                            names.insert(String::from(name), code);
+                            name = Some(words[1]);
                         }
                         _ => {}
                     }
+                }
+                if let (Some(width), Some(name)) = (width, name) {
+                    let Some(&char) = names.get(name) else {
+                        continue;
+                    };
+                    widths.insert(char, width);
                 }
             }
             "KPX" => {
@@ -123,26 +138,36 @@ fn build_helvetica() -> Result<()> {
                     continue;
                 };
                 let kern: i32 = words0[3].parse().unwrap();
-                kerns[c1 as usize].push((c2, kern));
+                kerns.entry(c1).or_default().push((c2, kern));
             }
             _ => {}
         }
     }
 
-    write!(out, "pub static WIDTHS: [i32; 128] = [")?;
-    for w in widths {
-        write!(out, "{w},")?;
+    writeln!(out, "use std::collections::HashMap;")?;
+    writeln!(out, "use std::sync::LazyLock;")?;
+    writeln!(
+        out,
+        "pub static WIDTHS: LazyLock<HashMap<char, u32>> = LazyLock::new(|| ["
+    )?;
+    for (c, w) in widths {
+        writeln!(out, "('\\u{{{c:x}}}', {w}),")?;
     }
-    writeln!(out, "];")?;
-    write!(out, "pub static KERNS: [&[(u8, i32)]; 128] = [")?;
-    for bks in &kerns {
-        write!(out, "&[")?;
-        for &(b, k) in bks {
-            write!(out, "({b},{k}),")?;
+    writeln!(out, "].into());")?;
+    writeln!(out)?;
+
+    write!(
+        out,
+        "pub static KERNS: LazyLock<HashMap<char, Vec<(char, i32)>>> = LazyLock::new(|| ["
+    )?;
+    for (c1, kerns) in kerns {
+        write!(out, "('\\u{{{c1:x}}}', vec![")?;
+        for (c2, kern) in kerns {
+            write!(out, "('\\u{{{c2:x}}}', {kern}), ")?;
         }
-        write!(out, "],")?;
+        writeln!(out, "]),")?;
     }
-    writeln!(out, "];")?;
+    writeln!(out, "].into());")?;
     Ok(())
 }
 

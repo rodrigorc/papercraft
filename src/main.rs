@@ -2044,7 +2044,9 @@ impl GlobalContext {
                             do_modal_dialog(ui,
                                 &tr!("Overwrite?"), "FileDialogConfirm",
                                 &tr!("The file '{}' already exists!\nWould you like to overwrite it?", name),
-                                Some("Cancel"), Some("Continue"))
+                                Some(&tr!("Cancel")),
+                                Some(&tr!("Continue")),
+                                )
                         } else {
                             do_modal_dialog(ui,
                                 &tr!("Error!"), "FileDialogConfirm",

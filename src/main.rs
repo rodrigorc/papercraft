@@ -11,7 +11,7 @@ use easy_imgui_window::{
     },
     winit,
 };
-use image::{DynamicImage, EncodableLayout, GenericImage, GenericImageView};
+use image::{DynamicImage, EncodableLayout, GenericImage, GenericImageView, Pixel};
 use lazy_static::lazy_static;
 use std::{io::Write, sync::atomic::AtomicPtr};
 use std::{
@@ -2621,32 +2621,39 @@ impl GlobalContext {
         Ok(())
     }
     fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
-        use printpdf::{BuiltinFont, Mm, PdfDocument, TextMatrix};
+        use lopdf::{
+            content::{Content, Operation},
+            dictionary,
+            xref::XrefType,
+            Document, Object, Stream, StringFormat,
+        };
 
         let options = self.data.papercraft().options();
-        let resolution = options.resolution as f32;
         let page_size_mm = Vector2::from(options.page_size);
-
-        let title = self.title(false);
-        let (doc, page_ref, layer_ref) =
-            PdfDocument::new(title, Mm(page_size_mm.x), Mm(page_size_mm.y), "Layer");
-        let doc = doc.with_creator(signature());
-        let font = doc.add_builtin_font(BuiltinFont::Helvetica).unwrap();
         let edge_id_position = options.edge_id_position;
 
-        let mut first_page = Some((page_ref, layer_ref));
+        let mut doc = Document::with_version("1.4");
+        doc.reference_table.cross_reference_type = XrefType::CrossReferenceTable;
 
-        self.generate_pages(None, |_page, pixbuf, texts, _| {
-            let (page_ref, layer_ref) = first_page
-                .take()
-                .unwrap_or_else(|| doc.add_page(Mm(page_size_mm.x), Mm(page_size_mm.y), "Layer"));
-            let layer = doc.get_page(page_ref).get_layer(layer_ref);
+        let id_pages = doc.new_object_id();
 
-            let write_texts = || {
+        let id_font = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding",
+        });
+
+        let mut pages = vec![];
+
+        self.generate_pages(None, |page, pixbuf, texts, _| {
+            let write_texts = |ops: &mut Vec<Operation>| {
                 if texts.is_empty() {
                     return;
                 }
-                layer.begin_text_section();
+                // Begin Text
+                ops.push(Operation::new("BT", Vec::new()));
+                let mut last_font = None;
                 for text in texts {
                     let size = text.size * 72.0 / 25.4;
                     // PDF fonts are just slightly larger than expected
@@ -2654,7 +2661,6 @@ impl GlobalContext {
                     let x = text.pos.x;
                     // (0,0) is in lower-left
                     let y = page_size_mm.y - text.pos.y;
-                    let angle = -Deg::from(text.angle).0;
                     let (width, cps) = pdf_metrics::measure_helvetica(&text.text);
                     let width = width as f32 * text.size / 1000.0;
                     let dx = match text.align {
@@ -2662,41 +2668,175 @@ impl GlobalContext {
                         TextAlign::Center => -width / 2.0,
                         TextAlign::Far => -width,
                     };
-                    let x = x + dx * text.angle.cos();
-                    let y = y - dx * text.angle.sin();
-                    layer.set_font(&font, size);
-                    layer.set_text_matrix(TextMatrix::TranslateRotate(
-                        Mm(x).into_pt(),
-                        Mm(y).into_pt(),
-                        angle,
-                    ));
-                    layer.write_positioned_codepoints(cps);
+                    let cos = text.angle.cos();
+                    let sin = text.angle.sin();
+                    let x = x + dx * cos;
+                    let y = y - dx * sin;
+
+                    // Set font
+                    if last_font != Some(size) {
+                        last_font = Some(size);
+                        ops.push(Operation::new("Tf", vec!["F1".into(), size.into()]));
+                    }
+
+                    let mx: Vec<Object> = vec![
+                        cos.into(),
+                        (-sin).into(),
+                        sin.into(),
+                        cos.into(),
+                        (x * 72.0 / 25.4).into(),
+                        (y * 72.0 / 25.4).into(),
+                    ];
+                    ops.push(Operation::new("Tm", mx));
+
+                    let mut tj = Vec::new();
+                    let mut codepoints = Vec::new();
+                    for (kern, cp) in cps {
+                        if kern != 0 {
+                            if !codepoints.is_empty() {
+                                tj.push(Object::String(
+                                    std::mem::take(&mut codepoints),
+                                    StringFormat::Literal,
+                                ));
+                            }
+                            tj.push(kern.into());
+                        }
+                        if let Ok(c) = u8::try_from(cp) {
+                            codepoints.push(c);
+                        }
+                    }
+                    if !codepoints.is_empty() {
+                        tj.push(Object::String(
+                            std::mem::take(&mut codepoints),
+                            StringFormat::Literal,
+                        ));
+                    }
+                    match tj.len() {
+                        0 => (),
+                        1 => ops.push(Operation::new("Tj", tj)),
+                        _ => ops.push(Operation::new("TJ", vec![Object::Array(tj)])),
+                    }
                 }
-                layer.end_text_section();
+                // End Text
+                ops.push(Operation::new("ET", Vec::new()));
             };
+
+            let mut ops: Vec<Operation> = Vec::new();
 
             if edge_id_position != EdgeIdPosition::Inside {
-                write_texts();
+                write_texts(&mut ops);
             }
 
-            let img = printpdf::Image::from_dynamic_image(pixbuf);
-            // This image with the default transformation and the right resolution should cover the page exactly
-            let tr = printpdf::ImageTransform {
-                dpi: Some(resolution),
-                ..Default::default()
-            };
-            img.add_to_layer(layer.clone(), tr);
+            let img_name = format!("IMG{page}");
+
+            ops.push(Operation::new("q", vec![]));
+            let mx: Vec<Object> = vec![
+                (page_size_mm.x * 72.0 / 25.4).into(),
+                0.into(),
+                0.into(),
+                (page_size_mm.y * 72.0 / 25.4).into(),
+                0.into(),
+                0.into(),
+            ];
+            ops.push(Operation::new("cm", mx));
+            ops.push(Operation::new("Do", vec![img_name.clone().into()]));
+            ops.push(Operation::new("Q", vec![]));
 
             if edge_id_position == EdgeIdPosition::Inside {
-                write_texts();
+                write_texts(&mut ops);
             }
+
+            let (width, height) = pixbuf.dimensions();
+            let mut rgb = vec![0; (3 * width * height) as usize];
+            let mut alpha = vec![0; (width * height) as usize];
+            for (n, (_, _, px)) in pixbuf.pixels().enumerate() {
+                let c = px.channels();
+                rgb[3 * n..][..3].copy_from_slice(&c[..3]);
+                alpha[n] = c[3];
+            }
+
+            let content = Content { operations: ops };
+            let id_content = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+
+            let id_mask = doc.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Image",
+                    "Width" => width,
+                    "Height" => height,
+                    "BitsPerComponent" => 8,
+                    "ColorSpace" => "DeviceGray",
+                },
+                alpha,
+            ));
+            let id_image = doc.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Image",
+                    "Width" => width,
+                    "Height" => height,
+                    "BitsPerComponent" => 8,
+                    "ColorSpace" => "DeviceRGB",
+                    "SMask" => id_mask,
+                },
+                rgb,
+            ));
+
+            let id_resources = doc.add_object(dictionary! {
+                "Font" => dictionary! {
+                    "F1" => id_font,
+                },
+                "XObject" => dictionary! {
+                    img_name => id_image,
+                },
+            });
+            let id_page = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => id_pages,
+                "Contents" => id_content,
+                "Resources" => id_resources,
+            });
+            pages.push(id_page.into());
             Ok(())
         })?;
 
-        let out = std::fs::File::create(file_name)?;
-        let mut out = std::io::BufWriter::new(out);
-        doc.save(&mut out)?;
+        let pdf_pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => pages.len() as i32,
+            "Kids" => pages,
+            "MediaBox" => vec![
+                0.into(), 0.into(),
+                (page_size_mm.x * 72.0 / 25.4).into(), (page_size_mm.y * 72.0 / 25.4).into()
+            ],
+        };
+        doc.objects.insert(id_pages, pdf_pages.into());
 
+        let id_catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => id_pages,
+        });
+        doc.trailer.set("Root", id_catalog);
+
+        let date = time::OffsetDateTime::now_utc();
+        let s_date = format!(
+            "D:{:04}{:02}{:02}{:02}{:02}{:02}Z",
+            date.year(),
+            u8::from(date.month()),
+            date.day(),
+            date.hour(),
+            date.minute(),
+            date.second(),
+        );
+
+        let id_info = doc.add_object(dictionary! {
+            "Title" => Object::string_literal(self.title(false)),
+            "Creator" => Object::string_literal(signature()),
+            "CreationDate" => Object::string_literal(s_date.clone()),
+            "ModDate" => Object::string_literal(s_date),
+        });
+        doc.trailer.set("Info", id_info);
+        doc.compress();
+        doc.save(file_name)?;
         Ok(())
     }
 
@@ -2834,6 +2974,7 @@ impl GlobalContext {
         })?;
         Ok(())
     }
+
     fn generate_png(
         &self,
         text_tex_id: Option<glow::Texture>,

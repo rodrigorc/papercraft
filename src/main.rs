@@ -3261,7 +3261,7 @@ impl GlobalContext {
                     let x = margin_left;
                     let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
                         .min(page_size_mm.y - FONT_SIZE);
-                    let text = String::from(signature());
+                    let text = signature();
                     texts.push(PrintableText {
                         size: FONT_SIZE,
                         pos: Vector2::new(x, y),
@@ -3622,15 +3622,15 @@ impl imgui::UiBuilder for Box<GlobalContext> {
     fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {
         self.add_rebuild(RebuildFlags::all());
 
-        self.font_default = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 18.0));
-        self.font_big = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 28.0));
-        self.font_small = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, 12.0));
+        self.font_default = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 18.0));
+        self.font_big = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 28.0));
+        self.font_small = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 12.0));
         let options = self.data.papercraft().options();
 
         // Do not go too big or Dear ImGui will assert!
         let edge_id_font_size =
             (options.edge_id_font_size * options.resolution as f32 / 72.0).min(350.0);
-        self.font_text = atlas.add_font(imgui::FontInfo::new(&*KARLA_TTF, edge_id_font_size));
+        self.font_text = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, edge_id_font_size));
         // This is eye-balled, depending on the particular font
         self.font_text_line_scale = 0.80;
 

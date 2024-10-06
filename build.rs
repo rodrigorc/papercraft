@@ -89,7 +89,7 @@ fn build_helvetica() -> Result<()> {
         let line = line.unwrap();
         let pieces: Vec<&str> = line.split('\t').collect();
         let name = pieces[0];
-        let code = u16::from_str_radix(&pieces[1], 16).unwrap();
+        let code = u16::from_str_radix(pieces[1], 16).unwrap();
         names.insert(name.to_owned(), code);
     }
 

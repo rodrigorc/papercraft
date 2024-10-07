@@ -69,7 +69,7 @@ fn build_resource() -> Result<()> {
 // Metrics for well-known PDF fonts are in AFM files
 fn build_helvetica() -> Result<()> {
     use std::{
-        collections::HashMap,
+        collections::BTreeMap,
         fs::File,
         io::{BufRead, BufReader, BufWriter, Write},
     };
@@ -78,9 +78,9 @@ fn build_helvetica() -> Result<()> {
     let out = File::create(out_path.join("helvetica_afm.rs"))?;
     let mut out = BufWriter::new(out);
 
-    let mut widths = HashMap::<u16, u32>::new(); // Unicode to width
-    let mut names = HashMap::<String, u16>::new(); // name to Unicode
-    let mut kerns = HashMap::<u16, Vec<(u16, i32)>>::new(); // Unicode to list of (Unicode, kerning)
+    let mut widths = BTreeMap::<u16, u32>::new(); // Unicode to width
+    let mut names = BTreeMap::<String, u16>::new(); // name to Unicode
+    let mut kerns = BTreeMap::<u16, Vec<(u16, i32)>>::new(); // Second-Unicode to list of (First-Unicode, kerning)
 
     println!("cargo:rerun-if-changed=thirdparty/afm/names.txt");
     let char_names = File::open("thirdparty/afm/names.txt").unwrap();
@@ -93,8 +93,9 @@ fn build_helvetica() -> Result<()> {
         names.insert(name.to_owned(), code);
     }
 
-    println!("cargo:rerun-if-changed=thirdparty/afm/Helvetica.afm");
-    let afm = File::open("thirdparty/afm/Helvetica.afm").unwrap();
+    let afm_file = "thirdparty/afm/Helvetica.afm";
+    println!("cargo:rerun-if-changed={afm_file}");
+    let afm = File::open(afm_file).unwrap();
     let afm = BufReader::new(afm);
 
     for line in afm.lines() {
@@ -138,36 +139,29 @@ fn build_helvetica() -> Result<()> {
                     continue;
                 };
                 let kern: i32 = words0[3].parse().unwrap();
-                kerns.entry(c1).or_default().push((c2, kern));
+                kerns.entry(c2).or_default().push((c1, kern));
             }
             _ => {}
         }
     }
 
-    writeln!(out, "use std::collections::HashMap;")?;
-    writeln!(out, "use std::sync::LazyLock;")?;
+    // Each char maps to (width, [(previous char, kerning)]).
     writeln!(
         out,
-        "pub static WIDTHS: LazyLock<HashMap<char, u32>> = LazyLock::new(|| ["
+        "pub static CHARS: [(char, (u32, &[(char, i32)])); {}] = [",
+        widths.len(),
     )?;
     for (c, w) in widths {
-        writeln!(out, "('\\u{{{c:x}}}', {w}),")?;
-    }
-    writeln!(out, "].into());")?;
-    writeln!(out)?;
-
-    write!(
-        out,
-        "pub static KERNS: LazyLock<HashMap<char, Vec<(char, i32)>>> = LazyLock::new(|| ["
-    )?;
-    for (c1, kerns) in kerns {
-        write!(out, "('\\u{{{c1:x}}}', vec![")?;
-        for (c2, kern) in kerns {
-            write!(out, "('\\u{{{c2:x}}}', {kern}), ")?;
+        write!(out, "('\\u{{{c:x}}}', ({w}, &[")?;
+        if let Some(mut ks) = kerns.remove(&c) {
+            ks.sort_by_key(|(c, _)| *c);
+            for (c2, k) in ks {
+                write!(out, "('\\u{{{c2:x}}}', {k}), ")?;
+            }
         }
-        writeln!(out, "]),")?;
+        writeln!(out, "])),")?;
     }
-    writeln!(out, "].into());")?;
+    writeln!(out, "];")?;
     Ok(())
 }
 

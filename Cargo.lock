@@ -2046,6 +2046,7 @@ dependencies = [
  "memoffset",
  "mint",
  "opener",
+ "rayon",
  "serde",
  "serde_json",
  "signal-hook",

@@ -1,4 +1,5 @@
 use super::*;
+use rayon::prelude::*;
 
 impl GlobalContext {
     pub fn generate_printable(&mut self, ui: &Ui, file_name: &Path) -> anyhow::Result<()> {
@@ -38,7 +39,7 @@ impl GlobalContext {
             content::{Content, Operation},
             dictionary,
             xref::XrefType,
-            Document, Object, Stream, StringFormat,
+            Document, Object, ObjectId, Stream, StringFormat,
         };
 
         let options = self.data.papercraft().options();
@@ -58,6 +59,55 @@ impl GlobalContext {
         });
 
         let mut pages = vec![];
+
+        let (tx_compress, rx_compress) =
+            std::sync::mpsc::channel::<(ObjectId, ObjectId, image::RgbaImage)>();
+        let (tx_done, rx_done) = std::sync::mpsc::channel::<(ObjectId, Stream)>();
+
+        rayon::spawn(move || {
+            rx_compress
+                .into_iter()
+                .par_bridge()
+                .flat_map(|(id_mask, id_image, pixbuf)| {
+                    let (width, height) = pixbuf.dimensions();
+                    let mut rgb = vec![0; (3 * width * height) as usize];
+                    let mut alpha = vec![0; (width * height) as usize];
+                    for (n, px) in pixbuf.pixels().enumerate() {
+                        let c = px.channels();
+                        rgb[3 * n..][..3].copy_from_slice(&c[..3]);
+                        alpha[n] = c[3];
+                    }
+                    let stream_mask = Stream::new(
+                        dictionary! {
+                            "Type" => "XObject",
+                            "Subtype" => "Image",
+                            "Width" => width,
+                            "Height" => height,
+                            "BitsPerComponent" => 8,
+                            "ColorSpace" => "DeviceGray",
+                        },
+                        alpha,
+                    );
+                    let stream_image = Stream::new(
+                        dictionary! {
+                            "Type" => "XObject",
+                            "Subtype" => "Image",
+                            "Width" => width,
+                            "Height" => height,
+                            "BitsPerComponent" => 8,
+                            "ColorSpace" => "DeviceRGB",
+                            "SMask" => id_mask,
+                        },
+                        rgb,
+                    );
+                    [(id_mask, stream_mask), (id_image, stream_image)]
+                })
+                .for_each(|(id, mut stream)| {
+                    let _ = stream.compress();
+                    tx_done.send((id, stream)).unwrap();
+                });
+            drop(tx_done);
+        });
 
         self.generate_pages(None, |page, pixbuf, texts, _| {
             let write_texts = |ops: &mut Vec<Operation>| {
@@ -159,41 +209,12 @@ impl GlobalContext {
                 write_texts(&mut ops);
             }
 
-            let (width, height) = pixbuf.dimensions();
-            let mut rgb = vec![0; (3 * width * height) as usize];
-            let mut alpha = vec![0; (width * height) as usize];
-            for (n, (_, _, px)) in pixbuf.pixels().enumerate() {
-                let c = px.channels();
-                rgb[3 * n..][..3].copy_from_slice(&c[..3]);
-                alpha[n] = c[3];
-            }
-
             let content = Content { operations: ops };
             let id_content = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
 
-            let id_mask = doc.add_object(Stream::new(
-                dictionary! {
-                    "Type" => "XObject",
-                    "Subtype" => "Image",
-                    "Width" => width,
-                    "Height" => height,
-                    "BitsPerComponent" => 8,
-                    "ColorSpace" => "DeviceGray",
-                },
-                alpha,
-            ));
-            let id_image = doc.add_object(Stream::new(
-                dictionary! {
-                    "Type" => "XObject",
-                    "Subtype" => "Image",
-                    "Width" => width,
-                    "Height" => height,
-                    "BitsPerComponent" => 8,
-                    "ColorSpace" => "DeviceRGB",
-                    "SMask" => id_mask,
-                },
-                rgb,
-            ));
+            let id_mask = doc.new_object_id();
+            let id_image = doc.new_object_id();
+            tx_compress.send((id_mask, id_image, pixbuf)).unwrap();
 
             let id_resources = doc.add_object(dictionary! {
                 "Font" => dictionary! {
@@ -213,6 +234,11 @@ impl GlobalContext {
             Ok(())
         })?;
 
+        drop(tx_compress);
+        for (id, stream) in rx_done.into_iter() {
+            doc.set_object(id, stream);
+        }
+
         let pdf_pages = dictionary! {
             "Type" => "Pages",
             "Count" => pages.len() as i32,
@@ -222,7 +248,7 @@ impl GlobalContext {
                 (page_size_mm.x * 72.0 / 25.4).into(), (page_size_mm.y * 72.0 / 25.4).into()
             ],
         };
-        doc.objects.insert(id_pages, pdf_pages.into());
+        doc.set_object(id_pages, pdf_pages);
 
         let id_catalog = doc.add_object(dictionary! {
             "Type" => "Catalog",
@@ -425,7 +451,7 @@ impl GlobalContext {
     where
         F: FnMut(
             u32,
-            &DynamicImage,
+            image::RgbaImage,
             &[PrintableText],
             &[(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))],
         ) -> anyhow::Result<()>,
@@ -438,9 +464,6 @@ impl GlobalContext {
         let page_size_pixels = page_size_inches * resolution;
         let page_size_pixels =
             cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
-
-        let mut pixbuf =
-            image::RgbaImage::new(page_size_pixels.x as u32, page_size_pixels.y as u32);
 
         unsafe {
             let fbo = glr::Framebuffer::generate(&self.gl)?;
@@ -657,6 +680,9 @@ impl GlobalContext {
 
                 self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
 
+                let mut pixbuf =
+                    image::RgbaImage::new(page_size_pixels.x as u32, page_size_pixels.y as u32);
+
                 self.gl.read_pixels(
                     0,
                     0,
@@ -769,10 +795,7 @@ impl GlobalContext {
                         }
                     }
                 }
-                let img = DynamicImage::from(pixbuf);
-                do_page_fn(page, &img, &texts, &lines_by_island)?;
-                // restore the
-                pixbuf = img.into();
+                do_page_fn(page, pixbuf, &texts, &lines_by_island)?;
             }
         }
         Ok(())

@@ -2784,22 +2784,6 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
     res
 }
 
-pub fn cuts_to_page_cuts<'c>(
-    cuts: impl Iterator<Item = (&'c MVertex2DLine, &'c MVertex2DLine)>,
-    in_page: impl Fn(Vector2) -> (bool, Vector2),
-) -> Option<Vec<(Vector2, Vector2)>> {
-    let mut touching = false;
-    let page_cut = cuts
-        .map(|(v0, v1)| {
-            let (is_in_0, v0) = in_page(v0.pos);
-            let (is_in_1, v1) = in_page(v1.pos);
-            touching |= is_in_0 | is_in_1;
-            (v0, v1)
-        })
-        .collect::<Vec<_>>();
-    touching.then_some(page_cut)
-}
-
 enum TextAlign {
     Near,
     Center,

@@ -1,6 +1,36 @@
 use super::*;
 use rayon::prelude::*;
 
+fn cuts_to_page_cuts<'c>(
+    cuts: impl Iterator<Item = (&'c MVertex2DLine, &'c MVertex2DLine)>,
+    in_page: impl Fn(Vector2) -> (bool, Vector2),
+) -> Option<Vec<(Vector2, Vector2)>> {
+    let mut touching = false;
+    let page_cut = cuts
+        .map(|(v0, v1)| {
+            let (is_in_0, v0) = in_page(v0.pos);
+            let (is_in_1, v1) = in_page(v1.pos);
+            touching |= is_in_0 | is_in_1;
+            (v0, v1)
+        })
+        .collect::<Vec<_>>();
+    touching.then_some(page_cut)
+}
+
+fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
+    if page == 0 {
+        return file_name.to_owned();
+    }
+    let ext = file_name.extension().unwrap_or_default();
+    let stem = file_name.file_stem().unwrap_or_default();
+    let stem = stem.to_string_lossy();
+    let stem = stem.strip_suffix("_1").unwrap_or(&stem);
+    let parent = file_name.parent().map(|p| p.to_owned()).unwrap_or_default();
+    let mut name = PathBuf::from(format!("{}_{}", stem, page + 1));
+    name.set_extension(ext);
+    parent.join(name)
+}
+
 impl GlobalContext {
     pub fn generate_printable(&mut self, ui: &Ui, file_name: &Path) -> anyhow::Result<()> {
         // Rebuild everything, just in case
@@ -284,7 +314,7 @@ impl GlobalContext {
         let edge_id_position = options.edge_id_position;
 
         self.generate_pages(None, |page, pixbuf, texts, lines_by_island| {
-            let name = Self::file_name_for_page(file_name, page);
+            let name = file_name_for_page(file_name, page);
             let out = std::fs::File::create(name)?;
             let mut out = std::io::BufWriter::new(out);
 
@@ -420,27 +450,13 @@ impl GlobalContext {
         file_name: &Path,
     ) -> anyhow::Result<()> {
         self.generate_pages(text_tex_id, |page, pixbuf, _texts, _| {
-            let name = Self::file_name_for_page(file_name, page);
+            let name = file_name_for_page(file_name, page);
             let f = std::fs::File::create(name)?;
             let mut f = std::io::BufWriter::new(f);
             pixbuf.write_to(&mut f, image::ImageFormat::Png)?;
             Ok(())
         })?;
         Ok(())
-    }
-
-    fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
-        if page == 0 {
-            return file_name.to_owned();
-        }
-        let ext = file_name.extension().unwrap_or_default();
-        let stem = file_name.file_stem().unwrap_or_default();
-        let stem = stem.to_string_lossy();
-        let stem = stem.strip_suffix("_1").unwrap_or(&stem);
-        let parent = file_name.parent().map(|p| p.to_owned()).unwrap_or_default();
-        let mut name = PathBuf::from(format!("{}_{}", stem, page + 1));
-        name.set_extension(ext);
-        parent.join(name)
     }
 
     fn generate_pages<F>(

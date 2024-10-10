@@ -1239,7 +1239,7 @@ impl GlobalContext {
                         let mut i = options.page_cols as _;
                         ui.input_int_config(lbl_id(tr!("Columns"), "cols"), &mut i)
                             .build();
-                        options.page_cols = i.clamp(1, options.pages as _) as _;
+                        options.page_cols = i.clamp(1, 1000) as _;
 
                         ui.set_next_item_width(font_sz * 11.0);
                         ui.checkbox(

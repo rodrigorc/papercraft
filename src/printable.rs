@@ -99,6 +99,7 @@ impl GlobalContext {
                 .into_iter()
                 .par_bridge()
                 .flat_map(|(id_mask, id_image, pixbuf)| {
+                    log::debug!("Splitting...");
                     let (width, height) = pixbuf.dimensions();
                     let mut rgb = vec![0; (3 * width * height) as usize];
                     let mut alpha = vec![0; (width * height) as usize];
@@ -130,10 +131,13 @@ impl GlobalContext {
                         },
                         rgb,
                     );
+                    log::debug!("Split");
                     [(id_mask, stream_mask), (id_image, stream_image)]
                 })
                 .for_each(|(id, mut stream)| {
+                    log::debug!("Compressing...");
                     let _ = stream.compress();
+                    log::debug!("Compressed");
                     tx_done.send((id, stream)).unwrap();
                 });
             drop(tx_done);
@@ -313,17 +317,55 @@ impl GlobalContext {
         let options = self.data.papercraft().options();
         let edge_id_position = options.edge_id_position;
 
-        self.generate_pages(None, |page, pixbuf, texts, lines_by_island| {
-            let name = file_name_for_page(file_name, page);
-            let out = std::fs::File::create(name)?;
-            let mut out = std::io::BufWriter::new(out);
+        let (tx_compress, rx_compress) =
+            std::sync::mpsc::channel::<(u32, image::RgbaImage, Vec<u8>, Vec<u8>)>();
+        let (tx_done, rx_done) = std::sync::mpsc::channel::<anyhow::Result<()>>();
 
+        let file_name = PathBuf::from(file_name);
+        rayon::spawn(move || {
+            let res: anyhow::Result<()> = rx_compress.into_iter().par_bridge().try_for_each(
+                |(page, pixbuf, prefix, suffix)| {
+                    let name = file_name_for_page(&file_name, page);
+                    // A try block would be nice here
+                    ((|| -> anyhow::Result<()> {
+                        log::debug!("Saving page {}", name.display());
+
+                        let out = std::fs::File::create(&name)?;
+                        let mut out = std::io::BufWriter::new(out);
+
+                        out.write_all(&prefix)?;
+
+                        // Can't write directly the image to the file as a base64, because Image::write_to requires `Seek`, but `base64::EncoderWriter` doesn't implement it.
+                        {
+                            use base64::prelude::*;
+                            let mut png = Vec::new();
+                            let mut cpng = std::io::Cursor::new(&mut png);
+                            pixbuf.write_to(&mut cpng, image::ImageFormat::Png)?;
+
+                            let mut b64png =
+                                base64::write::EncoderWriter::new(&mut out, &BASE64_STANDARD);
+                            b64png.write_all(&png)?;
+                            b64png.finish()?;
+                        }
+
+                        out.write_all(&suffix)?;
+
+                        log::debug!("Saved page {}", name.display());
+                        Ok(())
+                    })())
+                    .with_context(|| tr!("Error saving file {}", name.display()))
+                },
+            );
+            // Send the possible error back to the main thread
+            tx_done.send(res.map_err(Into::into)).unwrap();
+            drop(tx_done);
+        });
+
+        self.generate_pages(None, |page, pixbuf, texts, lines_by_island| {
             let page_size = Vector2::from(options.page_size);
             let in_page = options.is_in_page_fn(page);
 
-            let mut png = Vec::new();
-            let mut cpng = std::io::Cursor::new(&mut png);
-            pixbuf.write_to(&mut cpng, image::ImageFormat::Png)?;
+            let mut prefix = Vec::new();
 
             let mut all_page_cuts = Vec::new();
 
@@ -332,14 +374,14 @@ impl GlobalContext {
                     all_page_cuts.push((idx, page_cuts));
                 };
             }
-            writeln!(&mut out, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
+            writeln!(&mut prefix, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
             writeln!(
-                &mut out,
+                &mut prefix,
                 r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
                 page_size.x, page_size.y
             )?;
 
-            let write_layer_text = |out: &mut std::io::BufWriter<std::fs::File>| -> anyhow::Result<()> {
+            let write_layer_text = |out: &mut Vec<u8>| -> anyhow::Result<()> {
                 if texts.is_empty() {
                     return Ok(());
                 }
@@ -367,49 +409,45 @@ impl GlobalContext {
             };
 
             if edge_id_position != EdgeIdPosition::Inside {
-                write_layer_text(&mut out)?;
+                write_layer_text(&mut prefix)?;
             }
 
             // begin layer Background
-            writeln!(&mut out, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
+            writeln!(&mut prefix, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
             write!(
-                &mut out,
+                &mut prefix,
                 r#"<image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/png;base64,"#,
                 page_size.x, page_size.y)?;
-            {
-                use base64::prelude::*;
-                let mut b64png = base64::write::EncoderWriter::new(&mut out, &BASE64_STANDARD);
-                b64png.write_all(&png)?;
-                b64png.finish()?;
-            }
-            writeln!(&mut out, r#"" id="background" x="0" y="0" style="display:inline"/>"#)?;
 
-            writeln!(&mut out, r#"</g>"#)?;
+            let mut suffix = Vec::new();
+            writeln!(&mut suffix, r#"" id="background" x="0" y="0" style="display:inline"/>"#)?;
+
+            writeln!(&mut suffix, r#"</g>"#)?;
             // end layer Background
 
             if edge_id_position == EdgeIdPosition::Inside {
-                write_layer_text(&mut out)?;
+                write_layer_text(&mut suffix)?;
             }
 
             // begin layer Cut
-            writeln!(&mut out, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
+            writeln!(&mut suffix, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
             for (idx, page_cut) in all_page_cuts {
-                writeln!(&mut out, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
-                write!(&mut out, r#"M "#)?;
+                writeln!(&mut suffix, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
+                write!(&mut suffix, r#"M "#)?;
                 let page_contour = cut_to_contour(page_cut);
                 for v in page_contour {
-                    writeln!(&mut out, r#"{},{}"#, v.x, v.y)?;
+                    writeln!(&mut suffix, r#"{},{}"#, v.x, v.y)?;
                 }
-                writeln!(&mut out, r#"z"#)?;
-                writeln!(&mut out, r#"" />"#)?;
+                writeln!(&mut suffix, r#"z"#)?;
+                writeln!(&mut suffix, r#"" />"#)?;
             }
-            writeln!(&mut out, r#"</g>"#)?;
+            writeln!(&mut suffix, r#"</g>"#)?;
             // end layer Cut
 
             // begin layer Fold
-            writeln!(&mut out, r#"<g inkscape:label="Fold" inkscape:groupmode="layer" id="Fold" style="display:none">"#)?;
+            writeln!(&mut suffix, r#"<g inkscape:label="Fold" inkscape:groupmode="layer" id="Fold" style="display:none">"#)?;
             for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
-                writeln!(&mut out, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
+                writeln!(&mut suffix, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
                     if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
                 for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
                     let creases = lines.iter_crease(extra, fold_kind);
@@ -422,25 +460,32 @@ impl GlobalContext {
                         })
                         .collect::<Vec<_>>();
                     if !page_creases.is_empty() {
-                        writeln!(&mut out, r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
+                        writeln!(&mut suffix, r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
                             idx,
                             if fold_kind == EdgeDrawKind::Mountain  { "#ff0000" } else { "#0000ff" },
                             if fold_kind == EdgeDrawKind::Mountain  { "foldm" } else { "foldv" }
                         )?;
                         for (a, b) in page_creases {
-                            writeln!(&mut out, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
+                            writeln!(&mut suffix, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
                         }
-                        writeln!(&mut out, r#"" />"#)?;
+                        writeln!(&mut suffix, r#"" />"#)?;
                     }
                 }
-                writeln!(&mut out, r#"</g>"#)?;
+                writeln!(&mut suffix, r#"</g>"#)?;
             }
-            writeln!(&mut out, r#"</g>"#)?;
+            writeln!(&mut suffix, r#"</g>"#)?;
             // end layer Fold
 
-            writeln!(&mut out, r#"</svg>"#)?;
+            writeln!(&mut suffix, r#"</svg>"#)?;
+
+            tx_compress.send((page, pixbuf, prefix, suffix)).unwrap();
             Ok(())
         })?;
+
+        drop(tx_compress);
+        // Forward the error, if any
+        rx_done.into_iter().collect::<Result<()>>()?;
+
         Ok(())
     }
 
@@ -449,13 +494,42 @@ impl GlobalContext {
         text_tex_id: Option<glow::Texture>,
         file_name: &Path,
     ) -> anyhow::Result<()> {
+        let (tx_compress, rx_compress) = std::sync::mpsc::channel::<(u32, image::RgbaImage)>();
+        let (tx_done, rx_done) = std::sync::mpsc::channel::<anyhow::Result<()>>();
+
+        let file_name = PathBuf::from(file_name);
+        rayon::spawn(move || {
+            let res: anyhow::Result<()> =
+                rx_compress
+                    .into_iter()
+                    .par_bridge()
+                    .try_for_each(|(page, pixbuf)| {
+                        let name = file_name_for_page(&file_name, page);
+                        // A try block would be nice here
+                        ((|| -> anyhow::Result<()> {
+                            log::debug!("Saving page {}", name.display());
+                            let f = std::fs::File::create(&name)?;
+                            let mut f = std::io::BufWriter::new(f);
+                            pixbuf.write_to(&mut f, image::ImageFormat::Png)?;
+                            log::debug!("Saved page {}", name.display());
+                            Ok(())
+                        })())
+                        .with_context(|| tr!("Error saving file {}", name.display()))
+                    });
+            // Send the possible error back to the main thread
+            tx_done.send(res).unwrap();
+            drop(tx_done);
+        });
+
         self.generate_pages(text_tex_id, |page, pixbuf, _texts, _| {
-            let name = file_name_for_page(file_name, page);
-            let f = std::fs::File::create(name)?;
-            let mut f = std::io::BufWriter::new(f);
-            pixbuf.write_to(&mut f, image::ImageFormat::Png)?;
+            tx_compress.send((page, pixbuf)).unwrap();
             Ok(())
         })?;
+
+        drop(tx_compress);
+        // Forward the error, if any
+        rx_done.into_iter().collect::<Result<()>>()?;
+
         Ok(())
     }
 
@@ -583,6 +657,8 @@ impl GlobalContext {
             let lines_by_island = self.data.lines_by_island();
 
             for page in 0..page_count {
+                log::debug!("Rendering page {}", page + 1);
+
                 // Start render
                 self.gl.clear(glow::COLOR_BUFFER_BIT);
                 let page_pos = options.page_position(page);
@@ -811,6 +887,7 @@ impl GlobalContext {
                         }
                     }
                 }
+                log::debug!("Render {} complete", page + 1);
                 do_page_fn(page, pixbuf, &texts, &lines_by_island)?;
             }
         }

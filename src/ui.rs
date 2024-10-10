@@ -1934,43 +1934,42 @@ impl PapercraftContext {
                 delta,
             )
             .unwrap();
+
+            let mut going_outside = false;
             for &i_island in &self.selected_islands {
-                if let Some(island) = self.papercraft.island_by_key(i_island) {
-                    if !self
-                        .papercraft
-                        .options()
-                        .is_inside_canvas(island.location() + delta_scaled)
-                    {
-                        self.last_cursor_pos -= delta;
-                        return RebuildFlags::empty();
-                    }
-                }
-            }
-            for &i_island in &self.selected_islands {
-                if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
+                let location = if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
                     island.translate(delta_scaled);
-                }
+                    island.location()
+                } else {
+                    continue;
+                };
+                going_outside |= !self.papercraft.options().is_inside_canvas(location);
             }
+
             // When moving an island the center of rotation is preserved as the original clicked point
             if let Some(c) = &mut self.rotation_center {
                 *c += delta;
             }
-            'scroll: {
-                //If the mouse is outside of the canvas, do as if it were inside, so it can be scrolled in the next tick
-                let delta = if pos.x < 5.0 {
-                    Vector2::new((-pos.x).clamp(5.0, 25.0), 0.0)
-                } else if pos.x > size.x - 5.0 {
-                    Vector2::new(-(pos.x - size.x).clamp(5.0, 25.0), 0.0)
-                } else if pos.y < 5.0 {
-                    Vector2::new(0.0, (-pos.y).clamp(5.0, 25.0))
-                } else if pos.y > size.y - 5.0 {
-                    Vector2::new(0.0, -(pos.y - size.y).clamp(5.0, 25.0))
-                } else {
-                    break 'scroll;
-                };
-                let delta = delta / 2.0;
-                self.last_cursor_pos += delta;
-                self.ui.trans_paper.mx = Matrix3::from_translation(delta) * self.ui.trans_paper.mx;
+
+            if !going_outside {
+                'scroll: {
+                    //If the mouse is outside of the canvas, do as if it were inside, so it can be scrolled in the next tick
+                    let delta = if pos.x < 5.0 {
+                        Vector2::new((-pos.x).clamp(5.0, 25.0), 0.0)
+                    } else if pos.x > size.x - 5.0 {
+                        Vector2::new(-(pos.x - size.x).clamp(5.0, 25.0), 0.0)
+                    } else if pos.y < 5.0 {
+                        Vector2::new(0.0, (-pos.y).clamp(5.0, 25.0))
+                    } else if pos.y > size.y - 5.0 {
+                        Vector2::new(0.0, -(pos.y - size.y).clamp(5.0, 25.0))
+                    } else {
+                        break 'scroll;
+                    };
+                    let delta = delta / 2.0;
+                    self.last_cursor_pos += delta;
+                    self.ui.trans_paper.mx =
+                        Matrix3::from_translation(delta) * self.ui.trans_paper.mx;
+                }
             }
         }
         RebuildFlags::PAPER

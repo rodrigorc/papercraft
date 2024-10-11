@@ -149,6 +149,9 @@ pub struct PapercraftContext {
     grabbed_island: Option<Vec<UndoAction>>,
     last_cursor_pos: Vector2,
     rotation_center: Option<Vector2>,
+    // The selection rectangle, while dragging it, plus the pre-selected islands.
+    // The boolean says if the selection is to be added or removed
+    pre_selection: Option<(Vector2, Vector2, FxHashSet<IslandKey>, bool)>,
     // The island that has just been selected
     just_selected: Option<IslandKey>,
 
@@ -231,7 +234,8 @@ pub struct TransformationPaper {
 }
 
 impl TransformationPaper {
-    fn paper_click(&self, size: Vector2, pos: Vector2) -> Vector2 {
+    /// Converts coordinates from window to canvas
+    pub fn paper_click(&self, size: Vector2, pos: Vector2) -> Vector2 {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point2::new(x, y);
@@ -239,6 +243,15 @@ impl TransformationPaper {
         let mx = self.ortho * self.mx;
         let mx_inv = mx.invert().unwrap();
         mx_inv.transform_point(click).to_vec()
+    }
+    /// Converts coordinates from canvas to window
+    pub fn paper_unclick(&self, size: Vector2, pos: Vector2) -> Vector2 {
+        let mx = self.ortho * self.mx;
+        let pos = mx.transform_point(Point2::from_vec(pos)).to_vec();
+
+        let x = (pos.x + 1.0) / 2.0 * size.x;
+        let y = (-pos.y + 1.0) / 2.0 * size.y;
+        Vector2::new(x, y)
     }
 }
 
@@ -453,6 +466,31 @@ pub enum UndoResult {
     ModelAndOptions(PaperOptions),
 }
 
+pub struct Rectangle {
+    pub a: Vector2,
+    pub b: Vector2,
+}
+
+impl Rectangle {
+    pub fn new(mut a: Vector2, mut b: Vector2) -> Rectangle {
+        if a.x > b.x {
+            std::mem::swap(&mut a.x, &mut b.x);
+        }
+        if a.y > b.y {
+            std::mem::swap(&mut a.y, &mut b.y);
+        }
+        Rectangle { a, b }
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.a == self.b
+    }
+
+    pub fn contains(&self, p: cgmath::Vector2<f32>) -> bool {
+        (self.a.x..self.b.x).contains(&p.x) && (self.a.y..self.b.y).contains(&p.y)
+    }
+}
+
 impl PapercraftContext {
     pub fn papercraft(&self) -> &Papercraft {
         &self.papercraft
@@ -520,6 +558,7 @@ impl PapercraftContext {
             grabbed_island: None,
             last_cursor_pos: Vector2::zero(),
             rotation_center: None,
+            pre_selection: None,
             just_selected: None,
             ui: UiSettings {
                 mode: MouseMode::Face,
@@ -1312,7 +1351,19 @@ impl PapercraftContext {
             };
         }
         let top = self.ui.xray_selection as u8;
-        for &sel_island in &self.selected_islands {
+
+        // Pre-selected islands are drawn as if selected
+        let empty = FxHashSet::default();
+        let (pre_add, pre_remove) = match self.pre_selection.as_ref() {
+            None => (&empty, &empty),
+            Some((_, _, sel, true)) => (sel, &empty),
+            Some((_, _, sel, false)) => (&empty, sel),
+        };
+
+        for &sel_island in self.selected_islands.iter().chain(pre_add) {
+            if pre_remove.contains(&sel_island) {
+                continue;
+            }
             if let Some(island) = self.papercraft.island_by_key(sel_island) {
                 self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                     let pos = 3 * usize::from(i_face);
@@ -1332,6 +1383,7 @@ impl PapercraftContext {
                 });
             }
         }
+
         if let Some(i_sel_face) = self.selected_face {
             for i_face in self.papercraft.get_flat_faces(i_sel_face) {
                 let pos = 3 * usize::from(i_face);
@@ -1893,6 +1945,7 @@ impl PapercraftContext {
         size: Vector2,
         pos: Vector2,
         rotating: bool,
+        dragging: bool,
     ) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
         self.last_cursor_pos = pos;
@@ -1908,7 +1961,50 @@ impl PapercraftContext {
                 self.push_undo_action(undo);
             }
             _ => {
-                return RebuildFlags::empty();
+                // The same key for rotating (shift) is used for removing the selection.
+                let adding = !rotating;
+
+                // No selection, check if we should build a pre-selection rectangle
+                let click = self.ui.trans_paper.paper_click(size, pos);
+
+                let (next, flags) = match self.pre_selection.take() {
+                    // First pre-selection click, just save it
+                    None => (
+                        (click, click, FxHashSet::default(), adding),
+                        RebuildFlags::empty(),
+                    ),
+                    // If not dragging yet keep a zero size rectangle
+                    Some(p) if !dragging => (p, RebuildFlags::empty()),
+                    // If dragging do the full pre-selection stuff
+                    Some((orig, _, pre_sel, pre_adding)) => {
+                        let mut next_sel = FxHashSet::default();
+                        let rect = Rectangle::new(orig, click);
+
+                        // An island is in the selection box if any of its vertices is inside the
+                        // rectangle.
+                        for (island_key, island) in self.papercraft.islands() {
+                            self.papercraft.traverse_faces_no_matrix(island, |i_face| {
+                                let idx = 3 * self.gl_objs.paper_face_index[usize::from(i_face)];
+                                for i in idx..idx + 3 {
+                                    let pos = self.gl_objs.paper_vertices[i as usize].pos;
+                                    if rect.contains(pos) {
+                                        next_sel.insert(island_key);
+                                        return ControlFlow::Break(());
+                                    }
+                                }
+                                ControlFlow::Continue(())
+                            });
+                        }
+                        let flags = if pre_sel != next_sel || pre_adding != adding {
+                            RebuildFlags::SELECTION
+                        } else {
+                            RebuildFlags::empty()
+                        };
+                        ((orig, click, next_sel, adding), flags)
+                    }
+                };
+                self.pre_selection = Some(next);
+                return flags;
             }
         }
 
@@ -1974,6 +2070,25 @@ impl PapercraftContext {
         }
         RebuildFlags::PAPER
     }
+
+    #[must_use]
+    pub fn paper_button1_drag_complete_event(&mut self) -> RebuildFlags {
+        if let Some((_, _, mut sel, adding)) = self.pre_selection.take() {
+            if adding {
+                // Use the sel hash-map to remove duplicates
+                sel.extend(self.selected_islands.iter().copied());
+                self.selected_islands = Vec::from_iter(sel);
+            } else {
+                // Remove the pre-selected islands
+                let prev: FxHashSet<_> = self.selected_islands.iter().copied().collect();
+                self.selected_islands = Vec::from_iter(prev.difference(&sel).copied());
+            }
+            RebuildFlags::SELECTION
+        } else {
+            RebuildFlags::empty()
+        }
+    }
+
     #[must_use]
     pub fn paper_button1_click_event(
         &mut self,
@@ -2032,9 +2147,9 @@ impl PapercraftContext {
         &mut self,
         size: Vector2,
         pos: Vector2,
-        _shift_action: bool,
         add_to_sel: bool,
     ) -> RebuildFlags {
+        self.pre_selection = None;
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         let flags = if add_to_sel {
             SetSelectionFlags::ADD_TO_SEL
@@ -2069,6 +2184,7 @@ impl PapercraftContext {
         pos: Vector2,
         alt_pressed: bool,
     ) -> RebuildFlags {
+        self.pre_selection = None;
         self.last_cursor_pos = pos;
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         self.rotation_center = None;
@@ -2079,6 +2195,12 @@ impl PapercraftContext {
             SetSelectionFlags::empty()
         };
         self.set_selection(selection, flags)
+    }
+
+    pub fn pre_selection_rectangle(&self) -> Option<Rectangle> {
+        self.pre_selection
+            .as_ref()
+            .map(|(a, b, _, _)| Rectangle::new(*a, *b))
     }
 
     #[must_use]

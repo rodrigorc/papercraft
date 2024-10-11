@@ -1763,14 +1763,15 @@ impl GlobalContext {
 
                 canvas3d(ui, &mut self.scene_ui_status);
 
+                let x = pos.x as i32;
+                let y = (dsp_size.y - pos.y) as i32;
+                let width = self.sz_scene.x as i32;
+                let height = self.sz_scene.y as i32;
+
                 ui.window_draw_list().add_callback({
                     move |this| {
                         unsafe {
                             // blit the FBO to the real FB
-                            let x = pos.x as i32;
-                            let y = (dsp_size.y - pos.y) as i32;
-                            let width = this.sz_scene.x as i32;
-                            let height = this.sz_scene.y as i32;
 
                             let _read_fb_binder =
                                 BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
@@ -1806,15 +1807,16 @@ impl GlobalContext {
 
                 canvas3d(ui, &mut self.paper_ui_status);
 
-                ui.window_draw_list().add_callback({
+                let x = pos.x as i32;
+                let y = (dsp_size.y - pos.y) as i32;
+                let width = self.sz_paper.x as i32;
+                let height = self.sz_paper.y as i32;
+
+                let draw_list = ui.window_draw_list();
+                draw_list.add_callback({
                     move |this| {
                         unsafe {
                             // blit the FBO to the real FB
-                            let x = pos.x as i32;
-                            let y = (dsp_size.y - pos.y) as i32;
-                            let width = this.sz_paper.x as i32;
-                            let height = this.sz_paper.y as i32;
-
                             let _read_fb_binder =
                                 BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
                             this.gl.blit_framebuffer(
@@ -1832,6 +1834,39 @@ impl GlobalContext {
                         }
                     }
                 });
+                if let Some(rect) = self.data.pre_selection_rectangle() {
+                    if !rect.is_null() {
+                        let sel_a = (pos
+                            + self
+                                .data
+                                .ui
+                                .trans_paper
+                                .paper_unclick(self.sz_paper, rect.a))
+                            / scale;
+                        let sel_b = (pos
+                            + self
+                                .data
+                                .ui
+                                .trans_paper
+                                .paper_unclick(self.sz_paper, rect.b))
+                            / scale;
+                        draw_list.add_rect_filled(
+                            sel_a,
+                            sel_b,
+                            Color::new(0.25, 0.25, 0.25, 0.5),
+                            4.0,
+                            imgui::DrawFlags::empty(),
+                        );
+                        draw_list.add_rect(
+                            sel_a,
+                            sel_b,
+                            Color::new(0.2, 0.2, 1.0, 1.0),
+                            4.0,
+                            imgui::DrawFlags::empty(),
+                            2.0,
+                        );
+                    }
+                }
             });
         if r.is_none() {
             self.paper_ui_status = Canvas3dStatus::default();
@@ -2152,23 +2187,32 @@ impl GlobalContext {
                     self.modifiable(),
                 )
             }
-            Canvas3dAction::Released(MouseButton::Left) => self.data.paper_button1_release_event(
-                self.sz_paper,
-                mouse_pos,
-                shift_down,
-                control_down,
-            ),
+            Canvas3dAction::Released(MouseButton::Left) => {
+                self.data
+                    .paper_button1_release_event(self.sz_paper, mouse_pos, control_down)
+            }
             Canvas3dAction::Pressed(MouseButton::Right)
             | Canvas3dAction::Dragging(MouseButton::Right) => {
                 self.data.paper_button2_event(self.sz_paper, mouse_pos)
             }
             Canvas3dAction::Pressed(MouseButton::Left) => {
-                self.data
-                    .paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
+                self.data.paper_button1_grab_event(
+                    self.sz_paper,
+                    mouse_pos,
+                    shift_down,
+                    /*dragging*/ false,
+                )
             }
             Canvas3dAction::Dragging(MouseButton::Left) => {
-                self.data
-                    .paper_button1_grab_event(self.sz_paper, mouse_pos, shift_down)
+                self.data.paper_button1_grab_event(
+                    self.sz_paper,
+                    mouse_pos,
+                    shift_down,
+                    /*dragging*/ true,
+                )
+            }
+            Canvas3dAction::DragEnd(MouseButton::Left) => {
+                self.data.paper_button1_drag_complete_event()
             }
             _ => RebuildFlags::empty(),
         };
@@ -2634,13 +2678,22 @@ impl Default for Canvas3dStatus {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Canvas3dAction {
+    // The mouse is nowhere to be seen.
     None,
+    // The mouse is moved over the canvas without pressing buttons
     Hovering,
+    // A button has just been clicked
     Clicked(MouseButton),
+    // A button is held pressed, but without moving
     Pressed(MouseButton),
+    // A pressed button has been released
     Released(MouseButton),
-    Dragging(MouseButton),
+    // A button has just been double-clicked, this replaces the second Clicked.
     DoubleClicked(MouseButton),
+    // The mouse is being dragged while a button is pressed, it is converted from a Pressed.
+    Dragging(MouseButton),
+    // The Drag has ended (Released is not generated)
+    DragEnd(MouseButton),
 }
 
 fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
@@ -2655,10 +2708,8 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
         Canvas3dAction::Dragging(bt) => {
             if ui.is_mouse_dragging(*bt) {
                 Canvas3dAction::Dragging(*bt)
-            } else if hovered {
-                Canvas3dAction::Hovering
             } else {
-                Canvas3dAction::None
+                Canvas3dAction::DragEnd(*bt)
             }
         }
         Canvas3dAction::Hovering
@@ -2691,7 +2742,7 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
                 Canvas3dAction::Hovering
             }
         }
-        Canvas3dAction::None | Canvas3dAction::Released(_) => {
+        Canvas3dAction::None | Canvas3dAction::Released(_) | Canvas3dAction::DragEnd(_) => {
             // If the mouse is entered while dragging, it does not count, as if captured by other
             if hovered
                 && !ui.is_mouse_dragging(MouseButton::Left)

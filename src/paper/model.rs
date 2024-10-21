@@ -212,6 +212,12 @@ pub struct Vertex {
 #[derive(Debug, PartialEq, Eq)]
 pub struct FaceSource(u32);
 
+pub struct ImportedModule<I: Importer> {
+    pub model: Model,
+    pub face_map: Vec<FaceSource>,
+    pub edge_map: Vec<(I::VertexId, I::VertexId)>,
+}
+
 impl Model {
     pub fn empty() -> Model {
         Model {
@@ -222,9 +228,7 @@ impl Model {
         }
     }
 
-    pub fn from_importer<I: Importer>(
-        obj: &mut I,
-    ) -> (Model, Vec<FaceSource>, Vec<(I::VertexId, I::VertexId)>) {
+    pub fn from_importer<I: Importer>(obj: &mut I) -> ImportedModule<I> {
         let (has_normals, mut vertices) = obj.build_vertices();
 
         let num_faces = obj.face_count();
@@ -353,7 +357,11 @@ impl Model {
             faces,
         };
         model.post_create();
-        (model, face_map, edge_map)
+        ImportedModule {
+            model,
+            face_map,
+            edge_map,
+        }
     }
     fn post_create(&mut self) {
         for i_edge in 0..self.edges.len() {

@@ -148,18 +148,27 @@ fn build_helvetica() -> Result<()> {
     // Each char maps to (width, [(previous char, kerning)]).
     writeln!(
         out,
-        "pub static CHARS: [(char, (u32, &[(char, i32)])); {}] = [",
+        r#"
+pub struct CharInfo {{
+    pub width: u32,
+    pub kerns: &'static [(char, i32)],
+}}
+        "#
+    )?;
+    writeln!(
+        out,
+        "pub static CHARS: [(char, CharInfo); {}] = [",
         widths.len(),
     )?;
     for (c, w) in widths {
-        write!(out, "('\\u{{{c:x}}}', ({w}, &[")?;
+        write!(out, "('\\u{{{c:x}}}', CharInfo {{ width: {w}, kerns: &[")?;
         if let Some(mut ks) = kerns.remove(&c) {
             ks.sort_by_key(|(c, _)| *c);
             for (c2, k) in ks {
                 write!(out, "('\\u{{{c2:x}}}', {k}), ")?;
             }
         }
-        writeln!(out, "])),")?;
+        writeln!(out, "]}}),")?;
     }
     writeln!(out, "];")?;
     Ok(())

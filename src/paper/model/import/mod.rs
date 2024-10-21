@@ -75,8 +75,7 @@ pub trait Importer: Sized {
     fn build_vertices(&self) -> (bool, Vec<Vertex>);
     fn face_count(&self) -> usize;
 
-    fn faces<'s>(&'s self)
-        -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + 's;
+    fn faces(&self) -> impl Iterator<Item = (impl AsRef<[VertexIndex]>, MaterialIndex)> + '_;
 
     // Returns at least 1 texture, maybe default.
     // As a risky optimization, it can consume the texture data, call only once
@@ -155,8 +154,8 @@ pub fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
                 "MTL are material files for OBJ models. Try opening the OBJ file instead."
             );
         }
-        // unknown extensions are tried as obj, that was the default previously
-        "obj" | _ => {
+        // "obj" plus unknown extensions are tried as obj, that was the default previously
+        _ => {
             let importer = waveobj::WaveObjImporter::new(f, file_name)
                 .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?;
             Papercraft::import(importer)

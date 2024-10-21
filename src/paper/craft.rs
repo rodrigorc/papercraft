@@ -49,10 +49,10 @@ impl FlapSide {
         }
     }
     pub fn flap_visible(self, face_sign: bool) -> bool {
-        match (self, face_sign) {
-            (FlapSide::False, false) | (FlapSide::True, true) => true,
-            _ => false,
-        }
+        matches!(
+            (self, face_sign),
+            (FlapSide::False, false) | (FlapSide::True, true)
+        )
     }
 }
 
@@ -225,7 +225,7 @@ impl PaperOptions {
     }
     pub fn is_inside_canvas(&self, pos: Vector2) -> bool {
         let page_cols = self.page_cols;
-        let page_rows = (self.pages + self.page_cols - 1) / self.page_cols;
+        let page_rows = self.pages.div_ceil(self.page_cols);
         let page_size = Vector2::from(self.page_size);
 
         #[allow(clippy::if_same_then_else, clippy::needless_bool)]
@@ -293,6 +293,8 @@ struct FlapEdgeData {
     p1: Vector2,
 }
 
+type FlatFaceFlapDimensions = FxHashMap<(FaceIndex, EdgeIndex), FlapGeom>;
+
 #[derive(Default)]
 struct Memoization {
     // This depends on the options, because of the scale, but not on the islands,
@@ -304,8 +306,7 @@ struct Memoization {
     island_by_face: RefCell<Vec<IslandKey>>,
 
     // This depends on the options and the islands
-    flat_face_flap_dimensions:
-        RefCell<FxHashMap<IslandKey, FxHashMap<(FaceIndex, EdgeIndex), FlapGeom>>>,
+    flat_face_flap_dimensions: RefCell<FxHashMap<IslandKey, FlatFaceFlapDimensions>>,
 
     // This depends on the islands, but not on the options
     island_perimeters: RefCell<FxHashMap<IslandKey, Vec<FlapEdgeData>>>,
@@ -736,7 +737,7 @@ impl Papercraft {
         let i_face_a = self.model.face_index(face_a);
         let i_face_b = self.model.face_index(face_b);
         match memo.entry((i_edge, i_face_a, i_face_b)) {
-            Occupied(o) => return *o.get(),
+            Occupied(o) => *o.get(),
             Vacant(v) => {
                 let value = self.face_to_face_edge_matrix_internal(edge, face_a, face_b);
                 *v.insert(value)
@@ -809,12 +810,12 @@ impl Papercraft {
         let mut a0 = flap_angle;
         let mut a1 = flap_angle;
 
-        let (
+        let SelfCollisionPerimeter {
             perimeter,
             perimeter_egde_base,
-            (angle_0, perimeter_egde_0),
-            (angle_1, perimeter_egde_1),
-        ) = self.self_collision_perimeter(i_edge, i_face_a);
+            angle_0: (angle_0, perimeter_egde_0),
+            angle_1: (angle_1, perimeter_egde_1),
+        } = self.self_collision_perimeter(i_edge, i_face_a);
         if perimeter.is_empty() {
             // should not happen
             return FlapGeom::default();
@@ -1306,29 +1307,19 @@ impl Papercraft {
         &self,
         i_edge: EdgeIndex,
         i_face_a: FaceIndex,
-    ) -> (
-        Vec<FlapEdgeData>,
-        usize,
-        (Rad<f32>, usize),
-        (Rad<f32>, usize),
-    ) {
+    ) -> SelfCollisionPerimeter {
         let island_key = self.island_by_face(i_face_a);
         let perimeter = self.island_perimeter(island_key);
         let base_on_paper = perimeter
             .iter()
             .position(|e| i_edge == e.i_edge && i_face_a == e.i_face);
 
-        let Some(base_on_paper_idx) = base_on_paper else {
+        let Some(perimeter_egde_base) = base_on_paper else {
             // Should not happen, just in case
-            return (
-                Vec::new(),
-                usize::MAX,
-                (Rad::turn_div_2(), usize::MAX),
-                (Rad::turn_div_2(), usize::MAX),
-            );
+            return SelfCollisionPerimeter::default();
         };
 
-        let base = &perimeter[base_on_paper_idx];
+        let base = &perimeter[perimeter_egde_base];
         let base = (base.p0, base.p1);
 
         // angle_{0,1} should always exist, but just in case...
@@ -1352,7 +1343,30 @@ impl Papercraft {
             })
             // should not happen
             .unwrap_or((Rad::turn_div_2(), usize::MAX));
-        (perimeter, base_on_paper_idx, angle_0, angle_1)
+        SelfCollisionPerimeter {
+            perimeter,
+            perimeter_egde_base,
+            angle_0,
+            angle_1,
+        }
+    }
+}
+
+struct SelfCollisionPerimeter {
+    perimeter: Vec<FlapEdgeData>,
+    perimeter_egde_base: usize,
+    angle_0: (Rad<f32>, usize),
+    angle_1: (Rad<f32>, usize),
+}
+
+impl Default for SelfCollisionPerimeter {
+    fn default() -> Self {
+        SelfCollisionPerimeter {
+            perimeter: Vec::new(),
+            perimeter_egde_base: usize::MAX,
+            angle_0: (Rad::turn_div_2(), usize::MAX),
+            angle_1: (Rad::turn_div_2(), usize::MAX),
+        }
     }
 }
 

@@ -7,9 +7,9 @@ mod helvetica {
     include!(concat!(env!("OUT_DIR"), "/helvetica_afm.rs"));
 }
 
-fn find_in_vec_tuple<V: Copy>(key: char, data: &[(char, V)]) -> Option<V> {
+fn find_in_vec_tuple<V>(key: char, data: &[(char, V)]) -> Option<&V> {
     let i = data.binary_search_by_key(&key, |(a, _)| *a).ok()?;
-    Some(data[i].1)
+    Some(&data[i].1)
 }
 
 /// Given a text returns the total width and a list of (kerning, glyph-id).
@@ -18,13 +18,12 @@ pub fn measure_helvetica(text: &str) -> (i32, Vec<(i64, u16)>) {
     let mut prev = '\u{0}';
     let mut cps = Vec::with_capacity(text.len());
     for c in text.chars() {
-        let Some((w, kerns)) = find_in_vec_tuple(c, &helvetica::CHARS) else {
+        let Some(info) = find_in_vec_tuple(c, &helvetica::CHARS) else {
             continue;
         };
+        let kern = find_in_vec_tuple(prev, info.kerns).copied().unwrap_or(0);
 
-        let kern = find_in_vec_tuple(prev, kerns).unwrap_or(0);
-
-        width += w as i32 + kern;
+        width += info.width as i32 + kern;
         cps.push((-kern as i64, c as u16));
         prev = c;
     }

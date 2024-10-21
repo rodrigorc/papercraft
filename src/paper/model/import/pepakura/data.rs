@@ -157,7 +157,7 @@ pub struct Line {
     pub second: Option<(u32, u32)>,
 }
 
-impl<'r, R: Read> Reader<'r, R> {
+impl<R: Read> Reader<'_, R> {
     fn read_bounding_box(&mut self) -> Result<BoundingBox> {
         let v0 = read_vector2_f64(self.rdr)?;
         let v1 = read_vector2_f64(self.rdr)?;

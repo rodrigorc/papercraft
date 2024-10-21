@@ -1463,7 +1463,7 @@ impl PapercraftContext {
                     ]);
                     let mut link_line = [
                         MVertex2DLine {
-                            pos: (edge_sel_2d[idx_2d + 0].pos + edge_sel_2d[idx_2d + 1].pos) / 2.0,
+                            pos: (edge_sel_2d[idx_2d].pos + edge_sel_2d[idx_2d + 1].pos) / 2.0,
                             line_dash: 0.0,
                             width_left: line_width,
                             width_right: line_width,

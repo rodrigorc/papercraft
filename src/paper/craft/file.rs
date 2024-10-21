@@ -87,7 +87,11 @@ impl Papercraft {
     }
 
     pub fn import<I: Importer>(mut importer: I) -> Papercraft {
-        let (model, face_map, edge_map) = Model::from_importer(&mut importer);
+        let ImportedModule {
+            model,
+            face_map,
+            edge_map,
+        } = Model::from_importer(&mut importer);
 
         let edges: Vec<_> = edge_map
             .iter()

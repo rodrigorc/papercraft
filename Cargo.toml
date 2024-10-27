@@ -57,9 +57,9 @@ tr = { version = "0.1.10", default-features = false }
 lopdf = "0.34"
 time = { version = "0.3", features = ["local-offset"] }
 
-easy-imgui-sys = "0.9"
-easy-imgui-window = "0.9"
-easy-imgui-filechooser = { version = "0.1.4", features = ["tr"] }
+easy-imgui-sys = "0.10"
+easy-imgui-window = "0.10"
+easy-imgui-filechooser = { version = "0.2", features = ["tr"] }
 
 sys-locale = "0.3"
 directories = "5"

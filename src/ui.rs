@@ -105,7 +105,7 @@ pub enum UndoAction {
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug)]
     pub struct RebuildFlags: u32 {
         const PAGES = 0x0001;
         const PAPER = 0x0002;
@@ -2312,6 +2312,45 @@ impl PapercraftContext {
             })
             .collect()
     }
+
+    pub fn prepare_thumbnail(&mut self, sz: Vector2) -> ThumbnailData {
+        let ui_settings = self.ui.clone();
+
+        let (mut trans_scene, _) =
+            default_transformations(self.ui.trans_scene.obj, sz, sz, self.papercraft.options());
+
+        trans_scene.rotation =
+            Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0).normalize(), Deg(20.0))
+                * Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0).normalize(), -Deg(40.0));
+        trans_scene.recompute_obj();
+
+        self.ui.trans_scene = trans_scene;
+        self.ui.show_3d_lines = false;
+        self.ui.xray_selection = false;
+        self.ui.show_textures = self.papercraft().model().has_textures();
+        let selected_face = self.selected_face.take();
+        let selected_edges = self.selected_edges.take();
+        let selected_islands = std::mem::take(&mut self.selected_islands);
+        ThumbnailData {
+            ui_settings,
+            selected_face,
+            selected_edges,
+            selected_islands,
+        }
+    }
+    pub fn restore_thumbnail(&mut self, td: ThumbnailData) {
+        self.ui = td.ui_settings;
+        self.selected_face = td.selected_face;
+        self.selected_edges = td.selected_edges;
+        self.selected_islands = td.selected_islands;
+    }
+}
+
+pub struct ThumbnailData {
+    ui_settings: UiSettings,
+    selected_face: Option<FaceIndex>,
+    selected_edges: Option<FxHashSet<EdgeIndex>>,
+    selected_islands: Vec<IslandKey>,
 }
 
 impl GLObjects {

@@ -5,7 +5,8 @@ use easy_imgui_window::{
     easy_imgui_renderer::{
         glow::{self, HasContext},
         glr::{
-            self, BinderDrawFramebuffer, BinderReadFramebuffer, BinderRenderbuffer, GlContext, Rgba,
+            self, BinderDrawFramebuffer, BinderFramebuffer, BinderReadFramebuffer,
+            BinderRenderbuffer, GlContext, Rgba,
         },
         Renderer,
     },
@@ -15,10 +16,11 @@ use image::{DynamicImage, EncodableLayout, GenericImage, GenericImageView, Pixel
 use lazy_static::lazy_static;
 use std::{
     f32,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    sync::atomic::AtomicPtr,
     time::{Duration, Instant},
 };
-use std::{io::Write, sync::atomic::AtomicPtr};
 use tr::tr;
 use winit::{
     event::WindowEvent,
@@ -220,6 +222,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             cmd_file_action,
             quit_requested: BoolWithConfirm::None,
             title: String::new(),
+            textures_to_delete: Vec::new(),
         };
         let mut ctx = Box::new(ctx);
         // SAFETY: This code will only be run once, and the ctx is in a box,
@@ -241,6 +244,8 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         let easy_imgui_window::Args {
             window, event_loop, ..
         } = args;
+
+        self.textures_to_delete.clear();
 
         if let Some(new_title) = self.updated_title() {
             window.main_window().window().set_title(new_title);
@@ -305,7 +310,7 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
     let rbo_scene_depth = glr::Renderbuffer::generate(gl)?;
 
     unsafe {
-        let fb_binder = BinderDrawFramebuffer::bind(&fbo_scene);
+        let fb_binder = BinderFramebuffer::bind(&fbo_scene);
 
         let rb_binder = BinderRenderbuffer::bind(&rbo_scene_color);
         gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
@@ -331,7 +336,7 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
     let rbo_paper_stencil = glr::Renderbuffer::generate(gl)?;
 
     unsafe {
-        let fb_binder = BinderDrawFramebuffer::bind(&fbo_paper);
+        let fb_binder = BinderFramebuffer::bind(&fbo_paper);
 
         let rb_binder = BinderRenderbuffer::bind(&rbo_paper_color);
         gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
@@ -469,10 +474,14 @@ struct GlobalContext {
     cmd_file_action: Option<(FileAction, PathBuf)>,
     quit_requested: BoolWithConfirm,
     title: String,
+    // If a texture is added to a window-list, but then deleted, it should be kept alive until after the render.
+    textures_to_delete: Vec<glr::Texture>,
 }
 
 struct FileDialog {
     chooser: filechooser::FileChooser,
+    preview_file: PathBuf,
+    tex: Option<(glr::Texture, Vector2)>,
     title: String,
     action: FileAction,
     confirm: Option<PathBuf>,
@@ -482,11 +491,90 @@ impl FileDialog {
     fn new(chooser: filechooser::FileChooser, title: String, action: FileAction) -> FileDialog {
         FileDialog {
             chooser,
+            preview_file: PathBuf::new(),
+            tex: None,
             title,
             action,
             confirm: None,
         }
     }
+}
+
+impl filechooser::PreviewBuilder<Box<GlobalContext>> for &Option<(glr::Texture, Vector2)> {
+    fn width(&self) -> f32 {
+        match self {
+            Some(_) => 256.0,
+            None => 0.0,
+        }
+    }
+
+    fn do_ui(&mut self, ui: &Ui, _chooser: &filechooser::FileChooser) {
+        let Some((tex, img_sz)) = self.as_ref() else {
+            return;
+        };
+        let dl = ui.window_draw_list();
+        let p1 = ui.get_cursor_screen_pos();
+        let sz = ui.get_content_region_avail();
+        let p2 = p1 + sz;
+        // Maximize the image, respecting the ratio
+        let (p1, p2) = if sz.y * img_sz.x > sz.x * img_sz.y {
+            let h2 = sz.x * img_sz.y / img_sz.x;
+            let my = (sz.y - h2) / 2.0;
+            (Vector2::new(p1.x, p1.y + my), Vector2::new(p2.x, p2.y - my))
+        } else {
+            let w2 = sz.y * img_sz.x / img_sz.y;
+            let mx = (sz.x - w2) / 2.0;
+            (Vector2::new(p1.x + mx, p1.y), Vector2::new(p2.x - mx, p2.y))
+        };
+        dl.add_image(
+            Renderer::map_tex(tex.id()),
+            p1,
+            p2,
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 1.0),
+            Color::WHITE,
+        );
+    }
+}
+
+fn load_thumbnail(gl: &GlContext, file_name: &Path) -> Result<(glr::Texture, Vector2)> {
+    let fs = std::fs::File::open(file_name)?;
+    let fs = std::io::BufReader::new(fs);
+    let mut zip = zip::ZipArchive::new(fs)?;
+    let mut zthumb = zip.by_name("thumb.png")?;
+    let mut data = Vec::new();
+    zthumb.read_to_end(&mut data)?;
+    load_texture_png(gl, std::io::Cursor::new(&data))
+}
+
+fn load_texture_png(
+    gl: &GlContext,
+    rdr: impl std::io::BufRead + std::io::Seek,
+) -> Result<(glr::Texture, Vector2)> {
+    let ntex = glr::Texture::generate(gl)?;
+    let mut ir = image::ImageReader::new(rdr);
+    ir.set_format(image::ImageFormat::Png);
+    let img = ir.decode()?;
+    let img = img.to_rgba8();
+
+    unsafe {
+        gl.bind_texture(glow::TEXTURE_2D, Some(ntex.id()));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            img.width() as i32,
+            img.height() as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            Some(img.as_bytes()),
+        );
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, 0);
+
+        gl.bind_texture(glow::TEXTURE_2D, None);
+    }
+    Ok((ntex, Vector2::new(img.width() as f32, img.height() as f32)))
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -2073,7 +2161,17 @@ impl GlobalContext {
                 .close_button(true)
                 .with(|| {
                     let mut finish_file_dialog = false;
-                    let res = fd.chooser.do_ui(ui, &self.filechooser_atlas);
+                    let full_path = fd.chooser.full_path(None);
+                    // Reload the thumbnail if the selected file has changed
+                    if fd.preview_file != full_path {
+                        let maybe_tex = load_thumbnail(&self.gl, &full_path);
+                        fd.preview_file = full_path;
+                        fd.tex = maybe_tex.ok();
+                    }
+                    let chooser_options = filechooser::UiParameters::new(&self.filechooser_atlas)
+                        .with_preview(&fd.tex);
+                    let res = fd.chooser.do_ui(ui, chooser_options);
+
                     match res {
                         filechooser::Output::Continue => {}
                         filechooser::Output::Cancel => {
@@ -2133,6 +2231,10 @@ impl GlobalContext {
                     }
                     if finish_file_dialog {
                         ui.close_current_popup();
+                        // Store the text up to the end of the render
+                        if let Some((tex, _)) = fd.tex {
+                            self.textures_to_delete.push(tex);
+                        }
                     } else {
                         self.file_dialog = Some(fd);
                     }
@@ -2248,7 +2350,7 @@ impl GlobalContext {
         self.add_rebuild(flags);
     }
 
-    fn render_scene(&mut self) {
+    fn render_scene(&self) {
         let gl_fixs = &self.gl_fixs;
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
@@ -2263,10 +2365,6 @@ impl GlobalContext {
             texturize: 0,
         };
         unsafe {
-            self.gl.clear_color(0.2, 0.2, 0.4, 1.0);
-            self.gl.clear_depth_f32(1.0);
-            self.gl
-                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
             self.gl.enable(glow::BLEND);
             self.gl.enable(glow::DEPTH_TEST);
             self.gl.depth_func(glow::LEQUAL);
@@ -2296,10 +2394,11 @@ impl GlobalContext {
                 glow::TRIANGLES,
             );
 
+            self.gl.disable(glow::POLYGON_OFFSET_FILL);
+            self.gl.polygon_offset(0.0, 0.0);
+
             if self.data.ui.show_3d_lines {
                 //Joined edges
-                self.gl.line_width(1.0);
-                self.gl.disable(glow::LINE_SMOOTH);
                 gl_fixs.prg_scene_line.draw(
                     &u,
                     &self.data.gl_objs().vertices_edge_joint,
@@ -2314,6 +2413,8 @@ impl GlobalContext {
                     &self.data.gl_objs().vertices_edge_cut,
                     glow::LINES,
                 );
+                self.gl.line_width(1.0);
+                self.gl.disable(glow::LINE_SMOOTH);
             }
 
             //Selected edge
@@ -2328,6 +2429,8 @@ impl GlobalContext {
                     &self.data.gl_objs().vertices_edge_sel,
                     glow::LINES,
                 );
+                self.gl.line_width(1.0);
+                self.gl.disable(glow::LINE_SMOOTH);
             }
         }
     }
@@ -2583,7 +2686,8 @@ impl GlobalContext {
                 self.file_name = Some(file_name.to_owned());
             }
             FileAction::SaveAsCraft => {
-                self.save_as_craft(file_name)?;
+                let thumbnail = self.create_thumbnail();
+                self.save_as_craft(file_name, Some(thumbnail))?;
                 self.data.modified = false;
                 self.file_name = Some(file_name.to_owned());
             }
@@ -2622,13 +2726,94 @@ impl GlobalContext {
         self.rebuild = RebuildFlags::all();
         Ok(())
     }
-    fn save_as_craft(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn create_thumbnail(&mut self) -> image::RgbaImage {
+        const IMG_WIDTH: i32 = 256;
+        const IMG_HEIGHT: i32 = 256;
+
+        // Render the scene to a new framebuffer. We could just capture the current scene,
+        // but then the camera view and render options would be arbitrary.
+        let fbo = glr::Framebuffer::generate(&self.gl).unwrap();
+        let rbo = glr::Renderbuffer::generate(&self.gl).unwrap();
+        let rboz = glr::Renderbuffer::generate(&self.gl).unwrap();
+
+        let fb_binder = BinderFramebuffer::bind(&fbo);
+
+        unsafe {
+            let rb_binder = glr::BinderRenderbuffer::bind(&rbo);
+            self.gl
+                .renderbuffer_storage(rb_binder.target(), glow::RGBA8, IMG_WIDTH, IMG_HEIGHT);
+            rb_binder.rebind(&rboz);
+            self.gl.renderbuffer_storage(
+                rb_binder.target(),
+                glow::DEPTH_COMPONENT,
+                IMG_WIDTH,
+                IMG_HEIGHT,
+            );
+            drop(rb_binder);
+
+            self.gl.framebuffer_renderbuffer(
+                fb_binder.target(),
+                glow::COLOR_ATTACHMENT0,
+                glow::RENDERBUFFER,
+                Some(rbo.id()),
+            );
+            self.gl.framebuffer_renderbuffer(
+                fb_binder.target(),
+                glow::DEPTH_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(rboz.id()),
+            );
+
+            let thumb_data = self
+                .data
+                .prepare_thumbnail(Vector2::new(IMG_WIDTH as f32, IMG_HEIGHT as f32));
+
+            // Render the scene upside down to make the image easier to export
+            self.data.ui.trans_scene.persp.y.y *= -1.0;
+            self.gl.front_face(glow::CW);
+
+            self.data.pre_render(RebuildFlags::all(), &TextBuilderDummy);
+            self.gl.viewport(0, 0, IMG_WIDTH, IMG_HEIGHT);
+            self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            self.gl.clear_depth_f32(1.0);
+            self.gl
+                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            self.render_scene();
+
+            // Restore the normal configuration
+            self.gl.front_face(glow::CCW);
+            self.data.restore_thumbnail(thumb_data);
+
+            // Rebuild everything on next render
+            self.add_rebuild(RebuildFlags::all());
+
+            // Read the image
+            self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
+            let mut pixbuf = image::RgbaImage::new(IMG_WIDTH as u32, IMG_HEIGHT as u32);
+            self.gl.read_pixels(
+                0,
+                0,
+                IMG_WIDTH,
+                IMG_HEIGHT,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(&mut pixbuf),
+            );
+            pixbuf
+        }
+    }
+
+    fn save_as_craft(
+        &self,
+        file_name: &Path,
+        thumbnail: Option<image::RgbaImage>,
+    ) -> anyhow::Result<()> {
         let f = std::fs::File::create(file_name)
             .with_context(|| tr!("Error creating file {}", file_name.display()))?;
         let f = std::io::BufWriter::new(f);
         self.data
             .papercraft()
-            .save(f)
+            .save(f, thumbnail)
             .with_context(|| tr!("Error saving file {}", file_name.display()))?;
         Ok(())
     }
@@ -2674,7 +2859,7 @@ impl GlobalContext {
             "Papercraft panicked! Saving backup at \"{}\"",
             dir.display()
         );
-        if let Err(e) = self.save_as_craft(&dir) {
+        if let Err(e) = self.save_as_craft(&dir, None) {
             log::error!("backup failed with {e:?}");
         } else {
             log::error!("backup complete");
@@ -2983,12 +3168,18 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                     self.pre_render_flags(ui, self.rebuild);
                     let vp = glr::PushViewport::new(&self.gl);
                     if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
-                        let _draw_fb_binder = BinderDrawFramebuffer::bind(&self.gl_fixs.fbo_scene);
+                        let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
                         vp.viewport(0, 0, self.sz_scene.x as i32, self.sz_scene.y as i32);
+                        unsafe {
+                            self.gl.clear_color(0.2, 0.2, 0.4, 1.0);
+                            self.gl.clear_depth_f32(1.0);
+                            self.gl
+                                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+                        }
                         self.render_scene();
                     }
                     if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
-                        let _draw_fb_binder = BinderDrawFramebuffer::bind(&self.gl_fixs.fbo_paper);
+                        let _draw_fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
                         vp.viewport(0, 0, self.sz_paper.x as i32, self.sz_paper.y as i32);
                         self.render_paper(ui);
                     }
@@ -3091,6 +3282,16 @@ impl TextBuilder for TextHelper<'_> {
             x += r.advance_x();
         }
     }
+}
+
+struct TextBuilderDummy;
+
+impl TextBuilder for TextBuilderDummy {
+    fn font_text_line_scale(&self) -> f32 {
+        1.0
+    }
+
+    fn make_text(&self, _p: &PrintableText, _v: &mut Vec<util_gl::MVertexText>) {}
 }
 
 mod filters {

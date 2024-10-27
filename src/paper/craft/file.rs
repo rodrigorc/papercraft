@@ -8,7 +8,7 @@ use anyhow::Result;
 use model::import::Importer;
 
 impl Papercraft {
-    pub fn save<W: Write + Seek>(&self, w: W) -> Result<()> {
+    pub fn save<W: Write + Seek>(&self, w: W, thumbnail: Option<image::RgbaImage>) -> Result<()> {
         let mut zip = zip::ZipWriter::new(w);
         let options = zip::write::SimpleFileOptions::default();
 
@@ -26,6 +26,17 @@ impl Papercraft {
                 zip.write_all(&data[..])?;
             }
         }
+
+        if let Some(thumbnail) = thumbnail {
+            zip.start_file("thumb.png", options)?;
+            let mut data = Vec::new();
+            thumbnail.write_to(
+                &mut std::io::Cursor::new(&mut data),
+                image::ImageFormat::Png,
+            )?;
+            zip.write_all(&data[..])?;
+        }
+
         zip.finish()?;
         Ok(())
     }

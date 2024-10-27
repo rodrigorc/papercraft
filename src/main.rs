@@ -29,10 +29,6 @@ type Ui = imgui::Ui<Box<GlobalContext>>;
 
 static MULTISAMPLES: &[i32] = &[16, 8, 4, 2];
 
-fn to_cgv2(v: imgui::Vector2) -> cgmath::Vector2<f32> {
-    cgmath::Vector2::new(v.x, v.y)
-}
-
 use easy_imgui_filechooser as filechooser;
 
 mod config;
@@ -1907,8 +1903,7 @@ impl GlobalContext {
 
     fn run_menu_actions(&mut self, ui: &Ui, menu_actions: &MenuActions) {
         if menu_actions.reset_views {
-            self.data
-                .reset_views(to_cgv2(self.sz_scene), to_cgv2(self.sz_paper));
+            self.data.reset_views(self.sz_scene, self.sz_paper);
         }
         if menu_actions.undo {
             match self.data.undo_action() {
@@ -2164,16 +2159,14 @@ impl GlobalContext {
                     x if x > 0.0 || plus => 1.1,
                     _ => break 'zoom,
                 };
-                let flags = self
-                    .data
-                    .scene_zoom(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), dz);
+                let flags = self.data.scene_zoom(self.sz_scene, mouse_pos, dz);
                 self.add_rebuild(flags);
             }
         }
         let flags = match &self.scene_ui_status.action {
             Canvas3dAction::Hovering => {
                 self.data
-                    .scene_hover_event(to_cgv2(self.sz_scene), to_cgv2(mouse_pos), alt_down)
+                    .scene_hover_event(self.sz_scene, mouse_pos, alt_down)
             }
             Canvas3dAction::Pressed(MouseButton::Left)
             | Canvas3dAction::Dragging(MouseButton::Left) => self

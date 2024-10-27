@@ -1957,6 +1957,9 @@ impl PapercraftContext {
         ) {
             (false, Some(undo)) => {
                 // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
+                if !dragging {
+                    return RebuildFlags::empty();
+                }
                 let undo = std::mem::take(undo);
                 self.push_undo_action(undo);
             }

@@ -12,7 +12,7 @@ use easy_imgui_window::{
     },
     winit,
 };
-use image::{DynamicImage, EncodableLayout, GenericImage, GenericImageView, Pixel};
+use image::{EncodableLayout, GenericImage, GenericImageView, Pixel};
 use lazy_static::lazy_static;
 use std::{
     f32,
@@ -2686,7 +2686,9 @@ impl GlobalContext {
                 self.file_name = Some(file_name.to_owned());
             }
             FileAction::SaveAsCraft => {
-                let thumbnail = self.create_thumbnail();
+                let mut thumbnail = self.create_thumbnail();
+                // PNG files are not premultiplied, but the redered framebuffer is
+                demultiply_image(&mut thumbnail);
                 self.save_as_craft(file_name, Some(thumbnail))?;
                 self.data.modified = false;
                 self.file_name = Some(file_name.to_owned());
@@ -2741,28 +2743,72 @@ impl GlobalContext {
         unsafe {
             let rb_binder = glr::BinderRenderbuffer::bind(&rbo);
             self.gl
-                .renderbuffer_storage(rb_binder.target(), glow::RGBA8, IMG_WIDTH, IMG_HEIGHT);
-            rb_binder.rebind(&rboz);
-            self.gl.renderbuffer_storage(
-                rb_binder.target(),
-                glow::DEPTH_COMPONENT,
-                IMG_WIDTH,
-                IMG_HEIGHT,
-            );
-            drop(rb_binder);
-
+                .renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
             self.gl.framebuffer_renderbuffer(
                 fb_binder.target(),
                 glow::COLOR_ATTACHMENT0,
                 glow::RENDERBUFFER,
                 Some(rbo.id()),
             );
+            rb_binder.rebind(&rboz);
+            self.gl
+                .renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, 1, 1);
             self.gl.framebuffer_renderbuffer(
                 fb_binder.target(),
                 glow::DEPTH_ATTACHMENT,
                 glow::RENDERBUFFER,
                 Some(rboz.id()),
             );
+
+            let is_multisample;
+            'no_aa: {
+                for samples in MULTISAMPLES {
+                    self.gl.get_error(); //clear error
+
+                    rb_binder.rebind(&rbo);
+                    self.gl.renderbuffer_storage_multisample(
+                        rb_binder.target(),
+                        *samples,
+                        glow::RGBA8,
+                        IMG_WIDTH,
+                        IMG_HEIGHT,
+                    );
+                    rb_binder.rebind(&rboz);
+                    self.gl.renderbuffer_storage_multisample(
+                        rb_binder.target(),
+                        *samples,
+                        glow::DEPTH_COMPONENT,
+                        IMG_WIDTH,
+                        IMG_HEIGHT,
+                    );
+
+                    if self.gl.get_error() != 0
+                        || self.gl.check_framebuffer_status(fb_binder.target())
+                            != glow::FRAMEBUFFER_COMPLETE
+                    {
+                        continue;
+                    }
+                    is_multisample = true;
+                    break 'no_aa;
+                }
+
+                is_multisample = false;
+                rb_binder.rebind(&rbo);
+                self.gl.renderbuffer_storage(
+                    rb_binder.target(),
+                    glow::RGBA8,
+                    IMG_WIDTH,
+                    IMG_HEIGHT,
+                );
+                rb_binder.rebind(&rboz);
+                self.gl.renderbuffer_storage(
+                    rb_binder.target(),
+                    glow::DEPTH_COMPONENT,
+                    IMG_WIDTH,
+                    IMG_HEIGHT,
+                );
+            }
+            drop(rb_binder);
 
             let thumb_data = self
                 .data
@@ -2786,6 +2832,43 @@ impl GlobalContext {
 
             // Rebuild everything on next render
             self.add_rebuild(RebuildFlags::all());
+
+            // Create a non-multisample FBO, if needed, and blit the rendered image
+            let (fbo_noaa, rbo_noaa, fb_binder_read);
+            if is_multisample {
+                drop(fb_binder);
+
+                fbo_noaa = glr::Framebuffer::generate(&self.gl).unwrap();
+                rbo_noaa = glr::Renderbuffer::generate(&self.gl).unwrap();
+                fb_binder_read = BinderReadFramebuffer::bind(&fbo);
+                let fb_binder_draw = BinderDrawFramebuffer::bind(&fbo_noaa);
+                let rb_binder = BinderRenderbuffer::bind(&rbo_noaa);
+                self.gl.renderbuffer_storage(
+                    rb_binder.target(),
+                    glow::RGBA8,
+                    IMG_WIDTH,
+                    IMG_HEIGHT,
+                );
+                self.gl.framebuffer_renderbuffer(
+                    fb_binder_draw.target(),
+                    glow::COLOR_ATTACHMENT0,
+                    glow::RENDERBUFFER,
+                    Some(rbo_noaa.id()),
+                );
+                self.gl.blit_framebuffer(
+                    0,
+                    0,
+                    IMG_WIDTH,
+                    IMG_HEIGHT,
+                    0,
+                    0,
+                    IMG_WIDTH,
+                    IMG_HEIGHT,
+                    glow::COLOR_BUFFER_BIT,
+                    glow::NEAREST,
+                );
+                fb_binder_read.rebind(&fbo_noaa);
+            }
 
             // Read the image
             self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
@@ -2972,24 +3055,34 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
     *st = Canvas3dStatus { mouse_pos, action };
 }
 
-fn premultiply_image(img: DynamicImage) -> image::RgbaImage {
-    let mut img = img.into_rgba8();
+fn premultiply_image(img: &mut image::RgbaImage) {
     for p in img.pixels_mut() {
         let a = p.0[3] as u32;
         for i in &mut p.0[0..3] {
             *i = (*i as u32 * a / 255) as u8;
         }
     }
-    img
+}
+
+fn demultiply_image(img: &mut image::RgbaImage) {
+    for p in img.pixels_mut() {
+        let a = p.0[3] as u32;
+        for i in &mut p.0[0..3] {
+            *i = if a == 0 {
+                0
+            } else {
+                (*i as u32 * 255 / a).clamp(0, 255) as u8
+            };
+        }
+    }
 }
 
 fn load_image_from_memory(data: &[u8], premultiply: bool) -> Result<image::RgbaImage> {
     let image = image::load_from_memory_with_format(data, image::ImageFormat::Png)?;
-    let image = if premultiply {
-        premultiply_image(image)
-    } else {
-        image.into_rgba8()
-    };
+    let mut image = image.into_rgba8();
+    if premultiply {
+        premultiply_image(&mut image)
+    }
     Ok(image)
 }
 

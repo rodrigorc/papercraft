@@ -930,48 +930,17 @@ impl GlobalContext {
                         let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
 
                         unsafe {
-                            let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_scene_color);
-
-                            'no_aa: {
-                                for samples in MULTISAMPLES {
-                                    self.gl.get_error(); //clear error
-                                    rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                                    self.gl.renderbuffer_storage_multisample(
-                                        rb_binder.target(),
-                                        *samples,
-                                        glow::RGBA8,
-                                        x,
-                                        y,
-                                    );
-                                    rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                                    self.gl.renderbuffer_storage_multisample(
-                                        rb_binder.target(),
-                                        *samples,
-                                        glow::DEPTH_COMPONENT,
-                                        x,
-                                        y,
-                                    );
-
-                                    if self.gl.get_error() != 0
-                                        || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER)
-                                            != glow::FRAMEBUFFER_COMPLETE
-                                    {
-                                        continue;
-                                    }
-                                    break 'no_aa;
-                                }
-
-                                rb_binder.rebind(&self.gl_fixs.rbo_scene_color);
-                                self.gl
-                                    .renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
-                                rb_binder.rebind(&self.gl_fixs.rbo_scene_depth);
-                                self.gl.renderbuffer_storage(
-                                    rb_binder.target(),
-                                    glow::DEPTH_COMPONENT,
-                                    x,
-                                    y,
-                                );
-                            }
+                            let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
+                            renderbuffer_storage_antialias(
+                                &self.gl,
+                                x,
+                                y,
+                                &fbo,
+                                &[
+                                    (&self.gl_fixs.rbo_scene_color, glow::RGBA8),
+                                    (&self.gl_fixs.rbo_scene_depth, glow::DEPTH_COMPONENT),
+                                ],
+                            );
                         }
                     }
 
@@ -983,48 +952,17 @@ impl GlobalContext {
                         self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
 
                         unsafe {
-                            let rb_binder = BinderRenderbuffer::bind(&self.gl_fixs.rbo_paper_color);
-
-                            'no_aa: {
-                                for samples in MULTISAMPLES {
-                                    self.gl.get_error(); //clear error
-                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                                    self.gl.renderbuffer_storage_multisample(
-                                        rb_binder.target(),
-                                        *samples,
-                                        glow::RGBA8,
-                                        x,
-                                        y,
-                                    );
-                                    rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                                    self.gl.renderbuffer_storage_multisample(
-                                        rb_binder.target(),
-                                        *samples,
-                                        glow::STENCIL_INDEX,
-                                        x,
-                                        y,
-                                    );
-
-                                    if self.gl.get_error() != 0
-                                        || self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER)
-                                            != glow::FRAMEBUFFER_COMPLETE
-                                    {
-                                        continue;
-                                    }
-                                    break 'no_aa;
-                                }
-
-                                rb_binder.rebind(&self.gl_fixs.rbo_paper_color);
-                                self.gl
-                                    .renderbuffer_storage(rb_binder.target(), glow::RGBA8, x, y);
-                                rb_binder.rebind(&self.gl_fixs.rbo_paper_stencil);
-                                self.gl.renderbuffer_storage(
-                                    rb_binder.target(),
-                                    glow::STENCIL_INDEX,
-                                    x,
-                                    y,
-                                );
-                            }
+                            let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
+                            renderbuffer_storage_antialias(
+                                &self.gl,
+                                x,
+                                y,
+                                &fbo,
+                                &[
+                                    (&self.gl_fixs.rbo_paper_color, glow::RGBA8),
+                                    (&self.gl_fixs.rbo_paper_stencil, glow::STENCIL_INDEX),
+                                ],
+                            );
                         }
                     }
                 });
@@ -2760,54 +2698,13 @@ impl GlobalContext {
                 Some(rboz.id()),
             );
 
-            let is_multisample;
-            'no_aa: {
-                for samples in MULTISAMPLES {
-                    self.gl.get_error(); //clear error
-
-                    rb_binder.rebind(&rbo);
-                    self.gl.renderbuffer_storage_multisample(
-                        rb_binder.target(),
-                        *samples,
-                        glow::RGBA8,
-                        IMG_WIDTH,
-                        IMG_HEIGHT,
-                    );
-                    rb_binder.rebind(&rboz);
-                    self.gl.renderbuffer_storage_multisample(
-                        rb_binder.target(),
-                        *samples,
-                        glow::DEPTH_COMPONENT,
-                        IMG_WIDTH,
-                        IMG_HEIGHT,
-                    );
-
-                    if self.gl.get_error() != 0
-                        || self.gl.check_framebuffer_status(fb_binder.target())
-                            != glow::FRAMEBUFFER_COMPLETE
-                    {
-                        continue;
-                    }
-                    is_multisample = true;
-                    break 'no_aa;
-                }
-
-                is_multisample = false;
-                rb_binder.rebind(&rbo);
-                self.gl.renderbuffer_storage(
-                    rb_binder.target(),
-                    glow::RGBA8,
-                    IMG_WIDTH,
-                    IMG_HEIGHT,
-                );
-                rb_binder.rebind(&rboz);
-                self.gl.renderbuffer_storage(
-                    rb_binder.target(),
-                    glow::DEPTH_COMPONENT,
-                    IMG_WIDTH,
-                    IMG_HEIGHT,
-                );
-            }
+            let multisample = renderbuffer_storage_antialias(
+                &self.gl,
+                IMG_WIDTH,
+                IMG_HEIGHT,
+                &fb_binder,
+                &[(&rbo, glow::RGBA8), (&rboz, glow::DEPTH_COMPONENT)],
+            );
             drop(rb_binder);
 
             let thumb_data = self
@@ -2835,7 +2732,7 @@ impl GlobalContext {
 
             // Create a non-multisample FBO, if needed, and blit the rendered image
             let (fbo_noaa, rbo_noaa, fb_binder_read);
-            if is_multisample {
+            if multisample > 0 {
                 drop(fb_binder);
 
                 fbo_noaa = glr::Framebuffer::generate(&self.gl).unwrap();
@@ -3490,4 +3387,51 @@ mod filters {
             globs: vec![],
         }
     }
+}
+
+lazy_static! {
+    static ref MAX_ANTIALIAS: i32 = std::env::var("PAPERCRAFT_ANTIALIAS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(i32::MAX);
+}
+
+unsafe fn renderbuffer_storage_antialias<T: glr::BinderFBOTarget>(
+    gl: &GlContext,
+    width: i32,
+    height: i32,
+    fbo: &glr::BinderFramebufferT<T>,
+    rbos: &[(&glr::Renderbuffer, u32)],
+) -> i32 {
+    let rb_binder = BinderRenderbuffer::bind(rbos[0].0);
+    for samples in MULTISAMPLES {
+        gl.get_error(); //clear error
+        if *samples > *MAX_ANTIALIAS {
+            continue;
+        }
+
+        for (rbo, internal_format) in rbos {
+            rb_binder.rebind(rbo);
+            gl.renderbuffer_storage_multisample(
+                rb_binder.target(),
+                *samples,
+                *internal_format,
+                width,
+                height,
+            );
+        }
+        if gl.get_error() == 0
+            && gl.check_framebuffer_status(fbo.target()) == glow::FRAMEBUFFER_COMPLETE
+        {
+            log::debug!("antialias samples {}", *samples);
+            return *samples;
+        }
+    }
+
+    for (rbo, internal_format) in rbos {
+        rb_binder.rebind(rbo);
+        gl.renderbuffer_storage(rb_binder.target(), *internal_format, width, height);
+    }
+    log::debug!("antialias samples 0");
+    0
 }

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use cancel_rw::{Cancellable, CancellationGuard, CancellationToken};
 use cgmath::{prelude::*, Deg, Rad, Vector3};
 use easy_imgui_window::{
     easy_imgui::{self as imgui, id, lbl, lbl_id, vec2, Color, MouseButton, Vector2},
@@ -101,7 +102,7 @@ fn main() {
 
     let cli = Cli::parse();
 
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::with_user_event().build().unwrap();
     let proxy = event_loop.create_proxy();
 
     let data = AppData { proxy, cli, config };
@@ -129,8 +130,13 @@ fn main() {
     }
 }
 
+enum MainLoopEvent {
+    Crash,
+    ThumbnailLoaded(PathBuf, CancellationToken, Option<image::RgbaImage>),
+}
+
 struct AppData {
-    proxy: EventLoopProxy<()>,
+    proxy: EventLoopProxy<MainLoopEvent>,
     cli: Cli,
     config: config::Config,
 }
@@ -138,7 +144,7 @@ struct AppData {
 static CTX: AtomicPtr<GlobalContext> = AtomicPtr::new(std::ptr::null_mut());
 
 impl easy_imgui_window::Application for Box<GlobalContext> {
-    type UserEvent = ();
+    type UserEvent = MainLoopEvent;
     type Data = AppData;
 
     fn new(args: easy_imgui_window::Args<AppData>) -> Box<GlobalContext> {
@@ -223,6 +229,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             quit_requested: BoolWithConfirm::None,
             title: String::new(),
             textures_to_delete: Vec::new(),
+            proxy: proxy.clone(),
         };
         let mut ctx = Box::new(ctx);
         // SAFETY: This code will only be run once, and the ctx is in a box,
@@ -278,11 +285,61 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             event_loop.exit();
         }
     }
-    fn user_event(&mut self, _args: easy_imgui_window::Args<AppData>, _: ()) {
-        //Fatal signal: it is about to be aborted, just stop whatever it is doing and
-        //let the crash handler do its job.
-        loop {
-            std::thread::park();
+    fn user_event(&mut self, args: easy_imgui_window::Args<AppData>, ev: MainLoopEvent) {
+        match ev {
+            MainLoopEvent::Crash => {
+                //Fatal signal: it is about to be aborted, just stop whatever it is doing and
+                //let the crash handler do its job.
+                loop {
+                    std::thread::park();
+                }
+            }
+            MainLoopEvent::ThumbnailLoaded(full_path, ct, maybe_img) => {
+                log::info!("Thumbnail loaded {full_path:?}");
+                match self.file_dialog.as_mut() {
+                    // If the datadialog is still opened and the proper file selected
+                    Some(fd)
+                        if fd
+                            .thumbnail_cancellation_guard
+                            .as_ref()
+                            .map_or(false, |ctc| ctc.0 == ct) =>
+                    {
+                        fd.tex = match maybe_img {
+                            None => None,
+                            Some(img) => {
+                                let gl = &self.gl;
+                                let ntex = glr::Texture::generate(gl).unwrap();
+                                unsafe {
+                                    gl.bind_texture(glow::TEXTURE_2D, Some(ntex.id()));
+                                    gl.tex_image_2d(
+                                        glow::TEXTURE_2D,
+                                        0,
+                                        glow::RGBA8 as i32,
+                                        img.width() as i32,
+                                        img.height() as i32,
+                                        0,
+                                        glow::RGBA,
+                                        glow::UNSIGNED_BYTE,
+                                        Some(img.as_bytes()),
+                                    );
+                                    gl.tex_parameter_i32(
+                                        glow::TEXTURE_2D,
+                                        glow::TEXTURE_MAX_LEVEL,
+                                        0,
+                                    );
+
+                                    gl.bind_texture(glow::TEXTURE_2D, None);
+                                }
+                                Some((ntex, Vector2::new(img.width() as f32, img.height() as f32)))
+                            }
+                        };
+                        args.window.ping_user_input();
+                    }
+                    _ => {
+                        log::error!("Thumbnail discarded {full_path:?}");
+                    }
+                }
+            }
         }
     }
 }
@@ -476,11 +533,13 @@ struct GlobalContext {
     title: String,
     // If a texture is added to a window-list, but then deleted, it should be kept alive until after the render.
     textures_to_delete: Vec<glr::Texture>,
+    proxy: EventLoopProxy<MainLoopEvent>,
 }
 
 struct FileDialog {
     chooser: filechooser::FileChooser,
     preview_file: PathBuf,
+    thumbnail_cancellation_guard: Option<CancellationGuard>,
     tex: Option<(glr::Texture, Vector2)>,
     title: String,
     action: FileAction,
@@ -492,6 +551,7 @@ impl FileDialog {
         FileDialog {
             chooser,
             preview_file: PathBuf::new(),
+            thumbnail_cancellation_guard: None,
             tex: None,
             title,
             action,
@@ -537,44 +597,21 @@ impl filechooser::PreviewBuilder<Box<GlobalContext>> for &Option<(glr::Texture, 
     }
 }
 
-fn load_thumbnail(gl: &GlContext, file_name: &Path) -> Result<(glr::Texture, Vector2)> {
-    let fs = std::fs::File::open(file_name)?;
+fn load_thumbnail(full_name: &Path, ct: &CancellationToken) -> Result<image::RgbaImage> {
+    let fs = std::fs::File::open(full_name)?;
+    let fs = Cancellable::new(fs, ct.clone());
     let fs = std::io::BufReader::new(fs);
     let mut zip = zip::ZipArchive::new(fs)?;
     let mut zthumb = zip.by_name("thumb.png")?;
     let mut data = Vec::new();
     zthumb.read_to_end(&mut data)?;
-    load_texture_png(gl, std::io::Cursor::new(&data))
-}
-
-fn load_texture_png(
-    gl: &GlContext,
-    rdr: impl std::io::BufRead + std::io::Seek,
-) -> Result<(glr::Texture, Vector2)> {
-    let ntex = glr::Texture::generate(gl)?;
+    let rdr = std::io::Cursor::new(&data);
+    let rdr = Cancellable::new(rdr, ct.clone());
     let mut ir = image::ImageReader::new(rdr);
     ir.set_format(image::ImageFormat::Png);
     let img = ir.decode()?;
     let img = img.to_rgba8();
-
-    unsafe {
-        gl.bind_texture(glow::TEXTURE_2D, Some(ntex.id()));
-        gl.tex_image_2d(
-            glow::TEXTURE_2D,
-            0,
-            glow::RGBA8 as i32,
-            img.width() as i32,
-            img.height() as i32,
-            0,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            Some(img.as_bytes()),
-        );
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, 0);
-
-        gl.bind_texture(glow::TEXTURE_2D, None);
-    }
-    Ok((ntex, Vector2::new(img.width() as f32, img.height() as f32)))
+    Ok(img)
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -2100,11 +2137,28 @@ impl GlobalContext {
                 .with(|| {
                     let mut finish_file_dialog = false;
                     let full_path = fd.chooser.full_path(None);
-                    // Reload the thumbnail if the selected file has changed
+                    // The selected file has changed: cancel any previous thumbnail and start a new one
                     if fd.preview_file != full_path {
-                        let maybe_tex = load_thumbnail(&self.gl, &full_path);
+                        // Cancel the previous load, if any
+                        fd.thumbnail_cancellation_guard = None;
+                        // Discard texture
+                        //fd.tex = None;
+                        // Prepare the new file
                         fd.preview_file = full_path;
-                        fd.tex = maybe_tex.ok();
+
+                        // Skip directories
+                        if !fd.chooser.file_name().is_empty() {
+                            let ct = CancellationToken::default();
+                            fd.thumbnail_cancellation_guard = Some(CancellationGuard(ct.clone()));
+                            std::thread::spawn({
+                                let full_path = fd.preview_file.clone();
+                                let proxy = self.proxy.clone();
+                                move || {
+                                    let image = load_thumbnail(&full_path, &ct).ok();
+                                    let _ = proxy.send_event(MainLoopEvent::ThumbnailLoaded(full_path, ct, image));
+                                }
+                            });
+                        };
                     }
                     let chooser_options = filechooser::UiParameters::new(&self.filechooser_atlas)
                         .with_preview(&fd.tex);
@@ -2170,7 +2224,7 @@ impl GlobalContext {
                     if finish_file_dialog {
                         ui.close_current_popup();
                         // Store the text up to the end of the render
-                        if let Some((tex, _)) = fd.tex {
+                        if let Some((tex, _)) = fd.tex.take() {
                             self.textures_to_delete.push(tex);
                         }
                     } else {
@@ -3017,7 +3071,7 @@ struct PrintableText {
 
 #[cfg(target_os = "linux")]
 #[inline(never)]
-unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>) {
+unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<MainLoopEvent>) {
     // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
     // the user's data, what's the worst that could happen?
     use signal_hook::consts::signal::*;
@@ -3034,7 +3088,7 @@ unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<()>
         );
 
         // Lock the main loop
-        if event_loop.send_event(()).is_ok() {
+        if event_loop.send_event(MainLoopEvent::Crash).is_ok() {
             let ctx = unsafe { &*CTX.load(std::sync::atomic::Ordering::Acquire) };
             ctx.save_backup_on_panic();
             std::process::abort();

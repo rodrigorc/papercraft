@@ -107,7 +107,11 @@ impl Model {
                     })
                 }
                 "mtllib" => {
-                    let lib = words.next().ok_or_else(syn_error)?;
+                    // keep spaces in the file name
+                    let lib = line
+                        .find(char::is_whitespace)
+                        .map(|idx| &line[idx + 1..])
+                        .ok_or_else(syn_error)?;
                     material_lib = Some(lib.to_owned());
                 }
                 "usemtl" => {
@@ -251,7 +255,11 @@ impl Material {
                     data.name = Some(String::from(name));
                 }
                 "map_Kd" => {
-                    let map = words.next().ok_or_else(syn_error)?;
+                    // keep spaces in the file name
+                    let map = line
+                        .find(char::is_whitespace)
+                        .map(|idx| &line[idx + 1..])
+                        .ok_or_else(syn_error)?;
                     data.map = Some(String::from(map));
                 }
                 _p => {

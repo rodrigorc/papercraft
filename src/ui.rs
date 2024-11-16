@@ -378,9 +378,9 @@ impl PaperDrawFaceArgs {
     pub fn vertices_for_face(&self, i_face: FaceIndex) -> [Vector2; 3] {
         let i0 = 3 * usize::from(i_face);
         [
-            self.vertices[i0].pos,
-            self.vertices[i0 + 1].pos,
-            self.vertices[i0 + 2].pos,
+            self.vertices[i0].pos_2d,
+            self.vertices[i0 + 1].pos_2d,
+            self.vertices[i0 + 2].pos_2d,
         ]
     }
 }
@@ -599,7 +599,7 @@ impl PapercraftContext {
         if size == 0.0 {
             return;
         }
-        let line_dash = (p0.pos.distance(p1.pos) / size).round() + 0.5;
+        let line_dash = (p0.pos_2d.distance(p1.pos_2d) / size).round() + 0.5;
         p1.line_dash = p0.line_dash + line_dash;
     }
     fn paper_draw_face(
@@ -624,10 +624,10 @@ impl PapercraftContext {
                 .model()
                 .face_plane(face)
                 .project(&v.pos(), scale);
-            let pos = m.transform_point(Point2::from_vec(p)).to_vec();
+            let pos_2d = m.transform_point(Point2::from_vec(p)).to_vec();
 
             args.vertices[i0 + i] = MVertex2D {
-                pos,
+                pos_2d,
                 uv: v.uv(),
                 mat: face.material(),
             };
@@ -719,7 +719,7 @@ impl PapercraftContext {
 
             let v = pos1 - pos0;
             let v2d = MVertex2DLine {
-                pos: pos0,
+                pos_2d: pos0,
                 line_dash: 0.0,
                 width_left: if edge_status == EdgeStatus::Joined {
                     fold_line_width / 2.0
@@ -752,12 +752,12 @@ impl PapercraftContext {
                     (Some(f), None) => {
                         let vn = v * f;
                         let v0 = MVertex2DLine {
-                            pos: pos0 - vn,
+                            pos_2d: pos0 - vn,
                             line_dash: 0.0,
                             ..v2d
                         };
                         let v1 = MVertex2DLine {
-                            pos: pos1 + vn,
+                            pos_2d: pos1 + vn,
                             line_dash: if crease_kind == EdgeDrawKind::Valley {
                                 v_len * (1.0 + 2.0 * f)
                             } else {
@@ -775,12 +775,12 @@ impl PapercraftContext {
                         let vn_a = v * f_a;
                         let vn_b = v * f_b;
                         let va0 = MVertex2DLine {
-                            pos: pos0 - vn_a,
+                            pos_2d: pos0 - vn_a,
                             line_dash: 0.0,
                             ..v2d
                         };
                         let va1 = MVertex2DLine {
-                            pos: pos0 + vn_b,
+                            pos_2d: pos0 + vn_b,
                             line_dash: if crease_kind == EdgeDrawKind::Valley {
                                 v_len * (f_a + f_b)
                             } else {
@@ -789,12 +789,12 @@ impl PapercraftContext {
                             ..v2d
                         };
                         let vb0 = MVertex2DLine {
-                            pos: pos1 - vn_b,
+                            pos_2d: pos1 - vn_b,
                             line_dash: 0.0,
                             ..v2d
                         };
                         let vb1 = MVertex2DLine {
-                            pos: pos1 + vn_a,
+                            pos_2d: pos1 + vn_a,
                             line_dash: va1.line_dash,
                             ..v2d
                         };
@@ -817,15 +817,18 @@ impl PapercraftContext {
                 } else {
                     0.0
                 };
-                let v0 = MVertex2DLine { pos: pos0, ..v2d };
-                let mut v1 = MVertex2DLine { pos: pos1, ..v0 };
+                let v0 = MVertex2DLine {
+                    pos_2d: pos0,
+                    ..v2d
+                };
+                let mut v1 = MVertex2DLine { pos_2d: pos1, ..v0 };
                 Self::make_dash_line(line_dash, v0, &mut v1);
                 args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
                 if let (Some(extra), Some(edge_id), Some(i_face_b)) =
                     (extra.as_mut(), edge_id, draw_flap.face())
                 {
                     extra.cut_index.push(CutIndex::new(
-                        v0.pos, v1.pos, None, i_face_b, edge_id, options,
+                        v0.pos_2d, v1.pos_2d, None, i_face_b, edge_id, options,
                     ));
                 }
             }
@@ -848,25 +851,25 @@ impl PapercraftContext {
                 let n = Vector2::new(-vn.y, vn.x);
                 let mut p = [
                     MVertex2DLine {
-                        pos: pos0,
+                        pos_2d: pos0,
                         line_dash: 0.0,
                         width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
                     },
                     MVertex2DLine {
-                        pos: pos0 + n + v_1,
+                        pos_2d: pos0 + n + v_1,
                         line_dash: 0.0,
                         width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
                     },
                     MVertex2DLine {
-                        pos: pos1 + n - v_0,
+                        pos_2d: pos1 + n - v_0,
                         line_dash: 0.0,
                         width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
                     },
                     MVertex2DLine {
-                        pos: pos1,
+                        pos_2d: pos1,
                         line_dash: 0.0,
                         width_left: FLAP_LINE_WIDTH,
                         width_right: 0.0,
@@ -927,7 +930,8 @@ impl PapercraftContext {
                         p.iter()
                             .map(|px| {
                                 //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
-                                let vlocal = mxx.transform_point(Point2::from_vec(px.pos)).to_vec();
+                                let vlocal =
+                                    mxx.transform_point(Point2::from_vec(px.pos_2d)).to_vec();
                                 let uv0 = vs_b[0].0.uv();
                                 let uv1 = vs_b[1].0.uv();
                                 let uv2 = vs_b[2].0.uv();
@@ -965,19 +969,19 @@ impl PapercraftContext {
                 let tip_color = Rgba::new(1.0, 1.0, 1.0, tip_alpha);
                 if triangular {
                     args.vertices_flap.push(MVertex2DColor {
-                        pos: p[0].pos,
+                        pos_2d: p[0].pos_2d,
                         uv: uvs[0],
                         mat,
                         color: root_color,
                     });
                     args.vertices_flap.push(MVertex2DColor {
-                        pos: p[1].pos,
+                        pos_2d: p[1].pos_2d,
                         uv: uvs[1],
                         mat,
                         color: tip_color,
                     });
                     args.vertices_flap.push(MVertex2DColor {
-                        pos: p[2].pos,
+                        pos_2d: p[2].pos_2d,
                         uv: uvs[2],
                         mat,
                         color: root_color,
@@ -985,25 +989,25 @@ impl PapercraftContext {
                 } else {
                     let pp = [
                         MVertex2DColor {
-                            pos: p[0].pos,
+                            pos_2d: p[0].pos_2d,
                             uv: uvs[0],
                             mat,
                             color: root_color,
                         },
                         MVertex2DColor {
-                            pos: p[1].pos,
+                            pos_2d: p[1].pos_2d,
                             uv: uvs[1],
                             mat,
                             color: tip_color,
                         },
                         MVertex2DColor {
-                            pos: p[2].pos,
+                            pos_2d: p[2].pos_2d,
                             uv: uvs[2],
                             mat,
                             color: tip_color,
                         },
                         MVertex2DColor {
-                            pos: p[3].pos,
+                            pos_2d: p[3].pos_2d,
                             uv: uvs[3],
                             mat,
                             color: root_color,
@@ -1014,10 +1018,15 @@ impl PapercraftContext {
                 }
                 if let (Some(flaps), Some((mx_b_inv, i_face_b))) = (&mut flap_cache, geom_b) {
                     let mut flap_vs = if triangular {
-                        FlapVertices::Tri([p[0].pos, p[1].pos, p[2].pos])
+                        FlapVertices::Tri([p[0].pos_2d, p[1].pos_2d, p[2].pos_2d])
                     } else {
                         FlapVertices::Quad([
-                            p[0].pos, p[2].pos, p[1].pos, p[0].pos, p[3].pos, p[2].pos,
+                            p[0].pos_2d,
+                            p[2].pos_2d,
+                            p[1].pos_2d,
+                            p[0].pos_2d,
+                            p[3].pos_2d,
+                            p[2].pos_2d,
                         ])
                     };
                     // Undo the mx_b transformation becase the shadow will be drawn over another
@@ -1085,9 +1094,9 @@ impl PapercraftContext {
                     continue; // should not happen
                 };
                 args.vertices_shadow_flap.extend(ps.iter().map(|p| {
-                    let pos = mx.transform_point(Point2::from_vec(*p)).to_vec();
+                    let pos_2d = mx.transform_point(Point2::from_vec(*p)).to_vec();
                     MVertex2DColor {
-                        pos,
+                        pos_2d,
                         uv,
                         mat,
                         color,
@@ -1128,7 +1137,7 @@ impl PapercraftContext {
                         let cut_range = cut_by_island[i_island].clone();
                         let top = args
                             .iter_cut_ex(cut_range)
-                            .map(|(a, b)| (a.pos, b.pos))
+                            .map(|(a, b)| (a.pos_2d, b.pos_2d))
                             .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
                             .unwrap()
                             .0;
@@ -1235,25 +1244,25 @@ impl PapercraftContext {
             let page_pos = self.papercraft.options().page_position(page);
 
             let page_0 = MVertex2DColor {
-                pos: page_pos,
+                pos_2d: page_pos,
                 uv: Vector2::zero(),
                 mat,
                 color,
             };
             let page_2 = MVertex2DColor {
-                pos: page_pos + page_size,
+                pos_2d: page_pos + page_size,
                 uv: Vector2::zero(),
                 mat,
                 color,
             };
             let page_1 = MVertex2DColor {
-                pos: Vector2::new(page_2.pos.x, page_0.pos.y),
+                pos_2d: Vector2::new(page_2.pos_2d.x, page_0.pos_2d.y),
                 uv: Vector2::zero(),
                 mat,
                 color,
             };
             let page_3 = MVertex2DColor {
-                pos: Vector2::new(page_0.pos.x, page_2.pos.y),
+                pos_2d: Vector2::new(page_0.pos_2d.x, page_2.pos_2d.y),
                 uv: Vector2::zero(),
                 mat,
                 color,
@@ -1261,25 +1270,25 @@ impl PapercraftContext {
             page_vertices.extend_from_slice(&[page_0, page_2, page_1, page_0, page_3, page_2]);
 
             let mut margin_0 = MVertex2DLine {
-                pos: page_0.pos + Vector2::new(margin.1, margin.0),
+                pos_2d: page_0.pos_2d + Vector2::new(margin.1, margin.0),
                 line_dash: 0.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
             };
             let mut margin_1 = MVertex2DLine {
-                pos: page_3.pos + Vector2::new(margin.1, -margin.3),
+                pos_2d: page_3.pos_2d + Vector2::new(margin.1, -margin.3),
                 line_dash: 0.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
             };
             let mut margin_2 = MVertex2DLine {
-                pos: page_2.pos + Vector2::new(-margin.2, -margin.3),
+                pos_2d: page_2.pos_2d + Vector2::new(-margin.2, -margin.3),
                 line_dash: 0.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
             };
             let mut margin_3 = MVertex2DLine {
-                pos: page_1.pos + Vector2::new(-margin.2, margin.0),
+                pos_2d: page_1.pos_2d + Vector2::new(-margin.2, margin.0),
                 line_dash: 0.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
@@ -1327,8 +1336,8 @@ impl PapercraftContext {
             }
             let (p0, p1) = self.papercraft.model().edge_pos(edge);
             edges.extend_from_slice(&[
-                MVertex3DLine { pos: p0, color },
-                MVertex3DLine { pos: p1, color },
+                MVertex3DLine { pos_3d: p0, color },
+                MVertex3DLine { pos_3d: p1, color },
             ]);
         }
         self.gl_objs.vertices_edge_joint.set(edges_joint);
@@ -1394,8 +1403,8 @@ impl PapercraftContext {
             for &i_sel_edge in i_sel_edges {
                 let edge = &self.papercraft.model()[i_sel_edge];
                 let (p0, p1) = self.papercraft.model().edge_pos(edge);
-                edges_sel_3d.push(MVertex3DLine { pos: p0, color });
-                edges_sel_3d.push(MVertex3DLine { pos: p1, color });
+                edges_sel_3d.push(MVertex3DLine { pos_3d: p0, color });
+                edges_sel_3d.push(MVertex3DLine { pos_3d: p1, color });
 
                 let (i_face_a, i_face_b) = edge.faces();
 
@@ -1419,13 +1428,13 @@ impl PapercraftContext {
                 let idx_2d = edge_sel_2d.len();
                 edge_sel_2d.extend_from_slice(&[
                     MVertex2DLine {
-                        pos: v0.pos,
+                        pos_2d: v0.pos_2d,
                         line_dash: 0.0,
                         width_left: line_width,
                         width_right: line_width,
                     },
                     MVertex2DLine {
-                        pos: v1.pos,
+                        pos_2d: v1.pos_2d,
                         line_dash: 0.0,
                         width_left: line_width,
                         width_right: line_width,
@@ -1435,13 +1444,13 @@ impl PapercraftContext {
                     let (vb0, vb1) = get_vx(i_face_b);
                     edge_sel_2d.extend_from_slice(&[
                         MVertex2DLine {
-                            pos: vb0.pos,
+                            pos_2d: vb0.pos_2d,
                             line_dash: 0.0,
                             width_left: line_width,
                             width_right: line_width,
                         },
                         MVertex2DLine {
-                            pos: vb1.pos,
+                            pos_2d: vb1.pos_2d,
                             line_dash: 0.0,
                             width_left: line_width,
                             width_right: line_width,
@@ -1449,19 +1458,22 @@ impl PapercraftContext {
                     ]);
                     let mut link_line = [
                         MVertex2DLine {
-                            pos: (edge_sel_2d[idx_2d].pos + edge_sel_2d[idx_2d + 1].pos) / 2.0,
+                            pos_2d: (edge_sel_2d[idx_2d].pos_2d + edge_sel_2d[idx_2d + 1].pos_2d)
+                                / 2.0,
                             line_dash: 0.0,
                             width_left: line_width,
                             width_right: line_width,
                         },
                         MVertex2DLine {
-                            pos: (edge_sel_2d[idx_2d + 2].pos + edge_sel_2d[idx_2d + 3].pos) / 2.0,
+                            pos_2d: (edge_sel_2d[idx_2d + 2].pos_2d
+                                + edge_sel_2d[idx_2d + 3].pos_2d)
+                                / 2.0,
                             line_dash: 0.0,
                             width_left: line_width,
                             width_right: line_width,
                         },
                     ];
-                    link_line[1].line_dash = link_line[0].pos.distance(link_line[1].pos);
+                    link_line[1].line_dash = link_line[0].pos_2d.distance(link_line[1].pos_2d);
                     edge_sel_2d.extend_from_slice(&link_line);
                 } else {
                     // If there is no face_b it is a rim, highlight it specially
@@ -1842,7 +1854,7 @@ impl PapercraftContext {
         for i_face in self.papercraft.get_flat_faces(i_face) {
             let idx = 3 * usize::from(i_face);
             for i in idx..idx + 3 {
-                center += self.gl_objs.paper_vertices[i].pos;
+                center += self.gl_objs.paper_vertices[i].pos_2d;
                 n += 1.0;
             }
         }
@@ -1975,7 +1987,7 @@ impl PapercraftContext {
                             self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                                 let idx = 3 * usize::from(i_face);
                                 for i in idx..idx + 3 {
-                                    let pos = self.gl_objs.paper_vertices[i as usize].pos;
+                                    let pos = self.gl_objs.paper_vertices[i as usize].pos_2d;
                                     if rect.contains(pos) {
                                         next_sel.insert(island_key);
                                         return ControlFlow::Break(());
@@ -2453,7 +2465,7 @@ impl GLObjects {
             for i_v in face.index_vertices() {
                 let v = &model[i_v];
                 vertices.push(MVertex3D {
-                    pos: v.pos(),
+                    pos_3d: v.pos(),
                     normal: v.normal(),
                     uv: v.uv(),
                     mat: face.material(),

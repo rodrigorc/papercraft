@@ -3,7 +3,7 @@ precision highp float;
 
 uniform mat3 m;
 
-in vec2 pos;
+in vec2 pos_2d;
 in vec2 uv;
 in float mat;
 in vec4 color;
@@ -12,7 +12,7 @@ out vec3 v_uv;
 out vec4 v_color;
 
 void main(void) {
-    gl_Position = vec4((m * vec3(pos, 1.0)).xy, 0.0, 1.0);
+    gl_Position = vec4((m * vec3(pos_2d, 1.0)).xy, 0.0, 1.0);
     v_uv = vec3(uv, mat);
     v_color = color;
 }

@@ -33,7 +33,7 @@ attrib! {
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MVertex3D {
-        pub pos: Vector3,
+        pub pos_3d: Vector3,
         pub normal: Vector3,
         pub uv: Vector2,
         pub mat: MaterialIndex,
@@ -41,20 +41,20 @@ attrib! {
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MVertex3DLine {
-        pub pos: Vector3,
+        pub pos_3d: Vector3,
         pub color: Rgba,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MVertex2D {
-        pub pos: Vector2,
+        pub pos_2d: Vector2,
         pub uv: Vector2,
         pub mat: MaterialIndex,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MVertex2DColor {
-        pub pos: Vector2,
+        pub pos_2d: Vector2,
         pub uv: Vector2,
         pub mat: MaterialIndex,
         pub color: Rgba,
@@ -62,7 +62,7 @@ attrib! {
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
     pub struct MVertex2DLine {
-        pub pos: Vector2,
+        pub pos_2d: Vector2,
         pub line_dash: f32,
         pub width_left: f32,
         pub width_right: f32,
@@ -89,7 +89,7 @@ attrib! {
 impl Default for MVertex2D {
     fn default() -> MVertex2D {
         MVertex2D {
-            pos: Vector2::new(0.0, 0.0),
+            pos_2d: Vector2::new(0.0, 0.0),
             uv: Vector2::new(0.0, 0.0),
             mat: Default::default(),
         }

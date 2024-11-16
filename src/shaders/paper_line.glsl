@@ -1,7 +1,7 @@
 #version 150
 precision highp float;
 
-in vec2 pos;
+in vec2 pos_2d;
 in float line_dash;
 in float width_left;
 in float width_right;
@@ -10,11 +10,11 @@ out Vertex {
     float line_dash;
     float width_left;
     float width_right;
-    vec2 pos;
+    vec2 pos_2d;
 } v_data;
 
 void main(void) {
-    v_data.pos = pos;
+    v_data.pos_2d = pos_2d;
     v_data.line_dash = line_dash;
     v_data.width_left = width_left;
     v_data.width_right = width_right;
@@ -49,7 +49,7 @@ in Vertex {
     float line_dash;
     float width_left;
     float width_right;
-    vec2 pos;
+    vec2 pos_2d;
 } v_data[];
 out float v_line_dash;
 
@@ -59,8 +59,8 @@ vec4 mx(vec2 p) {
 }
 
 void main(void) {
-    vec2 p0 = v_data[0].pos.xy;
-    vec2 p1 = v_data[1].pos.xy;
+    vec2 p0 = v_data[0].pos_2d;
+    vec2 p1 = v_data[1].pos_2d;
 
     vec2 v = p1 - p0;
     v /= length(v);

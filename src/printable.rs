@@ -8,8 +8,8 @@ fn cuts_to_page_cuts<'c>(
     let mut touching = false;
     let page_cut = cuts
         .map(|(v0, v1)| {
-            let (is_in_0, v0) = in_page(v0.pos);
-            let (is_in_1, v1) = in_page(v1.pos);
+            let (is_in_0, v0) = in_page(v0.pos_2d);
+            let (is_in_1, v1) = in_page(v1.pos_2d);
             touching |= is_in_0 | is_in_1;
             (v0, v1)
         })
@@ -454,8 +454,8 @@ impl GlobalContext {
                     // each crease can be checked for bounds individually
                     let page_creases = creases
                         .filter_map(|(a, b)| {
-                            let (is_in_a, a) = in_page(a.pos);
-                            let (is_in_b, b) = in_page(b.pos);
+                            let (is_in_a, a) = in_page(a.pos_2d);
+                            let (is_in_b, b) = in_page(b.pos_2d);
                             (is_in_a || is_in_b).then_some((a, b))
                         })
                         .collect::<Vec<_>>();

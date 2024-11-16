@@ -48,8 +48,6 @@ attrib! {
     #[repr(C)]
     pub struct MVertex2D {
         pub pos_2d: Vector2,
-        pub uv: Vector2,
-        pub mat: MaterialIndex,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -69,14 +67,9 @@ attrib! {
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
-    pub struct MStatus3D {
+    pub struct MStatus {
         pub color: Rgba,
         pub top: u8,
-    }
-    #[derive(Copy, Clone, Debug)]
-    #[repr(C)]
-    pub struct MStatus2D {
-        pub color: Rgba,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -90,21 +83,19 @@ impl Default for MVertex2D {
     fn default() -> MVertex2D {
         MVertex2D {
             pos_2d: Vector2::new(0.0, 0.0),
-            uv: Vector2::new(0.0, 0.0),
-            mat: Default::default(),
         }
     }
 }
 
-pub const MSTATUS_UNSEL: MStatus3D = MStatus3D {
+pub const MSTATUS_UNSEL: MStatus = MStatus {
     color: Rgba::new(0.0, 0.0, 0.0, 0.0),
     top: 0,
 };
-pub const MSTATUS_SEL: MStatus3D = MStatus3D {
+pub const MSTATUS_SEL: MStatus = MStatus {
     color: Rgba::new(0.0, 0.0, 1.0, 0.5),
     top: 1,
 };
-pub const MSTATUS_HI: MStatus3D = MStatus3D {
+pub const MSTATUS_HI: MStatus = MStatus {
     color: Rgba::new(1.0, 0.0, 0.0, 0.75),
     top: 1,
 };

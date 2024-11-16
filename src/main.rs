@@ -2339,7 +2339,7 @@ impl GlobalContext {
                 //Joined edges
                 gl_fixs.prg_scene_line.draw(
                     &u,
-                    &self.data.gl_objs().vertices_edge_joint,
+                    &self.data.gl_objs().scene_vertices_edge_joint,
                     glow::LINES,
                 );
 
@@ -2348,7 +2348,7 @@ impl GlobalContext {
                 self.gl.enable(glow::LINE_SMOOTH);
                 gl_fixs.prg_scene_line.draw(
                     &u,
-                    &self.data.gl_objs().vertices_edge_cut,
+                    &self.data.gl_objs().scene_vertices_edge_cut,
                     glow::LINES,
                 );
                 self.gl.line_width(1.0);
@@ -2364,7 +2364,7 @@ impl GlobalContext {
                 }
                 gl_fixs.prg_scene_line.draw(
                     &u,
-                    &self.data.gl_objs().vertices_edge_sel,
+                    &self.data.gl_objs().scene_vertices_edge_sel,
                     glow::LINES,
                 );
                 self.gl.line_width(1.0);
@@ -2477,8 +2477,9 @@ impl GlobalContext {
             gl_fixs.prg_paper_solid.draw(
                 &u,
                 (
+                    &self.data.gl_objs().vertices,
+                    &self.data.gl_objs().vertices_sel,
                     &self.data.gl_objs().paper_vertices,
-                    &self.data.gl_objs().paper_vertices_sel,
                 ),
                 glow::TRIANGLES,
             );

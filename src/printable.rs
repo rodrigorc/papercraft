@@ -720,7 +720,10 @@ impl GlobalContext {
                 );
                 gl_fixs.prg_paper_solid.draw(
                     &u,
-                    &self.data.gl_objs().paper_vertices,
+                    (
+                        &self.data.gl_objs().vertices,
+                        &self.data.gl_objs().paper_vertices,
+                    ),
                     glow::TRIANGLES,
                 );
 

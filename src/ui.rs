@@ -19,8 +19,8 @@ use crate::util_3d::{
     self, Matrix2, Matrix3, Matrix4, Point2, Point3, Quaternion, Vector2, Vector3,
 };
 use crate::util_gl::{
-    MStatus2D, MStatus3D, MVertex2D, MVertex2DColor, MVertex2DLine, MVertex3D, MVertex3DLine,
-    MVertexText, MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL,
+    MStatus, MVertex2D, MVertex2DColor, MVertex2DLine, MVertex3D, MVertex3DLine, MVertexText,
+    MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL,
 };
 use crate::{
     glr::{self, Rgba},
@@ -39,15 +39,19 @@ const LINE_SEL_WIDTH: f32 = 5.0;
 pub struct GLObjects {
     pub textures: Option<glr::Texture>,
 
-    //GL objects that are rebuild with the model
-    pub vertices: glr::DynamicVertexArray<MVertex3D>,
-    pub vertices_sel: glr::DynamicVertexArray<MStatus3D>,
-    pub vertices_edge_joint: glr::DynamicVertexArray<MVertex3DLine>,
-    pub vertices_edge_cut: glr::DynamicVertexArray<MVertex3DLine>,
-    pub vertices_edge_sel: glr::DynamicVertexArray<MVertex3DLine>,
+    //GL objects that are rebuilt with the model
 
+    // Attributes common for 3D/2D
+    pub vertices: glr::DynamicVertexArray<MVertex3D>,
+    pub vertices_sel: glr::DynamicVertexArray<MStatus>,
+
+    // For 3D
+    pub scene_vertices_edge_joint: glr::DynamicVertexArray<MVertex3DLine>,
+    pub scene_vertices_edge_cut: glr::DynamicVertexArray<MVertex3DLine>,
+    pub scene_vertices_edge_sel: glr::DynamicVertexArray<MVertex3DLine>,
+
+    // For 2D
     pub paper_vertices: glr::DynamicVertexArray<MVertex2D>,
-    pub paper_vertices_sel: glr::DynamicVertexArray<MStatus2D>,
     pub paper_vertices_edge_cut: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_crease: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_flap: glr::DynamicVertexArray<MVertex2DColor>,
@@ -56,6 +60,7 @@ pub struct GLObjects {
     pub paper_vertices_shadow_flap: glr::DynamicVertexArray<MVertex2DColor>,
     pub paper_text: glr::DynamicVertexArray<MVertexText>,
 
+    // 2D background
     pub paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
     pub paper_vertices_margin: glr::DynamicVertexArray<MVertex2DLine>,
 }
@@ -626,11 +631,7 @@ impl PapercraftContext {
                 .project(&v.pos(), scale);
             let pos_2d = m.transform_point(Point2::from_vec(p)).to_vec();
 
-            args.vertices[i0 + i] = MVertex2D {
-                pos_2d,
-                uv: v.uv(),
-                mat: face.material(),
-            };
+            args.vertices[i0 + i] = MVertex2D { pos_2d };
         }
 
         for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
@@ -1340,16 +1341,13 @@ impl PapercraftContext {
                 MVertex3DLine { pos_3d: p1, color },
             ]);
         }
-        self.gl_objs.vertices_edge_joint.set(edges_joint);
-        self.gl_objs.vertices_edge_cut.set(edges_cut);
+        self.gl_objs.scene_vertices_edge_joint.set(edges_joint);
+        self.gl_objs.scene_vertices_edge_cut.set(edges_cut);
     }
     fn selection_rebuild(&mut self) {
         let n = self.gl_objs.vertices_sel.len();
         for i in 0..n {
             self.gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
-            self.gl_objs.paper_vertices_sel[i] = MStatus2D {
-                color: MSTATUS_UNSEL.color,
-            };
         }
         let top = self.ui.xray_selection as u8;
 
@@ -1369,12 +1367,9 @@ impl PapercraftContext {
                 self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                     let pos = 3 * usize::from(i_face);
                     for i in pos..pos + 3 {
-                        self.gl_objs.vertices_sel[i] = MStatus3D {
+                        self.gl_objs.vertices_sel[i] = MStatus {
                             color: MSTATUS_SEL.color,
                             top,
-                        };
-                        self.gl_objs.paper_vertices_sel[i] = MStatus2D {
-                            color: MSTATUS_SEL.color,
                         };
                     }
                     ControlFlow::Continue(())
@@ -1386,12 +1381,9 @@ impl PapercraftContext {
             for i_face in self.papercraft.get_flat_faces(i_sel_face) {
                 let pos = 3 * usize::from(i_face);
                 for i in pos..pos + 3 {
-                    self.gl_objs.vertices_sel[i] = MStatus3D {
+                    self.gl_objs.vertices_sel[i] = MStatus {
                         color: MSTATUS_HI.color,
                         top,
-                    };
-                    self.gl_objs.paper_vertices_sel[i] = MStatus2D {
-                        color: MSTATUS_HI.color,
                     };
                 }
             }
@@ -1481,7 +1473,7 @@ impl PapercraftContext {
                     Self::make_dash_line(5.0, edge_sel_2d[idx_2d], &mut edge_sel_2d[idx_2d + 1]);
                 }
             }
-            self.gl_objs.vertices_edge_sel.set(edges_sel_3d);
+            self.gl_objs.scene_vertices_edge_sel.set(edges_sel_3d);
             self.gl_objs.paper_vertices_edge_sel.set(edge_sel_2d);
         }
     }
@@ -2476,20 +2468,11 @@ impl GLObjects {
         let vertices = glr::DynamicVertexArray::from_data(gl, vertices)?;
         let vertices_sel =
             glr::DynamicVertexArray::from_data(gl, vec![MSTATUS_UNSEL; 3 * model.num_faces()])?;
-        let vertices_edge_joint = glr::DynamicVertexArray::new(gl)?;
-        let vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
-        let vertices_edge_sel = glr::DynamicVertexArray::new(gl)?;
+        let scene_vertices_edge_joint = glr::DynamicVertexArray::new(gl)?;
+        let scene_vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
+        let scene_vertices_edge_sel = glr::DynamicVertexArray::new(gl)?;
 
         let paper_vertices = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_sel = glr::DynamicVertexArray::from_data(
-            gl,
-            vec![
-                MStatus2D {
-                    color: MSTATUS_UNSEL.color
-                };
-                3 * model.num_faces()
-            ],
-        )?;
         let paper_vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_edge_crease = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_flap = glr::DynamicVertexArray::new(gl)?;
@@ -2504,14 +2487,15 @@ impl GLObjects {
 
         Ok(GLObjects {
             textures,
+
             vertices,
             vertices_sel,
-            vertices_edge_joint,
-            vertices_edge_cut,
-            vertices_edge_sel,
+
+            scene_vertices_edge_joint,
+            scene_vertices_edge_cut,
+            scene_vertices_edge_sel,
 
             paper_vertices,
-            paper_vertices_sel,
             paper_vertices_edge_cut,
             paper_vertices_edge_crease,
             paper_vertices_flap,

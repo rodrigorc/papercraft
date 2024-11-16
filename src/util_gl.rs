@@ -86,6 +86,16 @@ attrib! {
     }
 }
 
+impl Default for MVertex2D {
+    fn default() -> MVertex2D {
+        MVertex2D {
+            pos: Vector2::new(0.0, 0.0),
+            uv: Vector2::new(0.0, 0.0),
+            mat: Default::default(),
+        }
+    }
+}
+
 pub const MSTATUS_UNSEL: MStatus3D = MStatus3D {
     color: Rgba::new(0.0, 0.0, 0.0, 0.0),
     top: 0,

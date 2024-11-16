@@ -56,9 +56,6 @@ pub struct GLObjects {
     pub paper_vertices_shadow_flap: glr::DynamicVertexArray<MVertex2DColor>,
     pub paper_text: glr::DynamicVertexArray<MVertexText>,
 
-    // Maps a FaceIndex to the index into paper_vertices
-    pub paper_face_index: Vec<u32>,
-
     pub paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
     pub paper_vertices_margin: glr::DynamicVertexArray<MVertex2DLine>,
 }
@@ -329,9 +326,6 @@ pub struct PaperDrawFaceArgs {
     vertices_flap_edge: Vec<MVertex2DLine>,
     vertices_shadow_flap: Vec<MVertex2DColor>,
     vertices_text: Vec<MVertexText>,
-
-    // Maps a FaceIndex to the index into vertices
-    face_index: Vec<u32>,
 }
 
 // Complements PaperDrawFaceArgs for printable operations
@@ -345,13 +339,12 @@ pub struct PaperDrawFaceArgsExtra {
 impl PaperDrawFaceArgs {
     fn new(model: &Model) -> PaperDrawFaceArgs {
         PaperDrawFaceArgs {
-            vertices: Vec::new(),
+            vertices: vec![MVertex2D::default(); 3 * model.num_faces()],
             vertices_edge_cut: Vec::new(),
             vertices_edge_crease: Vec::new(),
             vertices_flap: Vec::new(),
             vertices_flap_edge: Vec::new(),
             vertices_shadow_flap: Vec::new(),
-            face_index: vec![0; model.num_faces()],
             vertices_text: Vec::new(),
         }
     }
@@ -383,7 +376,7 @@ impl PaperDrawFaceArgs {
             .map(|s| (&s[0], &s[1]))
     }
     pub fn vertices_for_face(&self, i_face: FaceIndex) -> [Vector2; 3] {
-        let i0 = 3 * self.face_index[usize::from(i_face)] as usize;
+        let i0 = 3 * usize::from(i_face);
         [
             self.vertices[i0].pos,
             self.vertices[i0 + 1].pos,
@@ -618,13 +611,13 @@ impl PapercraftContext {
         mut flap_cache: Option<&mut Vec<(FaceIndex, FlapVertices)>>,
         mut extra: Option<&mut PaperDrawFaceArgsExtra>,
     ) {
-        args.face_index[usize::from(i_face)] = args.vertices.len() as u32 / 3;
+        let i0 = 3 * usize::from(i_face);
         let options = self.papercraft.options();
         let scale = options.scale;
         let flap_style = options.flap_style;
         let fold_line_width = options.fold_line_width;
 
-        for i_v in face.index_vertices() {
+        for (i, i_v) in face.index_vertices().into_iter().enumerate() {
             let v = &self.papercraft.model()[i_v];
             let p = self
                 .papercraft
@@ -633,11 +626,11 @@ impl PapercraftContext {
                 .project(&v.pos(), scale);
             let pos = m.transform_point(Point2::from_vec(p)).to_vec();
 
-            args.vertices.push(MVertex2D {
+            args.vertices[i0 + i] = MVertex2D {
                 pos,
                 uv: v.uv(),
                 mat: face.material(),
-            });
+            };
         }
 
         for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
@@ -1221,7 +1214,6 @@ impl PapercraftContext {
         self.gl_objs
             .paper_vertices_flap_edge
             .set(args.vertices_flap_edge);
-        self.gl_objs.paper_face_index = args.face_index;
         self.gl_objs
             .paper_vertices_shadow_flap
             .set(args.vertices_shadow_flap);
@@ -1372,9 +1364,6 @@ impl PapercraftContext {
                             color: MSTATUS_SEL.color,
                             top,
                         };
-                    }
-                    let pos = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
-                    for i in pos..pos + 3 {
                         self.gl_objs.paper_vertices_sel[i] = MStatus2D {
                             color: MSTATUS_SEL.color,
                         };
@@ -1392,9 +1381,6 @@ impl PapercraftContext {
                         color: MSTATUS_HI.color,
                         top,
                     };
-                }
-                let pos = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
-                for i in pos..pos + 3 {
                     self.gl_objs.paper_vertices_sel[i] = MStatus2D {
                         color: MSTATUS_HI.color,
                     };
@@ -1416,7 +1402,7 @@ impl PapercraftContext {
                 // Returns the 2D vertices of i_sel_edge that belong to face i_face
                 let get_vx = |i_face: FaceIndex| {
                     let face_a = &self.papercraft.model()[i_face];
-                    let idx_face = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
+                    let idx_face = 3 * usize::from(i_face);
                     let idx_edge = face_a
                         .index_edges()
                         .iter()
@@ -1854,7 +1840,7 @@ impl PapercraftContext {
         let mut center = Vector2::zero();
         let mut n = 0.0;
         for i_face in self.papercraft.get_flat_faces(i_face) {
-            let idx = 3 * self.gl_objs.paper_face_index[usize::from(i_face)] as usize;
+            let idx = 3 * usize::from(i_face);
             for i in idx..idx + 3 {
                 center += self.gl_objs.paper_vertices[i].pos;
                 n += 1.0;
@@ -1987,7 +1973,7 @@ impl PapercraftContext {
                         // rectangle.
                         for (island_key, island) in self.papercraft.islands() {
                             self.papercraft.traverse_faces_no_matrix(island, |i_face| {
-                                let idx = 3 * self.gl_objs.paper_face_index[usize::from(i_face)];
+                                let idx = 3 * usize::from(i_face);
                                 for i in idx..idx + 3 {
                                     let pos = self.gl_objs.paper_vertices[i as usize].pos;
                                     if rect.contains(pos) {
@@ -2463,8 +2449,7 @@ impl GLObjects {
             }
         };
         let mut vertices = Vec::new();
-        let mut face_map = vec![Vec::new(); model.num_textures()];
-        for (i_face, face) in model.faces() {
+        for (_i_face, face) in model.faces() {
             for i_v in face.index_vertices() {
                 let v = &model[i_v];
                 vertices.push(MVertex3D {
@@ -2473,16 +2458,6 @@ impl GLObjects {
                     uv: v.uv(),
                     mat: face.material(),
                 });
-            }
-            face_map[usize::from(face.material())].push(i_face);
-        }
-
-        let mut face_index = vec![0; model.num_faces()];
-        let mut f_idx = 0;
-        for fm in face_map {
-            for f in fm {
-                face_index[usize::from(f)] = f_idx;
-                f_idx += 1;
             }
         }
 
@@ -2531,8 +2506,6 @@ impl GLObjects {
             paper_vertices_flap_edge,
             paper_vertices_edge_sel,
             paper_vertices_shadow_flap,
-
-            paper_face_index: Vec::new(),
 
             paper_vertices_page,
             paper_vertices_margin,

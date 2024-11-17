@@ -19,8 +19,6 @@ uniform! {
     pub struct Uniforms2D {
         pub m: Matrix3,
         pub tex: i32,
-        pub frac_dash: f32,
-        pub line_color: Rgba,
         pub texturize: i32,
         pub notex_color: Rgba,
     }
@@ -61,9 +59,8 @@ attrib! {
     #[repr(C)]
     pub struct MVertex2DLine {
         pub pos_2d: Vector2,
+        pub color: Rgba,
         pub line_dash: f32,
-        pub width_left: f32,
-        pub width_right: f32,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]

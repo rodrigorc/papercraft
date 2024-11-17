@@ -38,7 +38,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = "1"
 # zip 2.2.0 has a grave performance regression, waiting for 2.3...
-zip = "=2.1.3"
+zip = "=2.1.2"
 memoffset = "0.9"
 bitflags = "2"
 mint = "0.5"
@@ -57,8 +57,8 @@ tr = { version = "0.1.10", default-features = false }
 lopdf = "0.34"
 time = { version = "0.3", features = ["local-offset"] }
 
-easy-imgui-sys = "0.10"
-easy-imgui-window = "0.10"
+easy-imgui-sys = "0.11"
+easy-imgui-window = "0.11"
 easy-imgui-filechooser = { version = "0.2", features = ["tr"] }
 
 sys-locale = "0.3"

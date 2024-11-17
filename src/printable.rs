@@ -1,15 +1,15 @@
 use super::*;
 use rayon::prelude::*;
 
-fn cuts_to_page_cuts<'c>(
-    cuts: impl Iterator<Item = (&'c MVertex2DLine, &'c MVertex2DLine)>,
+fn cuts_to_page_cuts(
+    cuts: impl Iterator<Item = (Vector2, Vector2)>,
     in_page: impl Fn(Vector2) -> (bool, Vector2),
 ) -> Option<Vec<(Vector2, Vector2)>> {
     let mut touching = false;
     let page_cut = cuts
         .map(|(v0, v1)| {
-            let (is_in_0, v0) = in_page(v0.pos_2d);
-            let (is_in_1, v1) = in_page(v1.pos_2d);
+            let (is_in_0, v0) = in_page(v0);
+            let (is_in_1, v1) = in_page(v1);
             touching |= is_in_0 | is_in_1;
             (v0, v1)
         })
@@ -454,8 +454,8 @@ impl GlobalContext {
                     // each crease can be checked for bounds individually
                     let page_creases = creases
                         .filter_map(|(a, b)| {
-                            let (is_in_a, a) = in_page(a.pos_2d);
-                            let (is_in_b, b) = in_page(b.pos_2d);
+                            let (is_in_a, a) = in_page(a);
+                            let (is_in_b, b) = in_page(b);
                             (is_in_a || is_in_b).then_some((a, b))
                         })
                         .collect::<Vec<_>>();
@@ -666,8 +666,6 @@ impl GlobalContext {
                 let mut u = Uniforms2D {
                     m: ortho * mt,
                     tex: 0,
-                    frac_dash: 0.5,
-                    line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
                     texturize,
                     notex_color: Rgba::new(1.0, 1.0, 1.0, 1.0),
                 };
@@ -686,7 +684,7 @@ impl GlobalContext {
                     gl_fixs.prg_paper_line.draw(
                         &u,
                         &self.data.gl_objs().paper_vertices_flap_edge,
-                        glow::LINES,
+                        glow::TRIANGLES,
                     );
                 }
 
@@ -703,7 +701,7 @@ impl GlobalContext {
                 gl_fixs.prg_paper_line.draw(
                     &u,
                     &self.data.gl_objs().paper_vertices_edge_cut,
-                    glow::LINES,
+                    glow::TRIANGLES,
                 );
 
                 // Textured faces
@@ -741,7 +739,7 @@ impl GlobalContext {
                 gl_fixs.prg_paper_line.draw(
                     &u,
                     &self.data.gl_objs().paper_vertices_edge_crease,
-                    glow::LINES,
+                    glow::TRIANGLES,
                 );
 
                 // Draw the texts

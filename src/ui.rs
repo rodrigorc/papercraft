@@ -325,10 +325,10 @@ pub enum EdgeDrawKind {
 
 pub struct PaperDrawFaceArgs {
     vertices: Vec<MVertex2D>,
-    vertices_edge_cut: Vec<MVertex2DLine>,
-    vertices_edge_crease: Vec<MVertex2DLine>,
+    vertices_edge_cut: Vec<Line2D>,
+    vertices_edge_crease: Vec<Line2D>,
     vertices_flap: Vec<MVertex2DColor>,
-    vertices_flap_edge: Vec<MVertex2DLine>,
+    vertices_flap_edge: Vec<Line2D>,
     vertices_shadow_flap: Vec<MVertex2DColor>,
     vertices_text: Vec<MVertexText>,
 }
@@ -354,7 +354,7 @@ impl PaperDrawFaceArgs {
         }
     }
 
-    pub fn iter_cut(&self) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+    pub fn iter_cut(&self) -> impl Iterator<Item = (Vector2, Vector2)> + '_ {
         self.iter_cut_ex((0, 0)..self.cut_last_index())
     }
     pub fn cut_last_index(&self) -> (usize, usize) {
@@ -363,22 +363,22 @@ impl PaperDrawFaceArgs {
     pub fn iter_cut_ex(
         &self,
         range: Range<(usize, usize)>,
-    ) -> impl Iterator<Item = (&MVertex2DLine, &MVertex2DLine)> {
+    ) -> impl Iterator<Item = (Vector2, Vector2)> + '_ {
         self.vertices_flap_edge[range.start.0..range.end.0]
-            .chunks_exact(2)
-            .chain(self.vertices_edge_cut[range.start.1..range.end.1].chunks_exact(2))
-            .map(|s| (&s[0], &s[1]))
+            .iter()
+            .chain(&self.vertices_edge_cut[range.start.1..range.end.1])
+            .map(|s| (s.p0, s.p1))
     }
     pub fn iter_crease<'a>(
         &'a self,
         extra: &'a PaperDrawFaceArgsExtra,
         kind: EdgeDrawKind,
-    ) -> impl Iterator<Item = (&'a MVertex2DLine, &'a MVertex2DLine)> + 'a {
+    ) -> impl Iterator<Item = (Vector2, Vector2)> + 'a {
         self.vertices_edge_crease
-            .chunks_exact(2)
+            .iter()
             .zip(extra.crease_kind.iter())
             .filter_map(move |(line, ek)| (*ek == kind).then_some(line))
-            .map(|s| (&s[0], &s[1]))
+            .map(|s| (s.p0, s.p1))
     }
     pub fn vertices_for_face(&self, i_face: FaceIndex) -> [Vector2; 3] {
         let i0 = 3 * usize::from(i_face);
@@ -600,13 +600,6 @@ impl PapercraftContext {
         );
     }
 
-    fn make_dash_line(size: f32, p0: MVertex2DLine, p1: &mut MVertex2DLine) {
-        if size == 0.0 {
-            return;
-        }
-        let line_dash = (p0.pos_2d.distance(p1.pos_2d) / size).round() + 0.5;
-        p1.line_dash = p0.line_dash + line_dash;
-    }
     fn paper_draw_face(
         &self,
         face: &Face,
@@ -719,21 +712,12 @@ impl PapercraftContext {
             };
 
             let v = pos1 - pos0;
-            let v2d = MVertex2DLine {
-                pos_2d: pos0,
-                line_dash: 0.0,
-                width_left: if edge_status == EdgeStatus::Joined {
-                    fold_line_width / 2.0
-                } else if draw_flap.is_visible() {
-                    fold_line_width
-                } else {
-                    BORDER_LINE_WIDTH
-                },
-                width_right: if edge_status == EdgeStatus::Joined {
-                    fold_line_width / 2.0
-                } else {
-                    0.0
-                },
+            let (width_left, width_right) = if edge_status == EdgeStatus::Joined {
+                (fold_line_width / 2.0, fold_line_width / 2.0)
+            } else if draw_flap.is_visible() {
+                (fold_line_width, 0.0)
+            } else {
+                (BORDER_LINE_WIDTH, 0.0)
             };
 
             let v_len = v.magnitude();
@@ -752,22 +736,18 @@ impl PapercraftContext {
                     (None, None) | (None, Some(_)) => {}
                     (Some(f), None) => {
                         let vn = v * f;
-                        let v0 = MVertex2DLine {
-                            pos_2d: pos0 - vn,
-                            line_dash: 0.0,
-                            ..v2d
-                        };
-                        let v1 = MVertex2DLine {
-                            pos_2d: pos1 + vn,
-                            line_dash: if crease_kind == EdgeDrawKind::Valley {
+                        args.vertices_edge_crease.push(Line2D {
+                            p0: pos0 - vn,
+                            p1: pos1 + vn,
+                            dash0: 0.0,
+                            dash1: if crease_kind == EdgeDrawKind::Valley {
                                 v_len * (1.0 + 2.0 * f)
                             } else {
                                 0.0
                             },
-                            ..v0
-                        };
-                        let new_lines = [v0, v1];
-                        args.vertices_edge_crease.extend_from_slice(&new_lines);
+                            width_left,
+                            width_right,
+                        });
                         if let Some(extra) = extra.as_mut() {
                             extra.crease_kind.push(crease_kind);
                         }
@@ -775,32 +755,28 @@ impl PapercraftContext {
                     (Some(f_a), Some(f_b)) => {
                         let vn_a = v * f_a;
                         let vn_b = v * f_b;
-                        let va0 = MVertex2DLine {
-                            pos_2d: pos0 - vn_a,
-                            line_dash: 0.0,
-                            ..v2d
-                        };
-                        let va1 = MVertex2DLine {
-                            pos_2d: pos0 + vn_b,
-                            line_dash: if crease_kind == EdgeDrawKind::Valley {
+                        let line_a = Line2D {
+                            p0: pos0 - vn_a,
+                            p1: pos0 + vn_b,
+                            dash0: 0.0,
+                            dash1: if crease_kind == EdgeDrawKind::Valley {
                                 v_len * (f_a + f_b)
                             } else {
                                 0.0
                             },
-                            ..v2d
+                            width_left,
+                            width_right,
                         };
-                        let vb0 = MVertex2DLine {
-                            pos_2d: pos1 - vn_b,
-                            line_dash: 0.0,
-                            ..v2d
+                        let line_b = Line2D {
+                            p0: pos1 - vn_b,
+                            p1: pos1 + vn_a,
+                            dash0: 0.0,
+                            dash1: line_a.dash1,
+                            width_left,
+                            width_right,
                         };
-                        let vb1 = MVertex2DLine {
-                            pos_2d: pos1 + vn_a,
-                            line_dash: va1.line_dash,
-                            ..v2d
-                        };
-                        let new_lines = [va0, va1, vb0, vb1];
-                        args.vertices_edge_crease.extend_from_slice(&new_lines);
+                        args.vertices_edge_crease.push(line_a);
+                        args.vertices_edge_crease.push(line_b);
                         // two lines
                         if let Some(extra) = extra.as_mut() {
                             extra
@@ -818,19 +794,23 @@ impl PapercraftContext {
                 } else {
                     0.0
                 };
-                let v0 = MVertex2DLine {
-                    pos_2d: pos0,
-                    ..v2d
+                let mut line = Line2D {
+                    p0: pos0,
+                    p1: pos1,
+                    dash0: 0.0,
+                    dash1: 0.0,
+                    width_left,
+                    width_right,
                 };
-                let mut v1 = MVertex2DLine { pos_2d: pos1, ..v0 };
-                Self::make_dash_line(line_dash, v0, &mut v1);
-                args.vertices_edge_cut.extend_from_slice(&[v0, v1]);
+                line.set_dash(line_dash);
+                args.vertices_edge_cut.push(line);
+
                 if let (Some(extra), Some(edge_id), Some(i_face_b)) =
                     (extra.as_mut(), edge_id, draw_flap.face())
                 {
-                    extra.cut_index.push(CutIndex::new(
-                        v0.pos_2d, v1.pos_2d, None, i_face_b, edge_id, options,
-                    ));
+                    extra
+                        .cut_index
+                        .push(CutIndex::new(pos0, pos1, None, i_face_b, edge_id, options));
                 }
             }
 
@@ -850,47 +830,67 @@ impl PapercraftContext {
                 let v_0 = vn * tan_0;
                 let v_1 = vn * tan_1;
                 let n = Vector2::new(-vn.y, vn.x);
-                let mut p = [
-                    MVertex2DLine {
-                        pos_2d: pos0,
-                        line_dash: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
-                        width_right: 0.0,
-                    },
-                    MVertex2DLine {
-                        pos_2d: pos0 + n + v_1,
-                        line_dash: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
-                        width_right: 0.0,
-                    },
-                    MVertex2DLine {
-                        pos_2d: pos1 + n - v_0,
-                        line_dash: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
-                        width_right: 0.0,
-                    },
-                    MVertex2DLine {
-                        pos_2d: pos1,
-                        line_dash: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
-                        width_right: 0.0,
-                    },
-                ];
-                // Weird flaps are drawn differently:
-                // * forced flap in a rim
-                if edge.faces().1.is_none() {
-                    Self::make_dash_line(5.0, p[0], &mut p[1]);
-                    Self::make_dash_line(5.0, p[1], &mut p[2]);
-                    Self::make_dash_line(5.0, p[2], &mut p[3]);
-                }
+                let mut p = [pos0, pos0 + n + v_1, pos1 + n - v_0, pos1];
                 if triangular {
-                    //The unneeded vertex is actually [2], so remove that copying the [3] over
+                    //The unneeded vertex is [2]
                     p[2] = p[3];
-                    args.vertices_flap_edge
-                        .extend_from_slice(&[p[0], p[1], p[1], p[2]]);
+                    let mut line_0 = Line2D {
+                        p0: p[0],
+                        p1: p[1],
+                        dash0: 0.0,
+                        dash1: 0.0,
+                        width_left: FLAP_LINE_WIDTH,
+                        width_right: 0.0,
+                    };
+                    let mut line_1 = Line2D {
+                        p0: p[1],
+                        p1: p[2],
+                        dash0: 0.0,
+                        dash1: 0.0,
+                        width_left: FLAP_LINE_WIDTH,
+                        width_right: 0.0,
+                    };
+                    // Weird flaps are drawn differently:
+                    // * forced flap in a rim
+                    if edge.faces().1.is_none() {
+                        line_0.set_dash(5.0);
+                        line_1.set_dash(5.0);
+                    }
+                    args.vertices_flap_edge.push(line_0);
+                    args.vertices_flap_edge.push(line_1);
                 } else {
-                    args.vertices_flap_edge
-                        .extend_from_slice(&[p[0], p[1], p[1], p[2], p[2], p[3]]);
+                    let mut line_0 = Line2D {
+                        p0: p[0],
+                        p1: p[1],
+                        dash0: 0.0,
+                        dash1: 0.0,
+                        width_left: FLAP_LINE_WIDTH,
+                        width_right: 0.0,
+                    };
+                    let mut line_1 = Line2D {
+                        p0: p[1],
+                        p1: p[2],
+                        dash0: 0.0,
+                        dash1: 0.0,
+                        width_left: FLAP_LINE_WIDTH,
+                        width_right: 0.0,
+                    };
+                    let mut line_2 = Line2D {
+                        p0: p[2],
+                        p1: p[3],
+                        dash0: 0.0,
+                        dash1: 0.0,
+                        width_left: FLAP_LINE_WIDTH,
+                        width_right: 0.0,
+                    };
+                    if edge.faces().1.is_none() {
+                        line_0.set_dash(5.0);
+                        line_1.set_dash(5.0);
+                        line_2.set_dash(5.0);
+                    }
+                    args.vertices_flap_edge.push(line_0);
+                    args.vertices_flap_edge.push(line_1);
+                    args.vertices_flap_edge.push(line_2);
                 };
                 if let (Some(extra), Some(edge_id), Some(i_face_b)) =
                     (extra.as_mut(), edge_id, maybe_i_face_b)
@@ -931,8 +931,7 @@ impl PapercraftContext {
                         p.iter()
                             .map(|px| {
                                 //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
-                                let vlocal =
-                                    mxx.transform_point(Point2::from_vec(px.pos_2d)).to_vec();
+                                let vlocal = mxx.transform_point(Point2::from_vec(*px)).to_vec();
                                 let uv0 = vs_b[0].0.uv();
                                 let uv1 = vs_b[1].0.uv();
                                 let uv2 = vs_b[2].0.uv();
@@ -970,19 +969,19 @@ impl PapercraftContext {
                 let tip_color = Rgba::new(1.0, 1.0, 1.0, tip_alpha);
                 if triangular {
                     args.vertices_flap.push(MVertex2DColor {
-                        pos_2d: p[0].pos_2d,
+                        pos_2d: p[0],
                         uv: uvs[0],
                         mat,
                         color: root_color,
                     });
                     args.vertices_flap.push(MVertex2DColor {
-                        pos_2d: p[1].pos_2d,
+                        pos_2d: p[1],
                         uv: uvs[1],
                         mat,
                         color: tip_color,
                     });
                     args.vertices_flap.push(MVertex2DColor {
-                        pos_2d: p[2].pos_2d,
+                        pos_2d: p[2],
                         uv: uvs[2],
                         mat,
                         color: root_color,
@@ -990,25 +989,25 @@ impl PapercraftContext {
                 } else {
                     let pp = [
                         MVertex2DColor {
-                            pos_2d: p[0].pos_2d,
+                            pos_2d: p[0],
                             uv: uvs[0],
                             mat,
                             color: root_color,
                         },
                         MVertex2DColor {
-                            pos_2d: p[1].pos_2d,
+                            pos_2d: p[1],
                             uv: uvs[1],
                             mat,
                             color: tip_color,
                         },
                         MVertex2DColor {
-                            pos_2d: p[2].pos_2d,
+                            pos_2d: p[2],
                             uv: uvs[2],
                             mat,
                             color: tip_color,
                         },
                         MVertex2DColor {
-                            pos_2d: p[3].pos_2d,
+                            pos_2d: p[3],
                             uv: uvs[3],
                             mat,
                             color: root_color,
@@ -1019,16 +1018,9 @@ impl PapercraftContext {
                 }
                 if let (Some(flaps), Some((mx_b_inv, i_face_b))) = (&mut flap_cache, geom_b) {
                     let mut flap_vs = if triangular {
-                        FlapVertices::Tri([p[0].pos_2d, p[1].pos_2d, p[2].pos_2d])
+                        FlapVertices::Tri([p[0], p[1], p[2]])
                     } else {
-                        FlapVertices::Quad([
-                            p[0].pos_2d,
-                            p[2].pos_2d,
-                            p[1].pos_2d,
-                            p[0].pos_2d,
-                            p[3].pos_2d,
-                            p[2].pos_2d,
-                        ])
+                        FlapVertices::Quad([p[0], p[2], p[1], p[0], p[3], p[2]])
                     };
                     // Undo the mx_b transformation becase the shadow will be drawn over another
                     // face, the right matrix will be applied afterwards.
@@ -1138,7 +1130,6 @@ impl PapercraftContext {
                         let cut_range = cut_by_island[i_island].clone();
                         let top = args
                             .iter_cut_ex(cut_range)
-                            .map(|(a, b)| (a.pos_2d, b.pos_2d))
                             .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
                             .unwrap()
                             .0;
@@ -1214,16 +1205,23 @@ impl PapercraftContext {
         }
 
         self.gl_objs.paper_vertices.set(args.vertices);
-        self.gl_objs
-            .paper_vertices_edge_cut
-            .set(args.vertices_edge_cut);
-        self.gl_objs
-            .paper_vertices_edge_crease
-            .set(args.vertices_edge_crease);
+        //self.gl_objs.paper_vertices_edge_cut.set(args.vertices_edge_cut);
+        build_vertices_for_lines_2d(
+            self.gl_objs.paper_vertices_edge_cut.data_mut(),
+            &args.vertices_edge_cut,
+            Rgba::new(0.0, 0.0, 0.0, 1.0),
+        );
+        build_vertices_for_lines_2d(
+            self.gl_objs.paper_vertices_edge_crease.data_mut(),
+            &args.vertices_edge_crease,
+            Rgba::new(0.0, 0.0, 0.0, 1.0),
+        );
         self.gl_objs.paper_vertices_flap.set(args.vertices_flap);
-        self.gl_objs
-            .paper_vertices_flap_edge
-            .set(args.vertices_flap_edge);
+        build_vertices_for_lines_2d(
+            self.gl_objs.paper_vertices_flap_edge.data_mut(),
+            &args.vertices_flap_edge,
+            Rgba::new(0.0, 0.0, 0.0, 1.0),
+        );
         self.gl_objs
             .paper_vertices_shadow_flap
             .set(args.vertices_shadow_flap);
@@ -1270,45 +1268,50 @@ impl PapercraftContext {
             };
             page_vertices.extend_from_slice(&[page_0, page_2, page_1, page_0, page_3, page_2]);
 
-            let mut margin_0 = MVertex2DLine {
-                pos_2d: page_0.pos_2d + Vector2::new(margin.1, margin.0),
-                line_dash: 0.0,
+            let mpos_0 = page_0.pos_2d + Vector2::new(margin.1, margin.0);
+            let mpos_1 = page_3.pos_2d + Vector2::new(margin.1, -margin.3);
+            let mpos_2 = page_2.pos_2d + Vector2::new(-margin.2, -margin.3);
+            let mpos_3 = page_1.pos_2d + Vector2::new(-margin.2, margin.0);
+
+            margin_vertices.push(Line2D {
+                p0: mpos_0,
+                p1: mpos_1,
+                dash0: 0.0,
+                dash1: page_size.y / 10.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
-            };
-            let mut margin_1 = MVertex2DLine {
-                pos_2d: page_3.pos_2d + Vector2::new(margin.1, -margin.3),
-                line_dash: 0.0,
+            });
+            margin_vertices.push(Line2D {
+                p0: mpos_1,
+                p1: mpos_2,
+                dash0: 0.0,
+                dash1: page_size.x / 10.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
-            };
-            let mut margin_2 = MVertex2DLine {
-                pos_2d: page_2.pos_2d + Vector2::new(-margin.2, -margin.3),
-                line_dash: 0.0,
+            });
+            margin_vertices.push(Line2D {
+                p0: mpos_2,
+                p1: mpos_3,
+                dash0: 0.0,
+                dash1: page_size.y / 10.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
-            };
-            let mut margin_3 = MVertex2DLine {
-                pos_2d: page_1.pos_2d + Vector2::new(-margin.2, margin.0),
-                line_dash: 0.0,
+            });
+            margin_vertices.push(Line2D {
+                p0: mpos_3,
+                p1: mpos_0,
+                dash0: 0.0,
+                dash1: page_size.x / 10.0,
                 width_left: margin_line_width,
                 width_right: 0.0,
-            };
-            margin_0.line_dash = 0.0;
-            margin_1.line_dash = page_size.y / 10.0;
-            margin_vertices.extend_from_slice(&[margin_0, margin_1]);
-            margin_1.line_dash = 0.0;
-            margin_2.line_dash = page_size.x / 10.0;
-            margin_vertices.extend_from_slice(&[margin_1, margin_2]);
-            margin_2.line_dash = 0.0;
-            margin_3.line_dash = page_size.y / 10.0;
-            margin_vertices.extend_from_slice(&[margin_2, margin_3]);
-            margin_3.line_dash = 0.0;
-            margin_0.line_dash = page_size.x / 10.0;
-            margin_vertices.extend_from_slice(&[margin_3, margin_0]);
+            });
         }
         self.gl_objs.paper_vertices_page.set(page_vertices);
-        self.gl_objs.paper_vertices_margin.set(margin_vertices);
+        build_vertices_for_lines_2d(
+            self.gl_objs.paper_vertices_margin.data_mut(),
+            &margin_vertices,
+            Rgba::new(0.5, 0.5, 0.5, 1.0),
+        );
     }
 
     fn scene_edge_rebuild(&mut self) {
@@ -1390,7 +1393,7 @@ impl PapercraftContext {
         }
         if let Some(i_sel_edges) = self.selected_edges.as_ref() {
             let mut edges_sel_3d = Vec::with_capacity(2 * i_sel_edges.len());
-            let mut edge_sel_2d = Vec::with_capacity(6 * i_sel_edges.len());
+            let mut edge_sel_2d = Vec::with_capacity(i_sel_edges.len());
             let color = color_edge(self.ui.mode);
             for &i_sel_edge in i_sel_edges {
                 let edge = &self.papercraft.model()[i_sel_edge];
@@ -1418,63 +1421,46 @@ impl PapercraftContext {
 
                 let (v0, v1) = get_vx(i_face_a);
                 let idx_2d = edge_sel_2d.len();
-                edge_sel_2d.extend_from_slice(&[
-                    MVertex2DLine {
-                        pos_2d: v0.pos_2d,
-                        line_dash: 0.0,
-                        width_left: line_width,
-                        width_right: line_width,
-                    },
-                    MVertex2DLine {
-                        pos_2d: v1.pos_2d,
-                        line_dash: 0.0,
-                        width_left: line_width,
-                        width_right: line_width,
-                    },
-                ]);
+                edge_sel_2d.push(Line2D {
+                    p0: v0.pos_2d,
+                    p1: v1.pos_2d,
+                    dash0: 0.0,
+                    dash1: 0.0,
+                    width_left: line_width,
+                    width_right: line_width,
+                });
                 if let Some(i_face_b) = i_face_b {
                     let (vb0, vb1) = get_vx(i_face_b);
-                    edge_sel_2d.extend_from_slice(&[
-                        MVertex2DLine {
-                            pos_2d: vb0.pos_2d,
-                            line_dash: 0.0,
-                            width_left: line_width,
-                            width_right: line_width,
-                        },
-                        MVertex2DLine {
-                            pos_2d: vb1.pos_2d,
-                            line_dash: 0.0,
-                            width_left: line_width,
-                            width_right: line_width,
-                        },
-                    ]);
-                    let mut link_line = [
-                        MVertex2DLine {
-                            pos_2d: (edge_sel_2d[idx_2d].pos_2d + edge_sel_2d[idx_2d + 1].pos_2d)
-                                / 2.0,
-                            line_dash: 0.0,
-                            width_left: line_width,
-                            width_right: line_width,
-                        },
-                        MVertex2DLine {
-                            pos_2d: (edge_sel_2d[idx_2d + 2].pos_2d
-                                + edge_sel_2d[idx_2d + 3].pos_2d)
-                                / 2.0,
-                            line_dash: 0.0,
-                            width_left: line_width,
-                            width_right: line_width,
-                        },
-                    ];
-                    link_line[1].line_dash = link_line[0].pos_2d.distance(link_line[1].pos_2d);
-                    edge_sel_2d.extend_from_slice(&link_line);
+                    edge_sel_2d.push(Line2D {
+                        p0: vb0.pos_2d,
+                        p1: vb1.pos_2d,
+                        dash0: 0.0,
+                        dash1: 0.0,
+                        width_left: line_width,
+                        width_right: line_width,
+                    });
+                    let mut link_line = Line2D {
+                        p0: (edge_sel_2d[idx_2d].p0 + edge_sel_2d[idx_2d].p1) / 2.0,
+                        p1: (edge_sel_2d[idx_2d + 1].p0 + edge_sel_2d[idx_2d + 1].p1) / 2.0,
+                        dash0: 0.0,
+                        dash1: 0.0,
+                        width_left: line_width,
+                        width_right: line_width,
+                    };
+                    link_line.dash1 = link_line.p0.distance(link_line.p1);
+                    edge_sel_2d.push(link_line);
                 } else {
                     // If there is no face_b it is a rim, highlight it specially
                     // This line_dash will create a 4.5 repetition pattern (- - - -)
-                    Self::make_dash_line(5.0, edge_sel_2d[idx_2d], &mut edge_sel_2d[idx_2d + 1]);
+                    edge_sel_2d[idx_2d].set_dash(5.0);
                 }
             }
             self.gl_objs.scene_vertices_edge_sel.set(edges_sel_3d);
-            self.gl_objs.paper_vertices_edge_sel.set(edge_sel_2d);
+            build_vertices_for_lines_2d(
+                self.gl_objs.paper_vertices_edge_sel.data_mut(),
+                &edge_sel_2d,
+                color_edge(self.ui.mode),
+            );
         }
     }
 
@@ -1979,7 +1965,7 @@ impl PapercraftContext {
                             self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                                 let idx = 3 * usize::from(i_face);
                                 for i in idx..idx + 3 {
-                                    let pos = self.gl_objs.paper_vertices[i as usize].pos_2d;
+                                    let pos = self.gl_objs.paper_vertices[i].pos_2d;
                                     if rect.contains(pos) {
                                         next_sel.insert(island_key);
                                         return ControlFlow::Break(());
@@ -2535,5 +2521,63 @@ impl std::ops::DerefMut for FlapVertices {
             FlapVertices::Tri(s) => s,
             FlapVertices::Quad(s) => s,
         }
+    }
+}
+
+struct Line2D {
+    pub p0: Vector2,
+    pub p1: Vector2,
+    pub dash0: f32,
+    pub dash1: f32,
+    pub width_left: f32,
+    pub width_right: f32,
+}
+
+impl Line2D {
+    fn set_dash(&mut self, size: f32) {
+        if size == 0.0 {
+            self.dash1 = self.dash0;
+        } else {
+            let line_dash = (self.p0.distance(self.p1) / size).round() + 0.5;
+            self.dash1 = self.dash0 + line_dash;
+        }
+    }
+}
+// Given a list of lines build a triangle-strip geometry
+fn build_vertices_for_lines_2d(vs: &mut Vec<MVertex2DLine>, lines: &[Line2D], color: Rgba) {
+    // 2 tris per line
+    vs.clear();
+    vs.reserve(6 * lines.len());
+
+    for line in lines {
+        let mut p0 = line.p0;
+        let mut p1 = line.p1;
+        let mut v = (p1 - p0).normalize();
+        let n = Vector2::new(v.y, -v.x);
+        v *= (line.width_right + line.width_left) / 2.0;
+        p0 -= v;
+        p1 += v;
+
+        let v0 = MVertex2DLine {
+            pos_2d: p0 - n * line.width_left,
+            color,
+            line_dash: line.dash0,
+        };
+        let v1 = MVertex2DLine {
+            pos_2d: p0 + n * line.width_right,
+            color,
+            line_dash: line.dash0,
+        };
+        let v2 = MVertex2DLine {
+            pos_2d: p1 + n * line.width_right,
+            color,
+            line_dash: line.dash1,
+        };
+        let v3 = MVertex2DLine {
+            pos_2d: p1 - n * line.width_left,
+            color,
+            line_dash: line.dash1,
+        };
+        vs.extend_from_slice(&[v0, v1, v2, v0, v2, v3]);
     }
 }

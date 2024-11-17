@@ -1,5 +1,4 @@
-#version 150
-precision highp float;
+#version 140
 
 uniform mat3 m;
 
@@ -15,8 +14,7 @@ void main(void) {
 
 ###
 
-#version 150
-precision highp float;
+#version 140
 
 uniform sampler2D tex;
 

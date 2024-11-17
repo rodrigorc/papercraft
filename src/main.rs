@@ -59,7 +59,7 @@ use paper::{
     Papercraft,
 };
 use util_3d::{Matrix3, Vector3};
-use util_gl::{MVertex2DLine, UniformQuad, Uniforms2D, Uniforms3D};
+use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
 
 use clap::Parser;
 
@@ -2320,8 +2320,8 @@ impl GlobalContext {
                 u.texturize = 1;
             }
 
-            self.gl.polygon_offset(1.0, 1.0);
-            self.gl.enable(glow::POLYGON_OFFSET_FILL);
+            //self.gl.polygon_offset(1.0, 1.0);
+            //self.gl.enable(glow::POLYGON_OFFSET_FILL);
 
             gl_fixs.prg_scene_solid.draw(
                 &u,
@@ -2332,8 +2332,8 @@ impl GlobalContext {
                 glow::TRIANGLES,
             );
 
-            self.gl.disable(glow::POLYGON_OFFSET_FILL);
-            self.gl.polygon_offset(0.0, 0.0);
+            //self.gl.disable(glow::POLYGON_OFFSET_FILL);
+            //self.gl.polygon_offset(0.0, 0.0);
 
             if self.data.ui.show_3d_lines {
                 //Joined edges
@@ -2378,8 +2378,6 @@ impl GlobalContext {
         let mut u = Uniforms2D {
             m: self.data.ui.trans_paper.ortho * self.data.ui.trans_paper.mx,
             tex: 0,
-            frac_dash: 0.5,
-            line_color: Rgba::new(0.0, 0.0, 0.0, 1.0),
             texturize: 0,
             notex_color: Rgba::new(0.75, 0.75, 0.75, 1.0),
         };
@@ -2431,15 +2429,11 @@ impl GlobalContext {
 
                 self.gl.disable(glow::STENCIL_TEST);
 
-                u.line_color = Rgba::new(0.5, 0.5, 0.5, 1.0);
-
                 gl_fixs.prg_paper_line.draw(
                     &u,
                     &self.data.gl_objs().paper_vertices_margin,
-                    glow::LINES,
+                    glow::TRIANGLES,
                 );
-
-                u.line_color = Rgba::new(0.0, 0.0, 0.0, 1.0);
             }
 
             // Line Flaps
@@ -2447,7 +2441,7 @@ impl GlobalContext {
                 gl_fixs.prg_paper_line.draw(
                     &u,
                     &self.data.gl_objs().paper_vertices_flap_edge,
-                    glow::LINES,
+                    glow::TRIANGLES,
                 );
             }
 
@@ -2468,7 +2462,7 @@ impl GlobalContext {
             gl_fixs.prg_paper_line.draw(
                 &u,
                 &self.data.gl_objs().paper_vertices_edge_cut,
-                glow::LINES,
+                glow::TRIANGLES,
             );
 
             self.gl.enable(glow::STENCIL_TEST);
@@ -2502,16 +2496,15 @@ impl GlobalContext {
             gl_fixs.prg_paper_line.draw(
                 &u,
                 &self.data.gl_objs().paper_vertices_edge_crease,
-                glow::LINES,
+                glow::TRIANGLES,
             );
 
             // Selected edge
             if self.data.has_selected_edge() {
-                u.line_color = color_edge(self.data.ui.mode);
                 gl_fixs.prg_paper_line.draw(
                     &u,
                     &self.data.gl_objs().paper_vertices_edge_sel,
-                    glow::LINES,
+                    glow::TRIANGLES,
                 );
             }
 

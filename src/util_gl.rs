@@ -15,6 +15,7 @@ uniform! {
         pub tex: i32,
         pub line_top: i32,
         pub texturize: i32,
+        pub view_size: Vector2,
     }
     pub struct Uniforms2D {
         pub m: Matrix3,
@@ -40,7 +41,14 @@ attrib! {
     #[repr(C)]
     pub struct MVertex3DLine {
         pub pos_3d: Vector3,
+        pub pos_b: Vector3,
+    }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MLine3DStatus {
+        pub thick: f32,
         pub color: Rgba,
+        pub top: u8,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -83,6 +91,24 @@ impl Default for MVertex2D {
         }
     }
 }
+
+pub const MLINE3D_HIDDEN: MLine3DStatus = MLine3DStatus {
+    color: Rgba::new(0.0, 0.0, 0.0, 0.0),
+    thick: 0.0,
+    top: 0,
+};
+
+pub const MLINE3D_NORMAL: MLine3DStatus = MLine3DStatus {
+    color: Rgba::new(0.0, 0.0, 0.0, 1.0),
+    thick: 1.0 / 2.0,
+    top: 0,
+};
+
+pub const MLINE3D_CUT: MLine3DStatus = MLine3DStatus {
+    color: Rgba::new(1.0, 1.0, 1.0, 1.0),
+    thick: 3.0 / 2.0,
+    top: 0,
+};
 
 pub const MSTATUS_UNSEL: MStatus = MStatus {
     color: Rgba::new(0.0, 0.0, 0.0, 0.0),

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use cgmath::{prelude::*, Deg, Rad};
+use cgmath::{prelude::*, Deg, Rad, Vector3};
 use easy_imgui_window::{
     easy_imgui::{self as imgui, id, lbl, lbl_id, vec2, Color, MouseButton, Vector2},
     easy_imgui_renderer::{
@@ -58,7 +58,7 @@ use paper::{
     import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions,
     Papercraft,
 };
-use util_3d::{Matrix3, Vector3};
+use util_3d::Matrix3;
 use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
 
 use clap::Parser;
@@ -1638,7 +1638,7 @@ impl GlobalContext {
                     .build()
                 {
                     self.data.ui.show_3d_lines ^= true;
-                    self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                    self.add_rebuild(RebuildFlags::SCENE_REDRAW | RebuildFlags::SCENE_EDGE);
                 }
                 if ui
                     .menu_item_config(lbl(tr!("Flaps")))
@@ -1761,7 +1761,7 @@ impl GlobalContext {
             }
             if ui.shortcut_ex(imgui::Key::D, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_3d_lines ^= true;
-                self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                self.add_rebuild(RebuildFlags::SCENE_REDRAW | RebuildFlags::SCENE_EDGE);
             }
             if ui.shortcut_ex(imgui::Key::B, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_flaps ^= true;
@@ -2288,7 +2288,7 @@ impl GlobalContext {
         self.add_rebuild(flags);
     }
 
-    fn render_scene(&self) {
+    fn render_scene(&self, scale: f32) {
         let gl_fixs = &self.gl_fixs;
 
         let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
@@ -2301,6 +2301,7 @@ impl GlobalContext {
             tex: 0,
             line_top: 0,
             texturize: 0,
+            view_size: self.sz_scene / (2.0 * scale),
         };
         unsafe {
             self.gl.enable(glow::BLEND);
@@ -2320,9 +2321,6 @@ impl GlobalContext {
                 u.texturize = 1;
             }
 
-            //self.gl.polygon_offset(1.0, 1.0);
-            //self.gl.enable(glow::POLYGON_OFFSET_FILL);
-
             gl_fixs.prg_scene_solid.draw(
                 &u,
                 (
@@ -2332,44 +2330,14 @@ impl GlobalContext {
                 glow::TRIANGLES,
             );
 
-            //self.gl.disable(glow::POLYGON_OFFSET_FILL);
-            //self.gl.polygon_offset(0.0, 0.0);
-
-            if self.data.ui.show_3d_lines {
-                //Joined edges
-                gl_fixs.prg_scene_line.draw(
-                    &u,
-                    &self.data.gl_objs().scene_vertices_edge_joint,
-                    glow::LINES,
-                );
-
-                //Cut edges
-                self.gl.line_width(3.0);
-                self.gl.enable(glow::LINE_SMOOTH);
-                gl_fixs.prg_scene_line.draw(
-                    &u,
-                    &self.data.gl_objs().scene_vertices_edge_cut,
-                    glow::LINES,
-                );
-                self.gl.line_width(1.0);
-                self.gl.disable(glow::LINE_SMOOTH);
-            }
-
-            //Selected edge
-            if self.data.has_selected_edge() {
-                self.gl.line_width(5.0);
-                self.gl.enable(glow::LINE_SMOOTH);
-                if self.data.ui.xray_selection {
-                    u.line_top = 1;
-                }
-                gl_fixs.prg_scene_line.draw(
-                    &u,
-                    &self.data.gl_objs().scene_vertices_edge_sel,
-                    glow::LINES,
-                );
-                self.gl.line_width(1.0);
-                self.gl.disable(glow::LINE_SMOOTH);
-            }
+            gl_fixs.prg_scene_line.draw(
+                &u,
+                (
+                    &self.data.gl_objs().scene_vertices_edge,
+                    &self.data.gl_objs().scene_vertices_edge_status,
+                ),
+                glow::TRIANGLES,
+            );
         }
     }
     fn render_paper(&mut self, ui: &Ui) {
@@ -2715,7 +2683,7 @@ impl GlobalContext {
             self.gl.clear_depth_f32(1.0);
             self.gl
                 .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-            self.render_scene();
+            self.render_scene(1.0);
 
             // Restore the normal configuration
             self.gl.front_face(glow::CCW);
@@ -3160,7 +3128,8 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                             self.gl
                                 .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
                         }
-                        self.render_scene();
+                        let scale = ui.display_scale();
+                        self.render_scene(scale);
                     }
                     if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
                         let _draw_fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);

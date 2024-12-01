@@ -281,30 +281,46 @@ impl Papercraft {
         for (i_face, face) in self.model.faces() {
             for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
                 let edge = &self.model[i_edge];
-                let (i_fa, Some(i_fb)) = edge.faces() else {
-                    continue;
-                };
-                if i_fa != i_face {
-                    continue;
-                }
-                let face_b = &self.model[i_fb];
-                let (mut i_v0b, mut i_v1b) = face_b.vertices_of_edge(i_edge).unwrap();
 
-                // Is it a normal or inverted edge?
-                // Check for normal edge: First compare the ids, they are sometimes the same
-                if i_v0 != i_v1b && i_v1 != i_v0b &&
-                    // Then compare the exact values, those are most likely the same
-                    self.model[i_v0].pos() != self.model[i_v1b].pos()
-                {
-                    // Here it is probably an inverted edge, make sure by computing the distance
-                    let d2_normal = self.model[i_v0].pos().distance2(self.model[i_v1b].pos());
-                    let d2_inverted = self.model[i_v0].pos().distance2(self.model[i_v0b].pos());
-                    if d2_inverted < d2_normal {
-                        std::mem::swap(&mut i_v0b, &mut i_v1b);
+                match edge.faces() {
+                    (i_fa, Some(i_fb)) if i_fa == i_face => {
+                        // Normal edge, main face
+                        let face_b = &self.model[i_fb];
+                        let (mut i_v0b, mut i_v1b) = face_b.vertices_of_edge(i_edge).unwrap();
+
+                        // Is it a normal or inverted edge?
+                        // Check for normal edge: First compare the ids, they are sometimes the same
+                        if i_v0 != i_v1b && i_v1 != i_v0b &&
+                            // Then compare the exact values, those are most likely the same
+                            self.model[i_v0].pos() != self.model[i_v1b].pos()
+                        {
+                            // Here it is probably an inverted edge, make sure by computing the distance
+                            let d2_normal =
+                                self.model[i_v0].pos().distance2(self.model[i_v1b].pos());
+                            let d2_inverted =
+                                self.model[i_v0].pos().distance2(self.model[i_v0b].pos());
+                            if d2_inverted < d2_normal {
+                                std::mem::swap(&mut i_v0b, &mut i_v1b);
+                            }
+                        }
+                        mark_equal(&mut next_id, &mut idx, i_v0, i_v1b);
+                        mark_equal(&mut next_id, &mut idx, i_v1, i_v0b);
+                    }
+                    (_, None) => {
+                        // An edge rim, no `mark_equal()` call because there is no face_b.
+                        // Assign the idx if not already.
+                        for i in [usize::from(i_v0), usize::from(i_v1)] {
+                            if idx[i].is_none() {
+                                let id = next_id.len();
+                                next_id.push(Vid(id as u32));
+                                idx[i] = Some(id);
+                            }
+                        }
+                    }
+                    _ => {
+                        // Normal edge, but from face_b point of view, do nothing; face_a will take care
                     }
                 }
-                mark_equal(&mut next_id, &mut idx, i_v0, i_v1b);
-                mark_equal(&mut next_id, &mut idx, i_v1, i_v0b);
             }
         }
 

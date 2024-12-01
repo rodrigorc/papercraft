@@ -104,6 +104,18 @@ pub const MLINE3D_NORMAL: MLine3DStatus = MLine3DStatus {
     top: 0,
 };
 
+pub const MLINE3D_RIM: MLine3DStatus = MLine3DStatus {
+    color: Rgba::new(1.0, 1.0, 0.0, 1.0),
+    thick: 1.0 / 2.0,
+    top: 0,
+};
+
+pub const MLINE3D_RIM_TAB: MLine3DStatus = MLine3DStatus {
+    color: Rgba::new(0.75, 0.75, 0.0, 1.0),
+    thick: 5.0 / 2.0,
+    top: 0,
+};
+
 pub const MLINE3D_CUT: MLine3DStatus = MLine3DStatus {
     color: Rgba::new(1.0, 1.0, 1.0, 1.0),
     thick: 3.0 / 2.0,

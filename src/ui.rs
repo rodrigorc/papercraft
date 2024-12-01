@@ -20,8 +20,8 @@ use crate::util_3d::{
 };
 use crate::util_gl::{
     MLine3DStatus, MStatus, MVertex2D, MVertex2DColor, MVertex2DLine, MVertex3D, MVertex3DLine,
-    MVertexText, MLINE3D_CUT, MLINE3D_HIDDEN, MLINE3D_NORMAL, MSTATUS_HI, MSTATUS_SEL,
-    MSTATUS_UNSEL,
+    MVertexText, MLINE3D_CUT, MLINE3D_HIDDEN, MLINE3D_NORMAL, MLINE3D_RIM, MLINE3D_RIM_TAB,
+    MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL,
 };
 use crate::{
     glr::{self, Rgba},
@@ -1322,6 +1322,7 @@ impl PapercraftContext {
         for (&i_edge, &edge_idx) in &self.gl_objs.edge_map {
             let status = self.papercraft.edge_status(i_edge);
             let edge = &self.papercraft.model()[i_edge];
+            let (i_fa, i_fb) = edge.faces();
 
             let mut edge_status = if self
                 .selected_edges
@@ -1334,7 +1335,15 @@ impl PapercraftContext {
                     thick: 5.0 / 2.0,
                     top: self.ui.xray_selection as u8,
                 }
-            } else if self.ui.show_3d_lines {
+            } else if !self.ui.show_3d_lines {
+                MLINE3D_HIDDEN
+            } else if i_fb.is_none() {
+                if matches!(status, EdgeStatus::Cut(FlapSide::Hidden)) {
+                    MLINE3D_RIM
+                } else {
+                    MLINE3D_RIM_TAB
+                }
+            } else {
                 match status {
                     EdgeStatus::Hidden => MLINE3D_HIDDEN,
                     EdgeStatus::Joined => {
@@ -1349,12 +1358,9 @@ impl PapercraftContext {
                     }
                     EdgeStatus::Cut(_) => MLINE3D_CUT,
                 }
-            } else {
-                MLINE3D_HIDDEN
             };
 
             // Edges of a top face are also top, or they would be hidden
-            let (i_fa, i_fb) = edge.faces();
             if self.gl_objs.vertices_sel[3 * usize::from(i_fa)].top != 0 {
                 edge_status.top = 1;
             } else if let Some(i_fb) = i_fb {

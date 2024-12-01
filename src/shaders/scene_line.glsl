@@ -28,10 +28,12 @@ void main(void) {
     va.xy = (va.xy + nvline) / view_size - vec2(1.0);
 
     va.xyz *= va.w;
-    if (top != 0) {
-        va.z = 0.0;
-    }
     gl_Position = va;
+    if (top != 0) {
+        gl_Position.z = gl_Position.z * 0.1;
+    } else {
+        gl_Position.z = gl_Position.z * 0.9 + 0.1;
+    }
 }
 
 ###

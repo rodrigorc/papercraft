@@ -28,7 +28,9 @@ void main(void) {
     v_uv = vec3(uv, mat);
     v_color = color;
     if (top != 0) {
-        gl_Position.z = 0.0;
+        gl_Position.z = gl_Position.z * 0.1;
+    } else {
+        gl_Position.z = gl_Position.z * 0.9 + 0.1;
     }
 }
 

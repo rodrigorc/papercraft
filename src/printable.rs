@@ -783,7 +783,7 @@ impl GlobalContext {
                     page_size_pixels.y,
                     glow::RGBA,
                     glow::UNSIGNED_BYTE,
-                    glow::PixelPackData::Slice(&mut pixbuf),
+                    glow::PixelPackData::Slice(Some(&mut pixbuf)),
                 );
 
                 let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm

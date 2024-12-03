@@ -320,7 +320,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
                                         0,
                                         glow::RGBA,
                                         glow::UNSIGNED_BYTE,
-                                        Some(img.as_bytes()),
+                                        glow::PixelUnpackData::Slice(Some(img.as_bytes())),
                                     );
                                     gl.tex_parameter_i32(
                                         glow::TEXTURE_2D,
@@ -2792,7 +2792,7 @@ impl GlobalContext {
                 IMG_HEIGHT,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
-                glow::PixelPackData::Slice(&mut pixbuf),
+                glow::PixelPackData::Slice(Some(&mut pixbuf)),
             );
             pixbuf
         }

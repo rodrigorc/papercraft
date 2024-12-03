@@ -2420,7 +2420,7 @@ impl GLObjects {
                         0,
                         glow::RGB,
                         glow::UNSIGNED_BYTE,
-                        None,
+                        glow::PixelUnpackData::Slice(None),
                     );
                     gl.tex_parameter_i32(
                         glow::TEXTURE_2D_ARRAY,
@@ -2474,7 +2474,7 @@ impl GLObjects {
                                 1,
                                 format,
                                 type_,
-                                glow::PixelUnpackData::Slice(bytes),
+                                glow::PixelUnpackData::Slice(Some(bytes)),
                             );
                         } else {
                             let blank = blank.get_or_insert_with(|| {
@@ -2491,7 +2491,7 @@ impl GLObjects {
                                 1,
                                 glow::RGB,
                                 glow::UNSIGNED_BYTE,
-                                glow::PixelUnpackData::Slice(blank),
+                                glow::PixelUnpackData::Slice(Some(blank)),
                             );
                         }
                     }

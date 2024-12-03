@@ -59,8 +59,11 @@ impl Papercraft {
             Ok(Some(img))
         })?;
 
-        papercraft.recompute_edge_ids();
+        papercraft.post_create();
         Ok(papercraft)
+    }
+    fn post_create(&mut self) {
+        self.recompute_edge_ids();
     }
     fn recompute_edge_ids(&mut self) {
         let mut next_edge_id = 0;
@@ -207,7 +210,7 @@ impl Papercraft {
             let num_pages = papercraft.pack_islands();
             papercraft.options.pages = num_pages;
         }
-        papercraft.recompute_edge_ids();
+        papercraft.post_create();
         papercraft
     }
 

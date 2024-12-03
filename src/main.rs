@@ -2353,7 +2353,6 @@ impl GlobalContext {
             mnormal: self.data.ui.trans_scene.mnormal, // should be transpose of inverse
             lights: [light0, light1],
             tex: 0,
-            line_top: 0,
             texturize: 0,
             view_size: self.sz_scene / (2.0 * scale),
         };

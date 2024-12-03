@@ -41,9 +41,9 @@ pub struct GLObjects {
     pub textures: Option<glr::Texture>,
 
     //GL objects that are rebuilt with the model
+    pub vertices: glr::DynamicVertexArray<MVertex3D>,
 
     // Attributes common for 3D/2D
-    pub vertices: glr::DynamicVertexArray<MVertex3D>,
     pub vertices_sel: glr::DynamicVertexArray<MStatus>,
 
     // For 3D
@@ -1330,10 +1330,11 @@ impl PapercraftContext {
                 .map(|sel| sel.contains(&i_edge))
                 .unwrap_or(false)
             {
+                let top = if self.ui.xray_selection { 1 } else { 0 };
                 MLine3DStatus {
                     color: color_edge(self.ui.mode),
                     thick: 5.0 / 2.0,
-                    top: self.ui.xray_selection as u8,
+                    top,
                 }
             } else if !self.ui.show_3d_lines {
                 MLINE3D_HIDDEN
@@ -1361,12 +1362,13 @@ impl PapercraftContext {
             };
 
             // Edges of a top face are also top, or they would be hidden
-            if self.gl_objs.vertices_sel[3 * usize::from(i_fa)].top != 0 {
-                edge_status.top = 1;
-            } else if let Some(i_fb) = i_fb {
-                if self.gl_objs.vertices_sel[3 * usize::from(i_fb)].top != 0 {
-                    edge_status.top = 1;
-                }
+            edge_status.top = edge_status
+                .top
+                .max(vertices_sel_top_by_face(&self.gl_objs.vertices_sel, i_fa));
+            if let Some(i_fb) = i_fb {
+                edge_status.top = edge_status
+                    .top
+                    .max(vertices_sel_top_by_face(&self.gl_objs.vertices_sel, i_fb));
             }
 
             // The 3d line status is duplicated x6
@@ -1375,12 +1377,6 @@ impl PapercraftContext {
     }
 
     fn selection_rebuild(&mut self) {
-        let n = self.gl_objs.vertices_sel.len();
-        for i in 0..n {
-            self.gl_objs.vertices_sel[i] = MSTATUS_UNSEL;
-        }
-        let top = self.ui.xray_selection as u8;
-
         // Pre-selected islands are drawn as if selected
         let empty = FxHashSet::default();
         let (pre_add, pre_remove) = match self.pre_selection.as_ref() {
@@ -1388,34 +1384,79 @@ impl PapercraftContext {
             Some((_, _, sel, true)) => (sel, &empty),
             Some((_, _, sel, false)) => (&empty, sel),
         };
+        let selection: Vec<IslandKey> = self
+            .selected_islands
+            .iter()
+            .chain(pre_add)
+            .filter(|s| !pre_remove.contains(s))
+            .copied()
+            .collect();
 
-        for &sel_island in self.selected_islands.iter().chain(pre_add) {
-            if pre_remove.contains(&sel_island) {
-                continue;
-            }
+        let top = if !self.papercraft.model().multi_body()
+            || (selection.is_empty() && self.selected_face.is_none())
+        {
+            0
+        } else {
+            -1
+        };
+        for vi in self.gl_objs.vertices_sel.data_mut() {
+            *vi = MStatus {
+                color: MSTATUS_UNSEL.color,
+                top,
+            };
+        }
+
+        let top = if self.ui.xray_selection { 1 } else { 0 };
+        for sel_island in selection {
             if let Some(island) = self.papercraft.island_by_key(sel_island) {
+                let body_to_top =
+                    vertices_sel_top_by_face(&self.gl_objs.vertices_sel, island.root_face()) == -1;
+
                 self.papercraft.traverse_faces_no_matrix(island, |i_face| {
-                    let pos = 3 * usize::from(i_face);
-                    for i in pos..pos + 3 {
-                        self.gl_objs.vertices_sel[i] = MStatus {
-                            color: MSTATUS_SEL.color,
-                            top,
-                        };
-                    }
+                    vertices_sel_by_face(&mut self.gl_objs.vertices_sel, i_face).fill(MStatus {
+                        color: MSTATUS_SEL.color,
+                        top,
+                    });
                     ControlFlow::Continue(())
                 });
+
+                if body_to_top {
+                    crate::paper::traverse_faces_ex(
+                        &self.papercraft.model(),
+                        island.root_face(),
+                        (),
+                        crate::paper::BodyTraverse,
+                        |i_face, _, _| {
+                            vertices_sel_upgrade_face(&mut self.gl_objs.vertices_sel, i_face, 0);
+                            std::ops::ControlFlow::Continue(())
+                        },
+                    );
+                }
             }
         }
 
         if let Some(i_sel_face) = self.selected_face {
+            let body_to_top =
+                vertices_sel_top_by_face(&self.gl_objs.vertices_sel, i_sel_face) == -1;
+
             for i_face in self.papercraft.get_flat_faces(i_sel_face) {
-                let pos = 3 * usize::from(i_face);
-                for i in pos..pos + 3 {
-                    self.gl_objs.vertices_sel[i] = MStatus {
-                        color: MSTATUS_HI.color,
-                        top,
-                    };
-                }
+                vertices_sel_by_face(&mut self.gl_objs.vertices_sel, i_face).fill(MStatus {
+                    color: MSTATUS_HI.color,
+                    top,
+                });
+            }
+
+            if body_to_top {
+                crate::paper::traverse_faces_ex(
+                    &self.papercraft.model(),
+                    i_sel_face,
+                    (),
+                    crate::paper::BodyTraverse,
+                    |i_face, _, _| {
+                        vertices_sel_upgrade_face(&mut self.gl_objs.vertices_sel, i_face, 0);
+                        std::ops::ControlFlow::Continue(())
+                    },
+                );
             }
         }
 
@@ -2546,6 +2587,29 @@ impl GLObjects {
             paper_vertices_margin,
             paper_text,
         })
+    }
+}
+
+fn vertices_sel_by_face(
+    this: &mut glr::DynamicVertexArray<MStatus>,
+    i_face: FaceIndex,
+) -> &mut [MStatus] {
+    let i = 3 * usize::from(i_face);
+    &mut this.data_mut()[i..i + 3]
+}
+
+fn vertices_sel_top_by_face(this: &glr::DynamicVertexArray<MStatus>, i_face: FaceIndex) -> i8 {
+    this[3 * usize::from(i_face)].top
+}
+
+fn vertices_sel_upgrade_face(
+    this: &mut glr::DynamicVertexArray<MStatus>,
+    i_face: FaceIndex,
+    new_top: i8,
+) {
+    let i = 3 * usize::from(i_face);
+    for v in &mut this.data_mut()[i..i + 3] {
+        v.top = v.top.max(new_top);
     }
 }
 

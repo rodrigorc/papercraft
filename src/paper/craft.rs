@@ -1370,7 +1370,7 @@ impl Default for SelfCollisionPerimeter {
     }
 }
 
-fn traverse_faces_ex<F, TP>(
+pub fn traverse_faces_ex<F, TP>(
     model: &Model,
     root: FaceIndex,
     initial_state: TP::State,
@@ -1407,7 +1407,7 @@ where
     ControlFlow::Continue(())
 }
 
-trait TraverseFacePolicy {
+pub trait TraverseFacePolicy {
     type State;
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool;
     fn next_state(
@@ -1509,6 +1509,25 @@ impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
         let next_face = &self.0.model[i_next_face];
         let medge = self.0.face_to_face_edge_matrix(edge, face, next_face);
         st * medge
+    }
+}
+
+pub struct BodyTraverse;
+
+impl TraverseFacePolicy for BodyTraverse {
+    type State = ();
+
+    fn cross_edge(&self, _i_edge: EdgeIndex) -> bool {
+        true
+    }
+
+    fn next_state(
+        &self,
+        _st: &Self::State,
+        _edge: &Edge,
+        _face: &Face,
+        _i_next_face: FaceIndex,
+    ) -> Self::State {
     }
 }
 

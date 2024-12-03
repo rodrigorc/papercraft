@@ -29,10 +29,14 @@ void main(void) {
 
     va.xyz *= va.w;
     gl_Position = va;
-    if (top != 0) {
+    if (top == 0)
+    {
+        gl_Position.z = gl_Position.z * 0.8 + 0.1 * gl_Position.w;
+    } else if (top > 0) {
         gl_Position.z = gl_Position.z * 0.1;
     } else {
-        gl_Position.z = gl_Position.z * 0.9 + 0.1;
+        gl_Position.z = gl_Position.z * 0.1 + 0.9 * gl_Position.w;
+        v_color.rgb = mix(vec3(0.2, 0.2, 0.4), v_color.rgb, 0.25);
     }
 }
 

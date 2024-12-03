@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use crate::paper::import::Importer;
 use crate::util_3d::{self, Vector2, Vector3};
 
-use super::{EdgeStatus, Island, PaperOptions};
+use super::{traverse_faces_ex, BodyTraverse, EdgeStatus, Island, PaperOptions};
 
 pub mod import;
 
@@ -34,6 +34,7 @@ pub struct Model {
     vertices: Vec<Vertex>,
     edges: Vec<Edge>,
     faces: Vec<Face>,
+    multi_body: bool,
 }
 
 use maybe_owned::MaybeOwned;
@@ -110,6 +111,7 @@ impl<'de> Deserialize<'de> for Model {
             vertices,
             edges,
             faces,
+            multi_body: false,
         };
         model.post_create();
         Ok(model)
@@ -149,6 +151,7 @@ index_type!(pub MaterialIndex: u32);
 index_type!(pub VertexIndex: u32);
 index_type!(pub EdgeIndex: u32);
 index_type!(pub FaceIndex: u32);
+index_type!(pub BodyIndex: u32);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Face {
@@ -225,6 +228,7 @@ impl Model {
             vertices: Vec::new(),
             edges: Vec::new(),
             faces: Vec::new(),
+            multi_body: false,
         }
     }
 
@@ -355,6 +359,7 @@ impl Model {
             vertices,
             edges,
             faces,
+            multi_body: false,
         };
         model.post_create();
         ImportedModule {
@@ -364,6 +369,7 @@ impl Model {
         }
     }
     fn post_create(&mut self) {
+        // Compute edge angles
         for i_edge in 0..self.edges.len() {
             let i_edge = EdgeIndex::from(i_edge);
             let edge = &self[i_edge];
@@ -385,6 +391,19 @@ impl Model {
                 _ => default_angle(),
             };
             self.edges[usize::from(i_edge)].angle = angle;
+        }
+
+        let first_face = self.faces().next();
+        if let Some((i_face, _)) = first_face {
+            let mut count = 0;
+            traverse_faces_ex(&self, i_face, (), BodyTraverse, |_, _, _| {
+                count += 1;
+                std::ops::ControlFlow::Continue(())
+            });
+            self.multi_body = count < self.num_faces();
+            if self.multi_body {
+                log::info!("Multi body model");
+            }
         }
     }
     pub fn vertices(&self) -> impl Iterator<Item = (VertexIndex, &Vertex)> {
@@ -438,6 +457,9 @@ impl Model {
     }
     pub fn is_empty(&self) -> bool {
         self.vertices.is_empty()
+    }
+    pub fn multi_body(&self) -> bool {
+        self.multi_body
     }
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()
@@ -548,7 +570,7 @@ impl Edge {
     pub fn face_sign(&self, i_face: FaceIndex) -> bool {
         if self.f0 == i_face {
             false
-        } else if self.f1.map_or(false, |f| f == i_face) {
+        } else if self.f1 == Some(i_face) {
             true
         } else {
             // Model is inconsistent

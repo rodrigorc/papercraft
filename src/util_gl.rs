@@ -13,7 +13,6 @@ uniform! {
         pub m: Matrix4,
         pub mnormal: Matrix3,
         pub tex: i32,
-        pub line_top: i32,
         pub texturize: i32,
         pub view_size: Vector2,
     }
@@ -48,7 +47,7 @@ attrib! {
     pub struct MLine3DStatus {
         pub thick: f32,
         pub color: Rgba,
-        pub top: u8,
+        pub top: i8,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -74,7 +73,7 @@ attrib! {
     #[repr(C)]
     pub struct MStatus {
         pub color: Rgba,
-        pub top: u8,
+        pub top: i8,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]
@@ -95,31 +94,31 @@ impl Default for MVertex2D {
 pub const MLINE3D_HIDDEN: MLine3DStatus = MLine3DStatus {
     color: Rgba::new(0.0, 0.0, 0.0, 0.0),
     thick: 0.0,
-    top: 0,
+    top: -1,
 };
 
 pub const MLINE3D_NORMAL: MLine3DStatus = MLine3DStatus {
     color: Rgba::new(0.0, 0.0, 0.0, 1.0),
     thick: 1.0 / 2.0,
-    top: 0,
+    top: -1,
 };
 
 pub const MLINE3D_RIM: MLine3DStatus = MLine3DStatus {
     color: Rgba::new(1.0, 1.0, 0.0, 1.0),
     thick: 1.0 / 2.0,
-    top: 0,
+    top: -1,
 };
 
 pub const MLINE3D_RIM_TAB: MLine3DStatus = MLine3DStatus {
     color: Rgba::new(0.75, 0.75, 0.0, 1.0),
     thick: 5.0 / 2.0,
-    top: 0,
+    top: -1,
 };
 
 pub const MLINE3D_CUT: MLine3DStatus = MLine3DStatus {
     color: Rgba::new(1.0, 1.0, 1.0, 1.0),
     thick: 3.0 / 2.0,
-    top: 0,
+    top: -1,
 };
 
 pub const MSTATUS_UNSEL: MStatus = MStatus {

@@ -1422,7 +1422,7 @@ impl PapercraftContext {
 
                 if body_to_top {
                     crate::paper::traverse_faces_ex(
-                        &self.papercraft.model(),
+                        self.papercraft.model(),
                         island.root_face(),
                         (),
                         crate::paper::BodyTraverse,

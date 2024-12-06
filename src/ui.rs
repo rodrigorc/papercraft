@@ -151,7 +151,9 @@ pub struct PapercraftContext {
     selected_islands: Vec<IslandKey>,
     // Contains the UndoActions if these islands are to be moved, the actual grabbed islands are selected_islands
     grabbed_island: Option<Vec<UndoAction>>,
+    // This in view coordinates
     last_cursor_pos: Vector2,
+    // This in paper coordinates
     rotation_center: Option<Vector2>,
     // The selection rectangle, while dragging it, plus the pre-selected islands.
     // The boolean says if the selection is to be added or removed
@@ -2051,12 +2053,12 @@ impl PapercraftContext {
 
         if rotating {
             // Rotate island
-            let center = *self.rotation_center.get_or_insert(pos);
+            let ppos = self.ui.trans_paper.paper_click(size, pos);
+            let pcenter = *self.rotation_center.get_or_insert(ppos);
+            let vcenter = self.ui.trans_paper.paper_unclick(size, pcenter);
             //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
-            if center.distance2(pos) > 10.0_f32.powi(2) {
-                let pcenter = self.ui.trans_paper.paper_click(size, center);
+            if vcenter.distance2(pos) > 10.0_f32.powi(2) {
                 let ppos_prev = self.ui.trans_paper.paper_click(size, pos - delta);
-                let ppos = self.ui.trans_paper.paper_click(size, pos);
                 let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
                 for &i_island in &self.selected_islands {
                     if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
@@ -2085,7 +2087,7 @@ impl PapercraftContext {
 
             // When moving an island the center of rotation is preserved as the original clicked point
             if let Some(c) = &mut self.rotation_center {
-                *c += delta;
+                *c += delta_scaled;
             }
 
             if !going_outside {
@@ -2212,10 +2214,6 @@ impl PapercraftContext {
             * Matrix3::from_scale(zoom)
             * Matrix3::from_translation(-pos);
         self.ui.trans_paper.mx = tr * self.ui.trans_paper.mx;
-        // If there is a rotation center keep it at the same relative point
-        if let Some(c) = &mut self.rotation_center {
-            *c = pos + zoom * (*c - pos);
-        }
         RebuildFlags::PAPER_REDRAW | RebuildFlags::SELECTION
     }
     #[must_use]

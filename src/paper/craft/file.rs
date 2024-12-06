@@ -63,7 +63,99 @@ impl Papercraft {
         Ok(papercraft)
     }
     fn post_create(&mut self) {
+        self.sanitize();
         self.recompute_edge_ids();
+    }
+    fn sanitize(&mut self) {
+        // Fix islands that are not acyclic graphs
+        struct SanitizeTraverse<'a, 'b>(&'a Papercraft, &'b mut FxHashSet<EdgeIndex>);
+
+        impl TraverseFacePolicy for SanitizeTraverse<'_, '_> {
+            type State = ();
+            fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
+                match self.0.edge_status(i_edge) {
+                    EdgeStatus::Cut(_) => false,
+                    EdgeStatus::Joined | EdgeStatus::Hidden => true,
+                }
+            }
+            fn duplicated_face(
+                &mut self,
+                _i_face: FaceIndex,
+                i_edge: EdgeIndex,
+                _i_next_face: FaceIndex,
+            ) {
+                self.1.insert(i_edge);
+            }
+        }
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (_i_island, island) in &self.islands {
+                let mut faults = FxHashSet::default();
+                traverse_faces_ex(
+                    &self.model,
+                    island.root,
+                    (),
+                    SanitizeTraverse(&self, &mut faults),
+                    |_, _, _| ControlFlow::Continue(()),
+                );
+                if !faults.is_empty() {
+                    for i_edge in faults {
+                        log::warn!("Splitting looping edge {i_edge:?}");
+                        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(FlapSide::False);
+                    }
+                    changed = true;
+                }
+            }
+        }
+
+        // Fix any face that appears in two islands
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (i_island, island) in &self.islands {
+                let i_owner = self.island_by_face(island.root);
+                if i_owner != i_island {
+                    log::warn!(
+                        "Removing face in two pieces: {:?} was in {:?} and {:?}",
+                        island.root,
+                        i_island,
+                        i_owner
+                    );
+                    self.islands.remove(i_island);
+                    self.memo = Memoization::default();
+                    changed = true;
+                    break; // restart loop
+                }
+            }
+        }
+
+        // Add islands for any orphan face
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let mut all_faces: FxHashSet<FaceIndex> = self.model.faces().map(|(i, _)| i).collect();
+            for (_i_island, island) in &self.islands {
+                self.traverse_faces_no_matrix(island, |i_face| {
+                    all_faces.remove(&i_face);
+                    ControlFlow::Continue(())
+                });
+            }
+            // Create just one island, just in case it has some connected
+            if let Some(&root) = all_faces.iter().next() {
+                log::warn!("Creating missing island for face {root:?}");
+                // Any coordinates are good enough, we are on emergency mode
+                self.islands.insert(Island {
+                    root,
+                    loc: Vector2::zero(),
+                    rot: Rad::zero(),
+                    mx: Matrix3::one(),
+                    name: String::new(),
+                });
+                self.memo = Memoization::default();
+                changed = true;
+            }
+        }
     }
     fn recompute_edge_ids(&mut self) {
         let mut next_edge_id = 0;

@@ -1374,7 +1374,7 @@ pub fn traverse_faces_ex<F, TP>(
     model: &Model,
     root: FaceIndex,
     initial_state: TP::State,
-    policy: TP,
+    mut policy: TP,
     mut visit_face: F,
 ) -> ControlFlow<()>
 where
@@ -1382,10 +1382,10 @@ where
     TP: TraverseFacePolicy,
 {
     let mut visited_faces = FxHashSet::default();
-    let mut stack = vec![(root, initial_state)];
+    let mut stack = vec![(root, root, initial_state)];
     visited_faces.insert(root);
 
-    while let Some((i_face, m)) = stack.pop() {
+    while let Some((i_parent, i_face, m)) = stack.pop() {
         let face = &model[i_face];
         visit_face(i_face, face, &m)?;
         for i_edge in face.index_edges() {
@@ -1395,12 +1395,15 @@ where
             let edge = &model[i_edge];
             let (fa, fb) = edge.faces();
             for i_next_face in std::iter::once(fa).chain(fb) {
-                if visited_faces.contains(&i_next_face) {
+                if i_next_face == i_parent || i_next_face == i_face {
                     continue;
                 }
-                let next_state = policy.next_state(&m, edge, face, i_next_face);
-                stack.push((i_next_face, next_state));
-                visited_faces.insert(i_next_face);
+                if visited_faces.insert(i_next_face) {
+                    let next_state = policy.next_state(&m, edge, face, i_next_face);
+                    stack.push((i_face, i_next_face, next_state));
+                } else {
+                    policy.duplicated_face(i_face, i_edge, i_next_face);
+                }
             }
         }
     }
@@ -1408,16 +1411,21 @@ where
 }
 
 pub trait TraverseFacePolicy {
-    type State;
+    type State: Copy;
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool;
+    fn duplicated_face(&mut self, _i_face: FaceIndex, _i_edge: EdgeIndex, _i_next_face: FaceIndex) {
+    }
     fn next_state(
         &self,
         st: &Self::State,
-        edge: &Edge,
-        face: &Face,
-        i_next_face: FaceIndex,
-    ) -> Self::State;
+        _edge: &Edge,
+        _face: &Face,
+        _i_next_face: FaceIndex,
+    ) -> Self::State {
+        *st
+    }
 }
+
 struct NormalTraverseFace<'a>(&'a Papercraft);
 
 impl TraverseFacePolicy for NormalTraverseFace<'_> {
@@ -1429,7 +1437,6 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
             EdgeStatus::Joined | EdgeStatus::Hidden => true,
         }
     }
-
     fn next_state(
         &self,
         st: &Self::State,
@@ -1454,15 +1461,6 @@ impl TraverseFacePolicy for NoMatrixTraverseFace<'_> {
             EdgeStatus::Joined | EdgeStatus::Hidden => true,
         }
     }
-
-    fn next_state(
-        &self,
-        _st: &Self::State,
-        _edge: &Edge,
-        _face: &Face,
-        _i_next_face: FaceIndex,
-    ) -> Self::State {
-    }
 }
 
 struct FlatTraverseFace<'a>(&'a Papercraft);
@@ -1475,15 +1473,6 @@ impl TraverseFacePolicy for FlatTraverseFace<'_> {
             EdgeStatus::Joined | EdgeStatus::Cut(_) => false,
             EdgeStatus::Hidden => true,
         }
-    }
-
-    fn next_state(
-        &self,
-        _st: &Self::State,
-        _edge: &Edge,
-        _face: &Face,
-        _i_next_face: FaceIndex,
-    ) -> Self::State {
     }
 }
 
@@ -1519,15 +1508,6 @@ impl TraverseFacePolicy for BodyTraverse {
 
     fn cross_edge(&self, _i_edge: EdgeIndex) -> bool {
         true
-    }
-
-    fn next_state(
-        &self,
-        _st: &Self::State,
-        _edge: &Edge,
-        _face: &Face,
-        _i_next_face: FaceIndex,
-    ) -> Self::State {
     }
 }
 

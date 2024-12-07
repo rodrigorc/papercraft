@@ -2626,7 +2626,7 @@ impl GlobalContext {
         ui: &Ui,
         action: FileAction,
         file_name: impl AsRef<Path>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let file_name = file_name.as_ref();
         match action {
             FileAction::OpenCraft => {
@@ -2667,7 +2667,7 @@ impl GlobalContext {
         }
         Ok(())
     }
-    fn open_craft(&mut self, file_name: &Path) -> anyhow::Result<()> {
+    fn open_craft(&mut self, file_name: &Path) -> Result<()> {
         let fs = std::fs::File::open(file_name)
             .with_context(|| tr!("Error opening file {}", file_name.display()))?;
         let fs = std::io::BufReader::new(fs);
@@ -2798,11 +2798,7 @@ impl GlobalContext {
         }
     }
 
-    fn save_as_craft(
-        &self,
-        file_name: &Path,
-        thumbnail: Option<image::RgbaImage>,
-    ) -> anyhow::Result<()> {
+    fn save_as_craft(&self, file_name: &Path, thumbnail: Option<image::RgbaImage>) -> Result<()> {
         let f = std::fs::File::create(file_name)
             .with_context(|| tr!("Error creating file {}", file_name.display()))?;
         let f = std::io::BufWriter::new(f);
@@ -2812,7 +2808,7 @@ impl GlobalContext {
             .with_context(|| tr!("Error saving file {}", file_name.display()))?;
         Ok(())
     }
-    fn import_model(&mut self, file_name: &Path) -> anyhow::Result<bool> {
+    fn import_model(&mut self, file_name: &Path) -> Result<bool> {
         let (papercraft, is_native) = import_model_file(file_name)?;
         self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
@@ -2822,7 +2818,7 @@ impl GlobalContext {
         self.rebuild = RebuildFlags::all();
         Ok(is_native)
     }
-    fn update_obj(&mut self, file_name: &Path) -> anyhow::Result<()> {
+    fn update_obj(&mut self, file_name: &Path) -> Result<()> {
         let (mut new_papercraft, _) = import_model_file(file_name)?;
         new_papercraft.update_from_obj(self.data.papercraft());
 
@@ -2834,7 +2830,7 @@ impl GlobalContext {
         self.data.modified = true;
         Ok(())
     }
-    fn export_obj(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn export_obj(&self, file_name: &Path) -> Result<()> {
         self.data
             .papercraft()
             .export_waveobj(file_name.as_ref())

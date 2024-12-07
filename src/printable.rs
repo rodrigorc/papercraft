@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Result;
 use rayon::prelude::*;
 
 fn cuts_to_page_cuts(
@@ -32,7 +33,7 @@ fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
 }
 
 impl GlobalContext {
-    pub fn generate_printable(&mut self, ui: &Ui, file_name: &Path) -> anyhow::Result<()> {
+    pub fn generate_printable(&mut self, ui: &Ui, file_name: &Path) -> Result<()> {
         // Rebuild everything, just in case
         //TODO: should pass show_texts as argument?
         let old_show_texts = self.data.ui.show_texts;
@@ -64,7 +65,7 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_pdf(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn generate_pdf(&self, file_name: &Path) -> Result<()> {
         use lopdf::{
             content::{Content, Operation},
             dictionary,
@@ -313,21 +314,21 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_svg(&self, file_name: &Path) -> anyhow::Result<()> {
+    fn generate_svg(&self, file_name: &Path) -> Result<()> {
         let options = self.data.papercraft().options();
         let edge_id_position = options.edge_id_position;
 
         let (tx_compress, rx_compress) =
             std::sync::mpsc::channel::<(u32, image::RgbaImage, Vec<u8>, Vec<u8>)>();
-        let (tx_done, rx_done) = std::sync::mpsc::channel::<anyhow::Result<()>>();
+        let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
 
         let file_name = PathBuf::from(file_name);
         rayon::spawn(move || {
-            let res: anyhow::Result<()> = rx_compress.into_iter().par_bridge().try_for_each(
+            let res: Result<()> = rx_compress.into_iter().par_bridge().try_for_each(
                 |(page, pixbuf, prefix, suffix)| {
                     let name = file_name_for_page(&file_name, page);
                     // A try block would be nice here
-                    ((|| -> anyhow::Result<()> {
+                    ((|| -> Result<()> {
                         log::debug!("Saving page {}", name.display());
 
                         let out = std::fs::File::create(&name)?;
@@ -381,7 +382,7 @@ impl GlobalContext {
                 page_size.x, page_size.y
             )?;
 
-            let write_layer_text = |out: &mut Vec<u8>| -> anyhow::Result<()> {
+            let write_layer_text = |out: &mut Vec<u8>| -> Result<()> {
                 if texts.is_empty() {
                     return Ok(());
                 }
@@ -489,24 +490,20 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_png(
-        &self,
-        text_tex_id: Option<glow::Texture>,
-        file_name: &Path,
-    ) -> anyhow::Result<()> {
+    fn generate_png(&self, text_tex_id: Option<glow::Texture>, file_name: &Path) -> Result<()> {
         let (tx_compress, rx_compress) = std::sync::mpsc::channel::<(u32, image::RgbaImage)>();
-        let (tx_done, rx_done) = std::sync::mpsc::channel::<anyhow::Result<()>>();
+        let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
 
         let file_name = PathBuf::from(file_name);
         rayon::spawn(move || {
-            let res: anyhow::Result<()> =
+            let res: Result<()> =
                 rx_compress
                     .into_iter()
                     .par_bridge()
                     .try_for_each(|(page, pixbuf)| {
                         let name = file_name_for_page(&file_name, page);
                         // A try block would be nice here
-                        ((|| -> anyhow::Result<()> {
+                        ((|| -> Result<()> {
                             log::debug!("Saving page {}", name.display());
                             let f = std::fs::File::create(&name)?;
                             let mut f = std::io::BufWriter::new(f);
@@ -533,18 +530,14 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_pages<F>(
-        &self,
-        text_tex_id: Option<glow::Texture>,
-        mut do_page_fn: F,
-    ) -> anyhow::Result<()>
+    fn generate_pages<F>(&self, text_tex_id: Option<glow::Texture>, mut do_page_fn: F) -> Result<()>
     where
         F: FnMut(
             u32,
             image::RgbaImage,
             &[PrintableText],
             &[(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))],
-        ) -> anyhow::Result<()>,
+        ) -> Result<()>,
     {
         let options = self.data.papercraft().options();
         let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;

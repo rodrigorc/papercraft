@@ -2,6 +2,7 @@ use std::{collections::HashMap, ops::Range};
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
+use anyhow::Result;
 use cgmath::{prelude::*, Deg, Rad};
 use easy_imgui_window::easy_imgui_renderer::{
     glow::{self, HasContext},
@@ -528,10 +529,7 @@ impl PapercraftContext {
             }]);
         }
     }
-    pub fn from_papercraft(
-        papercraft: Papercraft,
-        gl: &GlContext,
-    ) -> anyhow::Result<PapercraftContext> {
+    pub fn from_papercraft(papercraft: Papercraft, gl: &GlContext) -> Result<PapercraftContext> {
         // Compute the bounding box, then move to the center and scale to a standard size
         let (v_min, v_max) =
             util_3d::bounding_box_3d(papercraft.model().vertices().map(|(_, v)| v.pos()));
@@ -2390,7 +2388,7 @@ pub struct ThumbnailData {
 }
 
 impl GLObjects {
-    fn new(papercraft: &Papercraft, gl: &GlContext) -> anyhow::Result<GLObjects> {
+    fn new(papercraft: &Papercraft, gl: &GlContext) -> Result<GLObjects> {
         let model = papercraft.model();
         let images = model.textures().map(|tex| tex.pixbuf()).collect::<Vec<_>>();
 

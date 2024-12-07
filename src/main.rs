@@ -295,7 +295,9 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
                 }
             }
             MainLoopEvent::ThumbnailLoaded(full_path, ct, maybe_img) => {
-                log::info!("Thumbnail loaded {full_path:?}");
+                if maybe_img.is_some() {
+                    log::info!("Thumbnail loaded {full_path:?}");
+                }
                 match self.file_dialog.as_mut() {
                     // If the datadialog is still opened and the proper file selected
                     Some(fd)

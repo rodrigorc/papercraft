@@ -25,8 +25,6 @@ opt-level = 3
 opt-level = 3
 
 [build-dependencies]
-cc = "1"
-bindgen = "0.70"
 include-po = "0.1"
 
 [dependencies]
@@ -36,12 +34,9 @@ base64 = "0.22"
 slotmap = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-smallvec = "1"
 # zip 2.2.0 has a grave performance regression, waiting for 2.3...
 zip = "=2.1.2"
-memoffset = "0.9"
 bitflags = "2"
-mint = "0.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clap = { version = "4", features = ["derive", "cargo"] }
 log = "0.4"
@@ -57,7 +52,6 @@ tr = { version = "0.1.10", default-features = false }
 lopdf = "0.34"
 time = { version = "0.3", features = ["local-offset"] }
 
-easy-imgui-sys = "0.11"
 easy-imgui-window = "0.11"
 easy-imgui-filechooser = { version = "0.2", features = ["tr"] }
 

@@ -96,7 +96,7 @@ impl Papercraft {
                     &self.model,
                     island.root,
                     (),
-                    SanitizeTraverse(&self, &mut faults),
+                    SanitizeTraverse(self, &mut faults),
                     |_, _, _| ControlFlow::Continue(()),
                 );
                 if !faults.is_empty() {

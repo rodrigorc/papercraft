@@ -304,7 +304,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
                         if fd
                             .thumbnail_cancellation_guard
                             .as_ref()
-                            .map_or(false, |ctc| ctc.0 == ct) =>
+                            .is_some_and(|ctc| ctc.0 == ct) =>
                     {
                         fd.tex = match maybe_img {
                             None => None,

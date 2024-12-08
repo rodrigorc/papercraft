@@ -479,12 +479,16 @@ impl Model {
     }
     pub fn rotate_face_vertices(&mut self, i_face: FaceIndex, rotation: i32) {
         let face = &mut self.faces[usize::from(i_face)];
-        if rotation < 0 {
-            face.vertices.rotate_left(1);
-            face.edges.rotate_left(1);
-        } else if rotation > 0 {
-            face.vertices.rotate_right(1);
-            face.edges.rotate_right(1);
+        match rotation.cmp(&0) {
+            std::cmp::Ordering::Less => {
+                face.vertices.rotate_left(1);
+                face.edges.rotate_left(1);
+            }
+            std::cmp::Ordering::Greater => {
+                face.vertices.rotate_right(1);
+                face.edges.rotate_right(1);
+            }
+            std::cmp::Ordering::Equal => {}
         }
     }
     pub fn face_plane(&self, face: &Face) -> util_3d::Plane {

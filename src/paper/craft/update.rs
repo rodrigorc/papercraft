@@ -12,7 +12,7 @@ fn compute_edge_map(new: &Papercraft, old: &Papercraft) -> FxHashMap<EdgeIndex, 
     // It is not a function called so frequently.
     (0..n_edges)
         .into_par_iter()
-        .map(|i| EdgeIndex::from(i))
+        .map(EdgeIndex::from)
         .filter_map(|i_new| {
             let e_new = &model[i_new];
             let (np0, np1) = model.edge_pos(e_new);

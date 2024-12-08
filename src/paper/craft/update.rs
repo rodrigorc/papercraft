@@ -134,6 +134,8 @@ impl Papercraft {
             }
         }
 
+        self.memo = Memoization::default();
+
         // Match the faces: two faces are equivalent if their 3 edges match
         let mut oi_real_face_map = FxHashMap::default();
         let mut rotations = Vec::new();
@@ -177,6 +179,7 @@ impl Papercraft {
         for (o_face, rotation) in rotations {
             self.model.rotate_face_vertices(o_face, rotation);
         }
+        self.memo = Memoization::default();
 
         // Match the islands: A maps to B if B is the target island with most common faces.
         let new_islands = compute_island_to_faces_map(self);
@@ -278,5 +281,6 @@ impl Papercraft {
                 }
             }
         }
+        self.memo = Memoization::default();
     }
 }

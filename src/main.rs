@@ -2824,11 +2824,15 @@ impl GlobalContext {
         let (mut new_papercraft, _) = import_model_file(file_name)?;
         new_papercraft.update_from_obj(self.data.papercraft());
 
-        // Preserve the main user visible settings
+        // Preserve the main user visible settings...
         let prev_ui = self.data.ui.clone();
         self.data = PapercraftContext::from_papercraft(new_papercraft, &self.gl)?;
         self.rebuild = RebuildFlags::all();
+        // ...except the trans_scene.obj
+        // that actually depends on the new loaded model.
+        let obj = self.data.ui.trans_scene.obj;
         self.data.ui = prev_ui;
+        self.data.ui.trans_scene.obj = obj;
         self.data.modified = true;
         Ok(())
     }

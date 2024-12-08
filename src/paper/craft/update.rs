@@ -1,30 +1,43 @@
 use super::*;
 
 fn compute_edge_map(new: &Papercraft, old: &Papercraft) -> FxHashMap<EdgeIndex, (EdgeIndex, bool)> {
-    let mut map = FxHashMap::default();
-    for (i_new, e_new) in new.model.edges() {
-        let (np0, np1) = new.model.edge_pos(e_new);
-        let distance = |e_old: &Edge| {
-            let (op0, op1) = old.model.edge_pos(e_old);
-            let da = op0.distance2(np0) + op1.distance2(np1);
-            let db = op0.distance2(np1) + op1.distance2(np0);
-            (da, db)
-        };
-        // f32 is not Eq so min_by_key cannot be used directly
-        let best = old.model.edges().min_by(|&(_, e_old_1), &(_, e_old_2)| {
-            let (da1, db1) = distance(e_old_1);
-            let (da2, db2) = distance(e_old_2);
-            let d1 = da1.min(db1);
-            let d2 = da2.min(db2);
-            d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        if let Some((i_old, e_old)) = best {
+    use rayon::prelude::*;
+
+    let model = &new.model;
+    let omodel = &old.model;
+    let n_edges = model.num_edges();
+
+    // Brute force algorithm, probably it could be made much smarter, but it
+    // is easier to invoke the Rayon superpowers.
+    // It is not a function called so frequently.
+    (0..n_edges)
+        .into_par_iter()
+        .map(|i| EdgeIndex::from(i))
+        .filter_map(|i_new| {
+            let e_new = &model[i_new];
+            let (np0, np1) = model.edge_pos(e_new);
+            let distance = |e_old: &Edge| {
+                let (op0, op1) = omodel.edge_pos(e_old);
+                let da = op0.distance2(np0) + op1.distance2(np1);
+                let db = op0.distance2(np1) + op1.distance2(np0);
+                (da, db)
+            };
+
+            // f32 is not Eq so min_by_key cannot be used directly
+            let best = omodel.edges().min_by(|&(_, e_old_1), &(_, e_old_2)| {
+                let (da1, db1) = distance(e_old_1);
+                let (da2, db2) = distance(e_old_2);
+                let d1 = da1.min(db1);
+                let d2 = da2.min(db2);
+                d1.total_cmp(&d2)
+            });
+
+            let (i_old, e_old) = best?;
             let (da, db) = distance(e_old);
             let crossed = da > db;
-            map.insert(i_new, (i_old, crossed));
-        }
-    }
-    map
+            Some((i_new, (i_old, crossed)))
+        })
+        .collect()
 }
 
 type IslandFaceMap = FxHashMap<IslandKey, FxHashSet<FaceIndex>>;
@@ -99,24 +112,22 @@ impl Papercraft {
 
         //Apply the old status to the new model
         for (i_edge, (status, crossed)) in edge_status_map {
-            match status {
-                EdgeStatus::Hidden => { /* should not happen */ }
-                EdgeStatus::Joined => {
-                    self.edge_join(i_edge, None);
-                }
-                EdgeStatus::Cut(c) => {
-                    // This  should not be needed, because when a model is imported all edges are cut by default, but just in case
-                    self.edge_cut(i_edge, None);
-                    if let EdgeStatus::Cut(new_c) = self.edge_status(i_edge) {
-                        match c {
-                            FlapSide::Hidden => {
-                                self.edge_toggle_flap(i_edge, EdgeToggleFlapAction::Hide);
-                            }
-                            c => {
-                                if !crossed && c != new_c || crossed && c == new_c {
-                                    self.edge_toggle_flap(i_edge, EdgeToggleFlapAction::Toggle);
-                                }
-                            }
+            // Is it a rim?
+            if self.model[i_edge].faces().1.is_none() {
+                // Rims can't be crossed
+                self.edges[usize::from(i_edge)] = status;
+            } else {
+                match status {
+                    EdgeStatus::Hidden => { /* should not happen, because they are filtered above */
+                    }
+                    EdgeStatus::Joined => {
+                        self.edge_join(i_edge, None);
+                    }
+                    EdgeStatus::Cut(c) => {
+                        self.edge_cut(i_edge, None);
+                        if let EdgeStatus::Cut(_) = self.edge_status(i_edge) {
+                            let c = if crossed { c.opposite() } else { c };
+                            self.edges[usize::from(i_edge)] = EdgeStatus::Cut(c);
                         }
                     }
                 }
@@ -125,6 +136,7 @@ impl Papercraft {
 
         // Match the faces: two faces are equivalent if their 3 edges match
         let mut oi_real_face_map = FxHashMap::default();
+        let mut rotations = Vec::new();
         for (i_face, face) in self.model.faces() {
             let i_edges = face.index_edges();
             let o_edges = i_edges.map(|i| real_edge_map.get(&i));
@@ -133,17 +145,37 @@ impl Papercraft {
                 _ => continue,
             };
 
+            // Instead of looking for the o_face everywhere, look just on the faces of one
+            // of the o_edges, they are at most 2 faces.
             let o_faces = old_obj.model[o_edges[0]].faces();
-            let o_edges_set = o_edges.into_iter().collect::<FxHashSet<_>>();
             let o_faces = std::iter::once(o_faces.0).chain(o_faces.1);
+            //let o_edges_set = o_edges.into_iter().collect::<FxHashSet<_>>();
             for o_face in o_faces {
                 let oface = &old_obj.model[o_face];
                 let real_edges = oface.index_edges();
-                if real_edges.into_iter().collect::<FxHashSet<_>>() == o_edges_set {
-                    oi_real_face_map.insert(o_face, i_face);
-                    break;
-                }
+                if real_edges == o_edges {
+                    //no rotation
+                } else if real_edges[0] == o_edges[1]
+                    && real_edges[1] == o_edges[2]
+                    && real_edges[2] == o_edges[0]
+                {
+                    rotations.push((i_face, -1));
+                } else if real_edges[0] == o_edges[2]
+                    && real_edges[1] == o_edges[0]
+                    && real_edges[2] == o_edges[1]
+                {
+                    rotations.push((i_face, 1));
+                } else {
+                    // no match
+                    continue;
+                };
+                // match!
+                oi_real_face_map.insert(o_face, i_face);
             }
+        }
+        // Fix the order of edges inside the faces
+        for (o_face, rotation) in rotations {
+            self.model.rotate_face_vertices(o_face, rotation);
         }
 
         // Match the islands: A maps to B if B is the target island with most common faces.
@@ -161,7 +193,7 @@ impl Papercraft {
             *o_faces = i_faces;
         }
 
-        // If face A maps to B and B maps to A, then it is a match.
+        // If island A maps to B and B maps to A, then it is a match.
         let mut real_island_map = FxHashMap::default();
         let ino_map = compute_island_map(self, old_obj, &new_islands, &old_islands);
         let ion_map = compute_island_map(old_obj, self, &old_islands, &new_islands);
@@ -182,17 +214,69 @@ impl Papercraft {
         }
 
         // Apply the same transformation to corresponding islands
-        for (&i, &o) in &real_island_map {
-            let island = self.island_by_key(i).unwrap();
-            let oisland = old_obj.island_by_key(o).unwrap();
-            // If the root face has a direct map, use that; if not, keep the same root
-            let iroot = match oi_real_face_map.get(&oisland.root_face()) {
-                Some(&f) if self.contains_face(island, f) => f,
-                _ => island.root_face(),
-            };
+        let mut new_island_pos: FxHashMap<IslandKey, _> =
+            self.islands.iter().map(|(i, _)| (i, None)).collect();
 
-            let island = self.island_by_key_mut(i).unwrap();
-            island.reset_transformation(iroot, oisland.rotation(), oisland.location());
+        for (i, island) in &self.islands {
+            let oisland = real_island_map
+                .get(&i)
+                .map(|o| old_obj.island_by_key(*o).unwrap());
+
+            // If the island is not matches, use any face that is matched as a second best option
+            let oisland = oisland.or_else(|| {
+                let new_faces = new_islands.get(&i).unwrap();
+                for i_f in new_faces {
+                    if let Some((o, _)) = oi_real_face_map.iter().find(|&(_, i)| i == i_f) {
+                        let oo = old_obj.island_by_face(*o);
+                        return old_obj.island_by_key(oo);
+                    }
+                }
+                None
+            });
+
+            let Some(oisland) = oisland else { continue };
+
+            // If the root face has a direct map, use that; if not...
+            let (iroot, rot, loc) = match oi_real_face_map.get(&oisland.root_face()) {
+                Some(&i_f) if self.contains_face(island, i_f) => {
+                    (i_f, oisland.rotation(), oisland.location())
+                }
+                _ => {
+                    // Look for any other face that is in both islands, and if found,
+                    // do some math to fit in the equivalent place
+                    let mut res = None;
+                    old_obj.traverse_faces(oisland, |o_f, _f, m| {
+                        match oi_real_face_map.get(&o_f) {
+                            Some(&i_f) if self.contains_face(island, i_f) => {
+                                res = Some((i_f, Rad::atan2(m.x.y, m.x.x), m.z.truncate()));
+                                ControlFlow::Break(())
+                            }
+                            _ => ControlFlow::Continue(()),
+                        }
+                    });
+                    if res.is_none() {
+                        println!("ffff");
+                    }
+                    res.unwrap_or((island.root_face(), oisland.rotation(), oisland.location()))
+                }
+            };
+            new_island_pos.insert(i, Some((iroot, rot, loc)));
+        }
+        for (i_island, maybe_pos) in new_island_pos {
+            let island = self.islands.get_mut(i_island).unwrap();
+            match maybe_pos {
+                Some((iroot, rot, loc)) => {
+                    island.reset_transformation(iroot, rot, loc);
+                }
+                None => {
+                    // If the island doesn't have a mapping, dump it into the page -1.
+                    let mut page_offs = self.options.global_to_page(island.loc);
+                    page_offs.row = 0;
+                    page_offs.col = -1;
+                    let loc = self.options.page_to_global(page_offs);
+                    island.reset_transformation(island.root_face(), island.rotation(), loc);
+                }
+            }
         }
     }
 }

@@ -54,6 +54,13 @@ impl FlapSide {
             (FlapSide::False, false) | (FlapSide::True, true)
         )
     }
+    pub fn opposite(self) -> FlapSide {
+        match self {
+            FlapSide::False => FlapSide::True,
+            FlapSide::True => FlapSide::False,
+            FlapSide::Hidden => FlapSide::Hidden,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

@@ -1393,7 +1393,9 @@ impl PapercraftContext {
             .collect();
 
         let top = if !self.papercraft.model().multi_body()
-            || (selection.is_empty() && self.selected_face.is_none())
+            || (selection.is_empty()
+                && self.selected_face.is_none()
+                && self.selected_edges.is_none())
         {
             0
         } else {
@@ -1406,32 +1408,45 @@ impl PapercraftContext {
             };
         }
 
+        let fn_body_to_top = |vertices_sel: &mut glr::DynamicVertexArray<MStatus>,
+                              i_face: FaceIndex| {
+            crate::paper::traverse_faces_ex(
+                self.papercraft.model(),
+                i_face,
+                (),
+                crate::paper::BodyTraverse,
+                |i_face, _, _| {
+                    vertices_sel_upgrade_face(vertices_sel, i_face, 0);
+                    std::ops::ControlFlow::Continue(())
+                },
+            );
+        };
+
         let top = if self.ui.xray_selection { 1 } else { 0 };
         for sel_island in selection {
-            if let Some(island) = self.papercraft.island_by_key(sel_island) {
-                let body_to_top =
-                    vertices_sel_top_by_face(&self.gl_objs.vertices_sel, island.root_face()) == -1;
+            let Some(island) = self.papercraft.island_by_key(sel_island) else {
+                continue;
+            };
+            let body_to_top =
+                vertices_sel_top_by_face(&self.gl_objs.vertices_sel, island.root_face()) == -1;
 
-                self.papercraft.traverse_faces_no_matrix(island, |i_face| {
-                    vertices_sel_by_face(&mut self.gl_objs.vertices_sel, i_face).fill(MStatus {
-                        color: MSTATUS_SEL.color,
-                        top,
-                    });
-                    ControlFlow::Continue(())
+            self.papercraft.traverse_faces_no_matrix(island, |i_face| {
+                vertices_sel_by_face(&mut self.gl_objs.vertices_sel, i_face).fill(MStatus {
+                    color: MSTATUS_SEL.color,
+                    top,
                 });
+                ControlFlow::Continue(())
+            });
 
-                if body_to_top {
-                    crate::paper::traverse_faces_ex(
-                        self.papercraft.model(),
-                        island.root_face(),
-                        (),
-                        crate::paper::BodyTraverse,
-                        |i_face, _, _| {
-                            vertices_sel_upgrade_face(&mut self.gl_objs.vertices_sel, i_face, 0);
-                            std::ops::ControlFlow::Continue(())
-                        },
-                    );
-                }
+            if body_to_top {
+                fn_body_to_top(&mut self.gl_objs.vertices_sel, island.root_face());
+            }
+        }
+        for sel_edge in self.selected_edges.iter().flatten() {
+            let face = self.papercraft.model()[*sel_edge].faces().0;
+            let body_to_top = vertices_sel_top_by_face(&self.gl_objs.vertices_sel, face) == -1;
+            if body_to_top {
+                fn_body_to_top(&mut self.gl_objs.vertices_sel, face);
             }
         }
 

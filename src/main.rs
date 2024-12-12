@@ -4,11 +4,11 @@ use cgmath::{prelude::*, Deg, Rad, Vector3};
 use easy_imgui_window::{
     easy_imgui::{self as imgui, id, lbl, lbl_id, vec2, Color, MouseButton, Vector2},
     easy_imgui_renderer::{
-        glow::{self, HasContext},
-        glr::{
-            self, BinderDrawFramebuffer, BinderFramebuffer, BinderReadFramebuffer,
+        easy_imgui_opengl::{
+            self as glr, BinderDrawFramebuffer, BinderFramebuffer, BinderReadFramebuffer,
             BinderRenderbuffer, GlContext, Rgba,
         },
+        glow::{self, HasContext},
         Renderer,
     },
     winit,

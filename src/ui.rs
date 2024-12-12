@@ -5,8 +5,8 @@ use std::ops::ControlFlow;
 use anyhow::Result;
 use cgmath::{prelude::*, Deg, Rad};
 use easy_imgui_window::easy_imgui_renderer::{
+    easy_imgui_opengl::GlContext,
     glow::{self, HasContext},
-    glr::GlContext,
 };
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Range};
+use core::f32;
 /* Everything in this crate is public so that it can be freely used from main.rs */
 use std::ops::ControlFlow;
 
@@ -11,11 +11,6 @@ use easy_imgui_window::easy_imgui_renderer::{
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
-use crate::paper::{
-    EdgeId, EdgeIdPosition, EdgeIndex, EdgeStatus, EdgeToggleFlapAction, Face, FaceIndex, FlapGeom,
-    FlapSide, FlapStyle, FoldStyle, IslandKey, JoinResult, MaterialIndex, Model, PaperOptions,
-    Papercraft,
-};
 use crate::util_3d::{
     self, Matrix2, Matrix3, Matrix4, Point2, Point3, Quaternion, Vector2, Vector3,
 };
@@ -27,6 +22,14 @@ use crate::util_gl::{
 use crate::{
     glr::{self, Rgba},
     PrintableText, TextAlign,
+};
+use crate::{
+    paper::{
+        EdgeId, EdgeIdPosition, EdgeIndex, EdgeStatus, EdgeToggleFlapAction, Face, FaceIndex,
+        FlapGeom, FlapSide, FlapStyle, FoldStyle, IslandContour, IslandKey, JoinResult,
+        MaterialIndex, Model, PaperOptions, Papercraft,
+    },
+    printable_island_name,
 };
 use crate::{TextBuilder, FONT_SIZE};
 use tr::tr;
@@ -331,22 +334,68 @@ pub enum EdgeDrawKind {
 pub struct PaperDrawFaceArgs {
     vertices: Vec<MVertex2D>,
     vertices_edge_cut: Vec<Line2D>,
-    vertices_edge_crease: Vec<Line2D>,
+    vertices_edge_crease: Vec<(Line2D, EdgeDrawKind)>,
     vertices_flap: Vec<MVertex2DColor>,
     vertices_flap_edge: Vec<Line2D>,
     vertices_shadow_flap: Vec<MVertex2DColor>,
     vertices_text: Vec<MVertexText>,
+
+    // Optional fields:
+    flap_cache: Option<Vec<(FaceIndex, FlapVertices)>>,
 }
 
-// Complements PaperDrawFaceArgs for printable operations
 #[derive(Default)]
 pub struct PaperDrawFaceArgsExtra {
-    // For each line in vertices_edge_crease says which kind of line
-    pub crease_kinds: Option<Vec<EdgeDrawKind>>,
-    pub cut_indices: Option<Vec<CutIndex>>,
+    // Indexed with EdgeIndex
+    cut_info: Option<Vec<CutInfo>>,
+}
 
-    // Indexed with (2 * EdgeIndex + face_sign: bool)
-    pub cut_source: Option<Vec<CutSource>>,
+impl PaperDrawFaceArgsExtra {
+    fn add_cut_info(&mut self, model: &Model) {
+        self.cut_info = Some(vec![CutInfo::default(); model.num_edges()]);
+    }
+    pub fn cut_info(&self) -> Option<&[CutInfo]> {
+        self.cut_info.as_deref()
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct CutInfo {
+    source_false: CutSource,
+    source_true: CutSource,
+    descr_false: Option<CutDescription>,
+    descr_true: Option<CutDescription>,
+}
+
+impl Default for CutInfo {
+    fn default() -> Self {
+        CutInfo {
+            source_false: CutSource::Other,
+            source_true: CutSource::Other,
+            descr_false: None,
+            descr_true: None,
+        }
+    }
+}
+
+impl CutInfo {
+    pub fn source_face_sign(&self, face_sign: bool) -> &CutSource {
+        if face_sign {
+            &self.source_true
+        } else {
+            &self.source_false
+        }
+    }
+    fn face_sign_mut(&mut self, face_sign: bool) -> (&mut CutSource, &mut Option<CutDescription>) {
+        if face_sign {
+            (&mut self.source_true, &mut self.descr_true)
+        } else {
+            (&mut self.source_false, &mut self.descr_false)
+        }
+    }
+    pub fn descriptions(&self) -> impl Iterator<Item = &CutDescription> {
+        self.descr_false.iter().chain(self.descr_true.iter())
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -356,13 +405,6 @@ pub enum CutSource {
     Cut(usize),
     // Lines in vertices_flap_edge[]
     FlapEdge(usize, Option<usize>, usize),
-}
-
-impl CutSource {
-    // Index for the `PaperDrawFaceArgsExtra::cut_source`.
-    pub fn index(i_edge: EdgeIndex, face_sign: bool) -> usize {
-        2 * usize::from(i_edge) + usize::from(face_sign)
-    }
 }
 
 impl PaperDrawFaceArgs {
@@ -375,32 +417,14 @@ impl PaperDrawFaceArgs {
             vertices_flap_edge: Vec::new(),
             vertices_shadow_flap: Vec::new(),
             vertices_text: Vec::new(),
+            // Optional fields:
+            flap_cache: None,
         }
     }
 
-    pub fn iter_cut(&self) -> impl Iterator<Item = (Vector2, Vector2)> + '_ {
-        self.iter_cut_ex((0, 0)..self.cut_last_index())
-    }
-    pub fn cut_last_index(&self) -> (usize, usize) {
-        (self.vertices_flap_edge.len(), self.vertices_edge_cut.len())
-    }
-    pub fn iter_cut_ex(
-        &self,
-        range: Range<(usize, usize)>,
-    ) -> impl Iterator<Item = (Vector2, Vector2)> + '_ {
-        self.vertices_flap_edge[range.start.0..range.end.0]
-            .iter()
-            .chain(&self.vertices_edge_cut[range.start.1..range.end.1])
-            .map(|s| (s.p0, s.p1))
-    }
-    pub fn iter_crease<'a>(
-        &'a self,
-        crease_kind: &'a [EdgeDrawKind],
-        kind: EdgeDrawKind,
-    ) -> impl Iterator<Item = (Vector2, Vector2)> + 'a {
+    pub fn iter_crease(&self, kind: EdgeDrawKind) -> impl Iterator<Item = (Vector2, Vector2)> + '_ {
         self.vertices_edge_crease
             .iter()
-            .zip(crease_kind.iter())
             .filter_map(move |(line, ek)| (*ek == kind).then_some(line))
             .map(|s| (s.p0, s.p1))
     }
@@ -412,10 +436,16 @@ impl PaperDrawFaceArgs {
             self.vertices[i0 + 2].pos_2d,
         ]
     }
-    pub fn lines_by_cut_source<F>(&self, cut_source: &CutSource, mut f: F)
-    where
+    pub fn lines_by_cut_info<F>(
+        &self,
+        cut_info: &[CutInfo],
+        i_edge: EdgeIndex,
+        face_sign: bool,
+        mut f: F,
+    ) where
         F: FnMut(Vector2, Vector2),
     {
+        let cut_source = cut_info[usize::from(i_edge)].source_face_sign(face_sign);
         match cut_source {
             CutSource::Cut(cut_idx) => {
                 let cut = &self.vertices_edge_cut[*cut_idx];
@@ -437,7 +467,7 @@ impl PaperDrawFaceArgs {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct CutIndex {
+pub struct CutDescription {
     pub center: Vector2,
     pub dir: Vector2,
     pub angle: Rad<f32>,
@@ -446,7 +476,7 @@ pub struct CutIndex {
     pub voffs: f32,
 }
 
-impl CutIndex {
+impl CutDescription {
     /// This struct stores the position and content of an edge-id
     /// (a, b): coordinates of the edge on paper
     /// n_flap: if there is a flap, a vector normal to the edge with the length of the flap width
@@ -460,7 +490,7 @@ impl CutIndex {
         i_face_b: FaceIndex,
         id: EdgeId,
         options: &PaperOptions,
-    ) -> CutIndex {
+    ) -> CutDescription {
         let mut center = (a + b) / 2.0;
 
         // Where does the edge-id go?
@@ -483,7 +513,7 @@ impl CutIndex {
         //let normal = Vector2::new(-dir.y, dir.x);
         //let pos = center + normal * options.edge_id_font_size * factor;
         let angle = -dir.angle(Vector2::new(1.0, 0.0));
-        CutIndex {
+        CutDescription {
             center,
             dir,
             angle,
@@ -643,7 +673,6 @@ impl PapercraftContext {
         i_face: FaceIndex,
         m: &Matrix3,
         args: &mut PaperDrawFaceArgs,
-        mut flap_cache: Option<&mut Vec<(FaceIndex, FlapVertices)>>,
         extra: &mut PaperDrawFaceArgsExtra,
     ) {
         let i0 = 3 * usize::from(i_face);
@@ -770,10 +799,10 @@ impl PapercraftContext {
                     FoldStyle::None => (None, None),
                 };
                 match visible_line {
-                    (None, None) | (None, Some(_)) => {}
+                    (None, _) => {}
                     (Some(f), None) => {
                         let vn = v * f;
-                        args.vertices_edge_crease.push(Line2D {
+                        let line_2d = Line2D {
                             p0: pos0 - vn,
                             p1: pos1 + vn,
                             dash0: 0.0,
@@ -784,10 +813,8 @@ impl PapercraftContext {
                             },
                             width_left,
                             width_right,
-                        });
-                        if let Some(crease_kinds) = extra.crease_kinds.as_mut() {
-                            crease_kinds.push(crease_kind);
-                        }
+                        };
+                        args.vertices_edge_crease.push((line_2d, crease_kind));
                     }
                     (Some(f_a), Some(f_b)) => {
                         let vn_a = v * f_a;
@@ -812,12 +839,9 @@ impl PapercraftContext {
                             width_left,
                             width_right,
                         };
-                        args.vertices_edge_crease.push(line_a);
-                        args.vertices_edge_crease.push(line_b);
                         // two lines
-                        if let Some(crease_kinds) = extra.crease_kinds.as_mut() {
-                            crease_kinds.extend_from_slice(&[crease_kind, crease_kind]);
-                        }
+                        args.vertices_edge_crease.push((line_a, crease_kind));
+                        args.vertices_edge_crease.push((line_b, crease_kind));
                     }
                 };
             } else {
@@ -840,15 +864,16 @@ impl PapercraftContext {
                 line.set_dash(line_dash);
                 args.vertices_edge_cut.push(line);
 
-                if let Some(cut_source) = extra.cut_source.as_mut() {
+                if let Some(cut_info) = extra.cut_info.as_mut() {
+                    let (source, descr) =
+                        cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
                     let i = args.vertices_edge_cut.len();
-                    cut_source[CutSource::index(i_edge, edge.face_sign(i_face))] =
-                        CutSource::Cut(i - 1);
-                }
-                if let (Some(cut_index), Some(edge_id), Some(i_face_b)) =
-                    (extra.cut_indices.as_mut(), edge_id, draw_flap.face())
-                {
-                    cut_index.push(CutIndex::new(pos0, pos1, None, i_face_b, edge_id, options));
+                    *source = CutSource::Cut(i - 1);
+                    if let (Some(edge_id), Some(i_face_b)) = (edge_id, draw_flap.face()) {
+                        *descr = Some(CutDescription::new(
+                            pos0, pos1, None, i_face_b, edge_id, options,
+                        ));
+                    }
                 }
             }
 
@@ -896,10 +921,11 @@ impl PapercraftContext {
                     }
                     args.vertices_flap_edge.push(line_0);
                     args.vertices_flap_edge.push(line_1);
-                    if let Some(cut_source) = extra.cut_source.as_mut() {
+                    if let Some(cut_info) = extra.cut_info.as_mut() {
+                        let (source, _) =
+                            cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
                         let i = args.vertices_flap_edge.len();
-                        cut_source[CutSource::index(i_edge, edge.face_sign(i_face))] =
-                            CutSource::FlapEdge(i - 2, None, i - 1);
+                        *source = CutSource::FlapEdge(i - 2, None, i - 1);
                     }
                 } else {
                     let mut line_0 = Line2D {
@@ -934,16 +960,20 @@ impl PapercraftContext {
                     args.vertices_flap_edge.push(line_0);
                     args.vertices_flap_edge.push(line_1);
                     args.vertices_flap_edge.push(line_2);
-                    if let Some(cut_source) = extra.cut_source.as_mut() {
+                    if let Some(cut_info) = extra.cut_info.as_mut() {
+                        let (source, _) =
+                            cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
                         let i = args.vertices_flap_edge.len();
-                        cut_source[CutSource::index(i_edge, edge.face_sign(i_face))] =
-                            CutSource::FlapEdge(i - 3, Some(i - 2), i - 1);
+                        *source = CutSource::FlapEdge(i - 3, Some(i - 2), i - 1);
                     }
                 };
-                if let (Some(cut_index), Some(edge_id), Some(i_face_b)) =
-                    (extra.cut_indices.as_mut(), edge_id, maybe_i_face_b)
+
+                if let (Some(cut_info), Some(edge_id), Some(i_face_b)) =
+                    (extra.cut_info.as_mut(), edge_id, maybe_i_face_b)
                 {
-                    cut_index.push(CutIndex::new(
+                    let (_, descr) =
+                        cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
+                    *descr = Some(CutDescription::new(
                         pos0,
                         pos1,
                         Some(n),
@@ -952,7 +982,6 @@ impl PapercraftContext {
                         options,
                     ));
                 }
-
                 // Get material and geometry from adjacent face, if any
                 let geom_b; //Option<(mx_b_inv, i_face_b)>
                 let mat;
@@ -1064,7 +1093,7 @@ impl PapercraftContext {
                     args.vertices_flap
                         .extend_from_slice(&[pp[0], pp[2], pp[1], pp[0], pp[3], pp[2]]);
                 }
-                if let (Some(flaps), Some((mx_b_inv, i_face_b))) = (&mut flap_cache, geom_b) {
+                if let (Some(flaps), Some((mx_b_inv, i_face_b))) = (&mut args.flap_cache, geom_b) {
                     let mut flap_vs = if triangular {
                         FlapVertices::Tri([p[0], p[1], p[2]])
                     } else {
@@ -1084,11 +1113,9 @@ impl PapercraftContext {
     fn paper_rebuild(&mut self, text_builder: &impl TextBuilder) {
         let options = self.papercraft.options();
         let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
-        let mut edge_id_info = PaperDrawFaceArgsExtra::default();
-        let mut cuts_map = None;
+        let mut extra = PaperDrawFaceArgsExtra::default();
         if options.edge_id_position != EdgeIdPosition::None && self.ui.show_texts {
-            edge_id_info.cut_indices = Some(Vec::new());
-            cuts_map = Some(slotmap::SecondaryMap::new());
+            extra.add_cut_info(self.papercraft.model());
         }
 
         // Shadow flaps have to be drawn the the face adjacent to the one being drawn, but we do not
@@ -1097,33 +1124,22 @@ impl PapercraftContext {
         // shadow flaps later.
         let shadow_flap_alpha = options.shadow_flap_alpha;
         let mut shadow_cache = if shadow_flap_alpha > 0.0 {
-            Some((HashMap::new(), Vec::new()))
+            args.flap_cache = Some(Vec::new());
+            Some(FxHashMap::default())
         } else {
             None
         };
-        for (i_island, island) in self.papercraft.islands() {
-            let cut_before = args.cut_last_index();
+        for (_i_island, island) in self.papercraft.islands() {
             self.papercraft.traverse_faces(island, |i_face, face, mx| {
-                if let Some((mx_face, _)) = &mut shadow_cache {
+                if let Some(mx_face) = &mut shadow_cache {
                     mx_face.insert(i_face, *mx);
                 }
-                self.paper_draw_face(
-                    face,
-                    i_face,
-                    mx,
-                    &mut args,
-                    shadow_cache.as_mut().map(|(_, t)| t),
-                    &mut edge_id_info,
-                );
+                self.paper_draw_face(face, i_face, mx, &mut args, &mut extra);
                 ControlFlow::Continue(())
             });
-            if let Some(cuts) = cuts_map.as_mut() {
-                let cut_next = args.cut_last_index();
-                cuts.insert(i_island, cut_before..cut_next);
-            }
         }
 
-        if let Some((mx_face, flap_cache)) = &shadow_cache {
+        if let (Some(mx_face), Some(flap_cache)) = (&shadow_cache, &args.flap_cache) {
             let uv = Vector2::zero();
             let mat = MaterialIndex::from(0);
             let color = Rgba::new(0.0, 0.0, 0.0, shadow_flap_alpha);
@@ -1144,13 +1160,11 @@ impl PapercraftContext {
         }
 
         // Draw the EdgeId?
-        if let (Some(cut_indices), Some(cut_by_island)) =
-            (edge_id_info.cut_indices.as_ref(), cuts_map.as_ref())
-        {
+        if let Some(cut_info) = extra.cut_info.as_ref() {
             let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
 
             // Edge ids
-            for cut_idx in cut_indices {
+            for cut_idx in cut_info.iter().flat_map(|c| c.descriptions()) {
                 let i_island_b = self.papercraft().island_by_face(cut_idx.i_face_b);
                 let ii = self
                     .papercraft()
@@ -1169,47 +1183,10 @@ impl PapercraftContext {
                 text_builder.make_text(&t, &mut args.vertices_text);
             }
 
-            for (i_island, island) in self.papercraft().islands() {
+            for (i_island, _) in self.papercraft().islands() {
                 // Island ids
-                let pos = match options.edge_id_position {
-                    // On top (None should not happen)
-                    EdgeIdPosition::None | EdgeIdPosition::Outside => {
-                        let cut_range = cut_by_island[i_island].clone();
-                        let top = args
-                            .iter_cut_ex(cut_range)
-                            .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
-                            .unwrap()
-                            .0;
-                        top - Vector2::new(0.0, edge_id_font_size)
-                    }
-                    // In the middle
-                    EdgeIdPosition::Inside => {
-                        let (flat_face, total_area) =
-                            self.papercraft().get_biggest_flat_face(island);
-                        // Compute the center of mass of the flat-face, that will be the
-                        // weighted mean of the centers of masses of each single face.
-                        let center: Vector2 = flat_face
-                            .iter()
-                            .map(|(i_face, area)| {
-                                let vv: Vector2 = args.vertices_for_face(*i_face).into_iter().sum();
-                                vv * *area
-                            })
-                            .sum();
-                        // Don't forget to divide the center of each triangle by 3!
-                        let center = center / total_area / 3.0;
-                        center + Vector2::new(0.0, edge_id_font_size)
-                    }
-                };
-                if let Some(island) = self.papercraft().island_by_key(i_island) {
-                    let t = PrintableText {
-                        size: 2.0 * edge_id_font_size,
-                        pos,
-                        angle: Rad(0.0),
-                        align: TextAlign::Center,
-                        text: String::from(island.name()),
-                    };
-                    text_builder.make_text(&t, &mut args.vertices_text);
-                }
+                let text = printable_island_name(&self.papercraft, i_island, &args, &extra, None);
+                text_builder.make_text(&text, &mut args.vertices_text);
             }
         }
 
@@ -1259,7 +1236,7 @@ impl PapercraftContext {
         );
         build_vertices_for_lines_2d(
             self.gl_objs.paper_vertices_edge_crease.data_mut(),
-            &args.vertices_edge_crease,
+            args.vertices_edge_crease.iter().map(|(v, _)| v),
             Rgba::new(0.0, 0.0, 0.0, 1.0),
         );
         self.gl_objs.paper_vertices_flap.set(args.vertices_flap);
@@ -2391,26 +2368,29 @@ impl PapercraftContext {
         self.selected_edges.is_some()
     }
 
-    pub fn lines_by_island(&self) -> Vec<(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))> {
-        self.papercraft
+    pub fn lines_by_island(
+        &self,
+    ) -> (
+        Vec<(IslandKey, PaperDrawFaceArgs, IslandContour)>,
+        PaperDrawFaceArgsExtra,
+    ) {
+        let mut extra = PaperDrawFaceArgsExtra::default();
+        extra.add_cut_info(self.papercraft.model());
+
+        let by_island = self
+            .papercraft
             .islands()
             .map(|(id, island)| {
                 let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
-                let mut extra = PaperDrawFaceArgsExtra {
-                    crease_kinds: Some(Vec::new()),
-                    cut_indices: Some(Vec::new()),
-                    cut_source: Some(vec![
-                        CutSource::Other;
-                        2 * self.papercraft.model().num_edges()
-                    ]),
-                };
                 self.papercraft.traverse_faces(island, |i_face, face, mx| {
-                    self.paper_draw_face(face, i_face, mx, &mut args, None, &mut extra);
+                    self.paper_draw_face(face, i_face, mx, &mut args, &mut extra);
                     ControlFlow::Continue(())
                 });
-                (id, (args, extra))
+                let contour = self.papercraft.island_contour(id);
+                (id, args, contour)
             })
-            .collect()
+            .collect();
+        (by_island, extra)
     }
 
     pub fn prepare_thumbnail(&mut self, sz: Vector2) -> ThumbnailData {
@@ -2703,7 +2683,7 @@ impl std::ops::DerefMut for FlapVertices {
     }
 }
 
-pub struct Line2D {
+struct Line2D {
     pub p0: Vector2,
     pub p1: Vector2,
     pub dash0: f32,
@@ -2723,7 +2703,12 @@ impl Line2D {
     }
 }
 // Given a list of lines build a triangle-strip geometry
-fn build_vertices_for_lines_2d(vs: &mut Vec<MVertex2DLine>, lines: &[Line2D], color: Rgba) {
+fn build_vertices_for_lines_2d<'a, LINES>(vs: &mut Vec<MVertex2DLine>, lines: LINES, color: Rgba)
+where
+    LINES: IntoIterator<Item = &'a Line2D>,
+    LINES::IntoIter: ExactSizeIterator,
+{
+    let lines = lines.into_iter();
     // 2 tris per line
     vs.clear();
     vs.reserve(6 * lines.len());

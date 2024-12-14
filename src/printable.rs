@@ -1,22 +1,7 @@
 use super::*;
 use anyhow::Result;
+use paper::IslandContour;
 use rayon::prelude::*;
-
-fn cuts_to_page_cuts(
-    cuts: impl Iterator<Item = (Vector2, Vector2)>,
-    in_page: impl Fn(Vector2) -> (bool, Vector2),
-) -> Option<Vec<(Vector2, Vector2)>> {
-    let mut touching = false;
-    let page_cut = cuts
-        .map(|(v0, v1)| {
-            let (is_in_0, v0) = in_page(v0);
-            let (is_in_1, v1) = in_page(v1);
-            touching |= is_in_0 | is_in_1;
-            (v0, v1)
-        })
-        .collect::<Vec<_>>();
-    touching.then_some(page_cut)
-}
 
 fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
     if page == 0 {
@@ -144,7 +129,7 @@ impl GlobalContext {
             drop(tx_done);
         });
 
-        self.generate_pages(None, |page, pixbuf, texts, _| {
+        self.generate_pages(None, |page, pixbuf, _, texts, _| {
             let write_texts = |ops: &mut Vec<Operation>| {
                 if texts.is_empty() {
                     return;
@@ -362,17 +347,12 @@ impl GlobalContext {
             drop(tx_done);
         });
 
-        self.generate_pages(None, |page, pixbuf, texts, lines_by_island| {
+        self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
             let page_size = Vector2::from(options.page_size);
             let in_page = options.is_in_page_fn(page);
 
             let mut prefix = Vec::new();
 
-            let mut all_page_cuts = Vec::new();
-
-            for (idx, (i_island, (lines, extra))) in lines_by_island.iter().enumerate() {
-                all_page_cuts.push((idx, i_island, lines, extra));
-            }
             writeln!(&mut prefix, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
             writeln!(
                 &mut prefix,
@@ -430,14 +410,11 @@ impl GlobalContext {
 
             // begin layer Cut
             writeln!(&mut suffix, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
-            for (idx, i_island, lines, extra) in all_page_cuts {
-                let contour = self.data.papercraft().island_contour(*i_island);
+            for (idx, (_, lines, contour)) in lines_by_island.iter().enumerate() {
                 let mut contour_points = Vec::with_capacity(contour.len());
                 let mut touching = false;
-                for (i_edge, _i_vertex, face_sign) in contour {
-                    let i = CutSource::index(i_edge, face_sign);
-                    let source = &extra.cut_source.as_ref().unwrap()[i];
-                    lines.lines_by_cut_source(source, |p0, _| {
+                for &(i_edge, face_sign) in contour {
+                    lines.lines_by_cut_info(extra.cut_info().unwrap(), i_edge, face_sign, |p0, _| {
                         let (is_in, p0) = in_page(p0);
                         touching |= is_in;
                         contour_points.push(p0);
@@ -461,8 +438,8 @@ impl GlobalContext {
             for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
                 writeln!(&mut suffix, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
                     if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
-                for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
-                    let creases = lines.iter_crease(extra.crease_kinds.as_ref().unwrap(), fold_kind);
+                for (idx, (_, lines, _)) in lines_by_island.iter().enumerate() {
+                    let creases = lines.iter_crease(fold_kind);
                     // each crease can be checked for bounds individually
                     let page_creases = creases
                         .filter_map(|(a, b)| {
@@ -529,7 +506,7 @@ impl GlobalContext {
             drop(tx_done);
         });
 
-        self.generate_pages(text_tex_id, |page, pixbuf, _texts, _| {
+        self.generate_pages(text_tex_id, |page, pixbuf, _, _texts, _| {
             tx_compress.send((page, pixbuf)).unwrap();
             Ok(())
         })?;
@@ -546,8 +523,9 @@ impl GlobalContext {
         F: FnMut(
             u32,
             image::RgbaImage,
+            &PaperDrawFaceArgsExtra,
             &[PrintableText],
-            &[(IslandKey, (PaperDrawFaceArgs, PaperDrawFaceArgsExtra))],
+            &[(IslandKey, PaperDrawFaceArgs, IslandContour)],
         ) -> Result<()>,
     {
         let options = self.data.papercraft().options();
@@ -658,7 +636,7 @@ impl GlobalContext {
             let flap_style = options.flap_style;
 
             let mut texts = Vec::new();
-            let lines_by_island = self.data.lines_by_island();
+            let (lines_by_island, extra) = self.data.lines_by_island();
 
             for page in 0..page_count {
                 log::debug!("Rendering page {}", page + 1);
@@ -822,24 +800,39 @@ impl GlobalContext {
                 }
                 if edge_id_position != EdgeIdPosition::None {
                     let in_page = options.is_in_page_fn(page);
-                    for (i_island, (lines, extra)) in &lines_by_island {
-                        let Some(page_cuts) = cuts_to_page_cuts(lines.iter_cut(), &in_page) else {
-                            continue;
-                        };
-                        // Edge ids
-                        for cut_idx in extra.cut_indices.as_ref().unwrap() {
-                            let i_island_b =
-                                self.data.papercraft().island_by_face(cut_idx.i_face_b);
-                            let ii = self
-                                .data
-                                .papercraft()
-                                .island_by_key(i_island_b)
-                                .map(|island_b| island_b.name())
-                                .unwrap_or("?");
-                            let text = format!("{}:{}", ii, cut_idx.id);
-                            let pos =
-                                in_page(cut_idx.pos(self.font_text_line_scale * edge_id_font_size))
-                                    .1;
+                    for (i_island, lines, contour) in &lines_by_island {
+                        // Island ids
+                        let mut text = printable_island_name(
+                            self.data.papercraft(),
+                            *i_island,
+                            lines,
+                            &extra,
+                            Some(contour),
+                        );
+                        let (is_in_page, pos) = in_page(text.pos);
+                        if is_in_page {
+                            text.pos = pos;
+                            texts.push(text);
+                        }
+                    }
+                    // Edge ids
+                    for cut_idx in extra
+                        .cut_info()
+                        .unwrap()
+                        .iter()
+                        .flat_map(|ci| ci.descriptions())
+                    {
+                        let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face_b);
+                        let ii = self
+                            .data
+                            .papercraft()
+                            .island_by_key(i_island_b)
+                            .map(|island_b| island_b.name())
+                            .unwrap_or("?");
+                        let text = format!("{}:{}", ii, cut_idx.id);
+                        let (is_in_page, pos) =
+                            in_page(cut_idx.pos(self.font_text_line_scale * edge_id_font_size));
+                        if is_in_page {
                             texts.push(PrintableText {
                                 size: edge_id_font_size,
                                 pos,
@@ -848,52 +841,10 @@ impl GlobalContext {
                                 text,
                             });
                         }
-                        // Island ids
-                        let pos = match edge_id_position {
-                            // On top
-                            EdgeIdPosition::None | EdgeIdPosition::Outside => {
-                                let top = page_cuts
-                                    .iter()
-                                    .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
-                                    .unwrap()
-                                    .0;
-                                top - Vector2::new(0.0, edge_id_font_size)
-                            }
-                            // In the middle
-                            EdgeIdPosition::Inside => {
-                                let island =
-                                    self.data.papercraft().island_by_key(*i_island).unwrap();
-                                let (flat_face, total_area) =
-                                    self.data.papercraft().get_biggest_flat_face(island);
-                                // Compute the center of mass of the flat-face, that will be the
-                                // weighted mean of the centers of masses of each single face.
-                                let center: Vector2 = flat_face
-                                    .iter()
-                                    .map(|(i_face, area)| {
-                                        let vv: Vector2 =
-                                            lines.vertices_for_face(*i_face).into_iter().sum();
-                                        vv * *area
-                                    })
-                                    .sum();
-                                // Don't forget to divide the center of each triangle by 3!
-                                let center = center / total_area / 3.0;
-                                let center = in_page(center).1;
-                                center + Vector2::new(0.0, edge_id_font_size)
-                            }
-                        };
-                        if let Some(island) = self.data.papercraft().island_by_key(*i_island) {
-                            texts.push(PrintableText {
-                                size: 2.0 * edge_id_font_size,
-                                pos,
-                                angle: Rad(0.0),
-                                align: TextAlign::Center,
-                                text: String::from(island.name()),
-                            });
-                        }
                     }
                 }
                 log::debug!("Render {} complete", page + 1);
-                do_page_fn(page, pixbuf, &texts, &lines_by_island)?;
+                do_page_fn(page, pixbuf, &extra, &texts, &lines_by_island)?;
             }
         }
         Ok(())

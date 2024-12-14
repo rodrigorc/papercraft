@@ -56,8 +56,8 @@ const KARLA_TTF: &[u8] = include_bytes!("Karla-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
 
 use paper::{
-    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions,
-    Papercraft,
+    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandContour, IslandKey,
+    PaperOptions, Papercraft,
 };
 use util_3d::Matrix3;
 use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
@@ -3210,6 +3210,66 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                     _ => (),
                 }
             });
+    }
+}
+
+/// Computes the PrintableText for an island.
+/// The `contour` can be provided as an optimization.
+fn printable_island_name(
+    papercraft: &Papercraft,
+    i_island: IslandKey,
+    args: &PaperDrawFaceArgs,
+    extra: &PaperDrawFaceArgsExtra,
+    contour: Option<&IslandContour>,
+) -> PrintableText {
+    let options = papercraft.options();
+    let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
+    let island = papercraft.island_by_key(i_island).unwrap();
+
+    let pos = match options.edge_id_position {
+        // On top (None should not happen)
+        EdgeIdPosition::None | EdgeIdPosition::Outside => {
+            let mut top = Vector2::new(f32::MAX, f32::MAX);
+            let contour_temp;
+            let contour = match contour {
+                Some(c) => c,
+                None => {
+                    contour_temp = papercraft.island_contour(i_island);
+                    &contour_temp
+                }
+            };
+            for &(i_edge, face_sign) in contour {
+                args.lines_by_cut_info(extra.cut_info().unwrap(), i_edge, face_sign, |p0, _| {
+                    if p0.y < top.y {
+                        top = p0;
+                    }
+                });
+            }
+            top - Vector2::new(0.0, edge_id_font_size)
+        }
+        // In the middle
+        EdgeIdPosition::Inside => {
+            let (flat_face, total_area) = papercraft.get_biggest_flat_face(island);
+            // Compute the center of mass of the flat-face, that will be the
+            // weighted mean of the centers of masses of each single face.
+            let center: Vector2 = flat_face
+                .iter()
+                .map(|(i_face, area)| {
+                    let vv: Vector2 = args.vertices_for_face(*i_face).into_iter().sum();
+                    vv * *area
+                })
+                .sum();
+            // Don't forget to divide the center of each triangle by 3!
+            let center = center / total_area / 3.0;
+            center + Vector2::new(0.0, edge_id_font_size)
+        }
+    };
+    PrintableText {
+        size: 2.0 * edge_id_font_size,
+        pos,
+        angle: Rad(0.0),
+        align: TextAlign::Center,
+        text: String::from(island.name()),
     }
 }
 

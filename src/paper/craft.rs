@@ -337,6 +337,8 @@ impl Memoization {
     }
 }
 
+pub type IslandContour = Vec<(EdgeIndex, bool)>;
+
 impl Papercraft {
     pub fn empty() -> Papercraft {
         Papercraft {
@@ -1358,7 +1360,7 @@ impl Papercraft {
         }
     }
 
-    pub fn island_contour(&self, i_island: IslandKey) -> Vec<(EdgeIndex, VertexIndex, bool)> {
+    pub fn island_contour(&self, i_island: IslandKey) -> IslandContour {
         let mut contour = Vec::new();
 
         let island = self.island_by_key(i_island).unwrap();
@@ -1386,12 +1388,12 @@ impl Papercraft {
 
         loop {
             let face = &self.model[i_face];
-            let (i_edge_next, i_vertex_next) = face.next_edge(i_edge);
+            let (i_edge_next, _) = face.next_edge(i_edge);
             i_edge = i_edge_next;
             let edge = &self.model[i_edge];
             if let EdgeStatus::Cut(_) = self.edge_status(i_edge) {
                 let next_edge = (i_edge, edge.face_sign(i_face));
-                contour.push((next_edge.0, i_vertex_next, next_edge.1));
+                contour.push((next_edge.0, next_edge.1));
                 if next_edge == first_edge {
                     break;
                 }
@@ -1402,7 +1404,9 @@ impl Papercraft {
                 } else if i_face == faces.1.unwrap() {
                     faces.0
                 } else {
-                    panic!();
+                    // Should not happen!
+                    log::error!("Broken contour!");
+                    break;
                 }
             }
         }

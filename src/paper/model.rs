@@ -562,6 +562,11 @@ impl Face {
         let i = self.edges.iter().position(|e| *e == i_edge).unwrap();
         self.vertices[(i + 2) % 3]
     }
+    pub fn next_edge(&self, i_edge: EdgeIndex) -> (EdgeIndex, VertexIndex) {
+        let i = self.edges.iter().position(|e| *e == i_edge).unwrap();
+        let i = (i + 1) % 3;
+        (self.edges[i], self.vertices[i])
+    }
 }
 
 impl Vertex {

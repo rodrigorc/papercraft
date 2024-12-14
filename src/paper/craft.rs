@@ -1357,6 +1357,58 @@ impl Papercraft {
             angle_1,
         }
     }
+
+    pub fn island_contour(&self, i_island: IslandKey) -> Vec<(EdgeIndex, VertexIndex, bool)> {
+        let mut contour = Vec::new();
+
+        let island = self.island_by_key(i_island).unwrap();
+        let mut first = None;
+        traverse_faces_ex(
+            &self.model,
+            island.root_face(),
+            (),
+            NoMatrixTraverseFace(&self.edges),
+            |i_face, face, _| {
+                for i_edge in face.index_edges() {
+                    if let EdgeStatus::Cut(_) = self.edge_status(i_edge) {
+                        first = Some((i_edge, i_face));
+                        return ControlFlow::Break(());
+                    }
+                }
+                ControlFlow::Continue(())
+            },
+        );
+
+        let Some(first) = first else { return contour };
+
+        let (mut i_edge, mut i_face) = first;
+        let first_edge = (i_edge, self.model[i_edge].face_sign(i_face));
+
+        loop {
+            let face = &self.model[i_face];
+            let (i_edge_next, i_vertex_next) = face.next_edge(i_edge);
+            i_edge = i_edge_next;
+            let edge = &self.model[i_edge];
+            if let EdgeStatus::Cut(_) = self.edge_status(i_edge) {
+                let next_edge = (i_edge, edge.face_sign(i_face));
+                contour.push((next_edge.0, i_vertex_next, next_edge.1));
+                if next_edge == first_edge {
+                    break;
+                }
+            } else {
+                let faces = edge.faces();
+                i_face = if faces.0 == i_face {
+                    faces.1.unwrap()
+                } else if i_face == faces.1.unwrap() {
+                    faces.0
+                } else {
+                    panic!();
+                }
+            }
+        }
+
+        contour
+    }
 }
 
 struct SelfCollisionPerimeter {

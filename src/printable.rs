@@ -370,10 +370,8 @@ impl GlobalContext {
 
             let mut all_page_cuts = Vec::new();
 
-            for (idx, (_, (lines, _))) in lines_by_island.iter().enumerate() {
-                if let Some(page_cuts) = cuts_to_page_cuts(lines.iter_cut(), &in_page) {
-                    all_page_cuts.push((idx, page_cuts));
-                };
+            for (idx, (i_island, (lines, extra))) in lines_by_island.iter().enumerate() {
+                all_page_cuts.push((idx, i_island, lines, extra));
             }
             writeln!(&mut prefix, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
             writeln!(
@@ -432,15 +430,28 @@ impl GlobalContext {
 
             // begin layer Cut
             writeln!(&mut suffix, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
-            for (idx, page_cut) in all_page_cuts {
-                writeln!(&mut suffix, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
-                write!(&mut suffix, r#"M "#)?;
-                let page_contour = cut_to_contour(page_cut);
-                for v in page_contour {
-                    writeln!(&mut suffix, r#"{},{}"#, v.x, v.y)?;
+            for (idx, i_island, lines, extra) in all_page_cuts {
+                let contour = self.data.papercraft().island_contour(*i_island);
+                let mut contour_points = Vec::with_capacity(contour.len());
+                let mut touching = false;
+                for (i_edge, _i_vertex, face_sign) in contour {
+                    let i = CutSource::index(i_edge, face_sign);
+                    let source = &extra.cut_source.as_ref().unwrap()[i];
+                    lines.lines_by_cut_source(source, |p0, _| {
+                        let (is_in, p0) = in_page(p0);
+                        touching |= is_in;
+                        contour_points.push(p0);
+                    });
                 }
-                writeln!(&mut suffix, r#"z"#)?;
-                writeln!(&mut suffix, r#"" />"#)?;
+                if touching {
+                    writeln!(&mut suffix, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
+                    write!(&mut suffix, r#"M "#)?;
+                    for p in contour_points {
+                        writeln!(&mut suffix, r#"{},{}"#, p.x, p.y)?;
+                    }
+                    writeln!(&mut suffix, r#"z"#)?;
+                    writeln!(&mut suffix, r#"" />"#)?;
+                }
             }
             writeln!(&mut suffix, r#"</g>"#)?;
             // end layer Cut
@@ -451,7 +462,7 @@ impl GlobalContext {
                 writeln!(&mut suffix, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
                     if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
                 for (idx, (_, (lines, extra))) in lines_by_island.iter().enumerate() {
-                    let creases = lines.iter_crease(extra, fold_kind);
+                    let creases = lines.iter_crease(extra.crease_kinds.as_ref().unwrap(), fold_kind);
                     // each crease can be checked for bounds individually
                     let page_creases = creases
                         .filter_map(|(a, b)| {
@@ -816,7 +827,7 @@ impl GlobalContext {
                             continue;
                         };
                         // Edge ids
-                        for cut_idx in extra.cut_indices() {
+                        for cut_idx in extra.cut_indices.as_ref().unwrap() {
                             let i_island_b =
                                 self.data.papercraft().island_by_face(cut_idx.i_face_b);
                             let ii = self

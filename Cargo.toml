@@ -34,8 +34,7 @@ base64 = "0.22"
 slotmap = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# zip 2.2.0 has a grave performance regression, waiting for 2.3...
-zip = "=2.1.2"
+zip = "2.2.2"
 bitflags = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clap = { version = "4", features = ["derive", "cargo"] }

@@ -36,7 +36,7 @@ If you create any nice paper model, I'd appreciate if you open an [issue][ISSUE]
 
 If you use Windows, this program does not use any installation, you just copy it into a local folder and run it. Just download the latest package from [here][TAG] and uncompress it to your destination folder.
 
-Select the Win32 or Win64 version depending on your particular Windows and preferences. If you do not know which one you need, try both and see what happens.
+Select the Win32 or Win64 version depending on your particular Windows and preferences. If you do not know which one you need, try both and see what happens. It requires a somewhat modern OpenGL implementation. If your graphics driver doesn't have one you'll get a blank screen, then you can try a software OpenGL driver, such as Mesa from [here][MESA_BIN]: uncompress the proper one to the same directory as Papercraft and it should just work.
 
 Then run the program directly by double-clicking or create a shortcut to your desktop.
 
@@ -186,3 +186,4 @@ Note that some overlapping in flaps is perfectly acceptable, you just cut throug
 [BLENDER]: https://www.blender.org/
 [PIKACHU]: https://www.printables.com/model/243-low-poly-pikachu
 [TAG]: https://github.com/rodrigorc/papercraft/releases/latest
+[MESA_BIN]: https://github.com/mmozeiko/build-mesa/releases

@@ -2246,6 +2246,7 @@ impl GlobalContext {
         let plus = ui.is_key_down(imgui::Key::KeypadAdd);
         let minus = ui.is_key_down(imgui::Key::KeypadSubtract);
         let alt_down = ui.is_key_down(imgui::Key::ModAlt);
+        let super_down = ui.is_key_down(imgui::Key::ModSuper);
 
         let mouse_pos = self.scene_ui_status.mouse_pos;
         if self.scene_ui_status.action != Canvas3dAction::None {
@@ -2262,7 +2263,7 @@ impl GlobalContext {
         let flags = match &self.scene_ui_status.action {
             Canvas3dAction::Hovering => {
                 self.data
-                    .scene_hover_event(self.sz_scene, mouse_pos, alt_down)
+                    .scene_hover_event(self.sz_scene, mouse_pos, alt_down, super_down)
             }
             Canvas3dAction::Pressed(MouseButton::Left)
             | Canvas3dAction::Dragging(MouseButton::Left) => self
@@ -2280,6 +2281,7 @@ impl GlobalContext {
                 mouse_pos,
                 shift_down,
                 control_down,
+                super_down,
             ),
             _ => RebuildFlags::empty(),
         };
@@ -2300,7 +2302,7 @@ impl GlobalContext {
         let flags = match &self.paper_ui_status.action {
             Canvas3dAction::Hovering => {
                 self.data
-                    .paper_hover_event(self.sz_paper, mouse_pos, alt_down)
+                    .paper_hover_event(self.sz_paper, mouse_pos, alt_down, super_down)
             }
             Canvas3dAction::Clicked(MouseButton::Left)
             | Canvas3dAction::DoubleClicked(MouseButton::Left) => {

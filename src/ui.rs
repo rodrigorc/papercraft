@@ -1880,8 +1880,12 @@ impl PapercraftContext {
         size: Vector2,
         pos: Vector2,
         alt_pressed: bool,
+        super_pressed: bool,
     ) -> RebuildFlags {
         self.last_cursor_pos = pos;
+        if super_pressed {
+            return RebuildFlags::empty();
+        }
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
         let flags = if alt_pressed {
             SetSelectionFlags::ALT_PRESSED
@@ -1983,7 +1987,11 @@ impl PapercraftContext {
         pos: Vector2,
         shift_action: bool,
         add_to_sel: bool,
+        super_pressed: bool,
     ) -> RebuildFlags {
+        if super_pressed {
+            return RebuildFlags::empty();
+        }
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
         let flags = if add_to_sel {
             SetSelectionFlags::ADD_TO_SEL
@@ -2256,12 +2264,18 @@ impl PapercraftContext {
         size: Vector2,
         pos: Vector2,
         alt_pressed: bool,
+        super_pressed: bool,
     ) -> RebuildFlags {
         self.pre_selection = None;
         self.last_cursor_pos = pos;
-        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         self.rotation_center = None;
         self.grabbed_island = None;
+        // Super is usually only handled in the 3d scene, however when doing bit rotations the mouse will hover
+        // the paper, and it is convenient to check it here too, at least when hovering.
+        if super_pressed {
+            return RebuildFlags::empty();
+        }
+        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
         let flags = if alt_pressed {
             SetSelectionFlags::ALT_PRESSED
         } else {

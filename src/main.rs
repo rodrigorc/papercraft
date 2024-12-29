@@ -2241,12 +2241,21 @@ impl GlobalContext {
     }
 
     fn run_mouse_actions(&mut self, ui: &Ui) {
-        let shift_down = ui.is_key_down(imgui::Key::ModShift);
-        let control_down = ui.is_key_down(imgui::Key::ModCtrl);
         let plus = ui.is_key_down(imgui::Key::KeypadAdd);
         let minus = ui.is_key_down(imgui::Key::KeypadSubtract);
-        let alt_down = ui.is_key_down(imgui::Key::ModAlt);
-        let super_down = ui.is_key_down(imgui::Key::ModSuper);
+
+        let mut mods = imgui::KeyMod::empty();
+        for m in [
+            imgui::Key::ModShift,
+            imgui::Key::ModCtrl,
+            imgui::Key::ModAlt,
+            imgui::Key::ModSuper,
+        ] {
+            if ui.is_key_down(m) {
+                // Mods and Keys have the same inner value (TODO: helper easy_imgui function)
+                mods |= imgui::KeyMod::from_bits_retain(m.bits().0);
+            }
+        }
 
         let mouse_pos = self.scene_ui_status.mouse_pos;
         if self.scene_ui_status.action != Canvas3dAction::None {
@@ -2261,10 +2270,7 @@ impl GlobalContext {
             }
         }
         let flags = match &self.scene_ui_status.action {
-            Canvas3dAction::Hovering => {
-                self.data
-                    .scene_hover_event(self.sz_scene, mouse_pos, alt_down, super_down)
-            }
+            Canvas3dAction::Hovering => self.data.scene_hover_event(self.sz_scene, mouse_pos, mods),
             Canvas3dAction::Pressed(MouseButton::Left)
             | Canvas3dAction::Dragging(MouseButton::Left) => self
                 .data
@@ -2276,13 +2282,10 @@ impl GlobalContext {
             Canvas3dAction::DoubleClicked(MouseButton::Left) => self
                 .data
                 .scene_button1_dblclick_event(self.sz_scene, mouse_pos),
-            Canvas3dAction::Released(MouseButton::Left) => self.data.scene_button1_release_event(
-                self.sz_scene,
-                mouse_pos,
-                shift_down,
-                control_down,
-                super_down,
-            ),
+            Canvas3dAction::Released(MouseButton::Left) => {
+                self.data
+                    .scene_button1_release_event(self.sz_scene, mouse_pos, mods)
+            }
             _ => RebuildFlags::empty(),
         };
         self.add_rebuild(flags);
@@ -2300,23 +2303,14 @@ impl GlobalContext {
             }
         }
         let flags = match &self.paper_ui_status.action {
-            Canvas3dAction::Hovering => {
-                self.data
-                    .paper_hover_event(self.sz_paper, mouse_pos, alt_down, super_down)
-            }
+            Canvas3dAction::Hovering => self.data.paper_hover_event(self.sz_paper, mouse_pos, mods),
             Canvas3dAction::Clicked(MouseButton::Left)
-            | Canvas3dAction::DoubleClicked(MouseButton::Left) => {
-                self.data.paper_button1_click_event(
-                    self.sz_paper,
-                    mouse_pos,
-                    shift_down,
-                    control_down,
-                    self.modifiable(),
-                )
-            }
+            | Canvas3dAction::DoubleClicked(MouseButton::Left) => self
+                .data
+                .paper_button1_click_event(self.sz_paper, mouse_pos, mods, self.modifiable()),
             Canvas3dAction::Released(MouseButton::Left) => {
                 self.data
-                    .paper_button1_release_event(self.sz_paper, mouse_pos, control_down)
+                    .paper_button1_release_event(self.sz_paper, mouse_pos, mods)
             }
             Canvas3dAction::Pressed(MouseButton::Right)
             | Canvas3dAction::Dragging(MouseButton::Right) => {
@@ -2326,7 +2320,7 @@ impl GlobalContext {
                 self.data.paper_button1_grab_event(
                     self.sz_paper,
                     mouse_pos,
-                    shift_down,
+                    mods,
                     /*dragging*/ false,
                 )
             }
@@ -2334,7 +2328,7 @@ impl GlobalContext {
                 self.data.paper_button1_grab_event(
                     self.sz_paper,
                     mouse_pos,
-                    shift_down,
+                    mods,
                     /*dragging*/ true,
                 )
             }

@@ -4,9 +4,12 @@ use std::ops::ControlFlow;
 
 use anyhow::Result;
 use cgmath::{prelude::*, Deg, Rad};
-use easy_imgui_window::easy_imgui_renderer::{
-    easy_imgui_opengl::GlContext,
-    glow::{self, HasContext},
+use easy_imgui_window::{
+    easy_imgui::KeyMod,
+    easy_imgui_renderer::{
+        easy_imgui_opengl::GlContext,
+        glow::{self, HasContext},
+    },
 };
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
@@ -1875,19 +1878,13 @@ impl PapercraftContext {
         RebuildFlags::SCENE_REDRAW
     }
     #[must_use]
-    pub fn scene_hover_event(
-        &mut self,
-        size: Vector2,
-        pos: Vector2,
-        alt_pressed: bool,
-        super_pressed: bool,
-    ) -> RebuildFlags {
+    pub fn scene_hover_event(&mut self, size: Vector2, pos: Vector2, mods: KeyMod) -> RebuildFlags {
         self.last_cursor_pos = pos;
-        if super_pressed {
+        if mods.contains(KeyMod::Super) {
             return RebuildFlags::empty();
         }
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
-        let flags = if alt_pressed {
+        let flags = if mods.contains(KeyMod::Alt) {
             SetSelectionFlags::ALT_PRESSED
         } else {
             SetSelectionFlags::empty()
@@ -1985,15 +1982,13 @@ impl PapercraftContext {
         &mut self,
         size: Vector2,
         pos: Vector2,
-        shift_action: bool,
-        add_to_sel: bool,
-        super_pressed: bool,
+        mods: KeyMod,
     ) -> RebuildFlags {
-        if super_pressed {
+        if mods.contains(KeyMod::Super) {
             return RebuildFlags::empty();
         }
         let selection = self.scene_analyze_click(self.ui.mode, size, pos);
-        let flags = if add_to_sel {
+        let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
         } else {
             SetSelectionFlags::empty()
@@ -2001,10 +1996,10 @@ impl PapercraftContext {
         let flags = flags | SetSelectionFlags::CLICKED | SetSelectionFlags::RELEASED;
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                self.do_edge_action(i_edge, i_face, shift_action)
+                self.do_edge_action(i_edge, i_face, mods.contains(KeyMod::Shift))
             }
             (MouseMode::Flap, ClickResult::Edge(i_edge, _)) => {
-                self.do_flap_action(i_edge, shift_action)
+                self.do_flap_action(i_edge, mods.contains(KeyMod::Shift))
             }
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
                 self.set_selection(ClickResult::Face(f), flags)
@@ -2026,7 +2021,7 @@ impl PapercraftContext {
         &mut self,
         size: Vector2,
         pos: Vector2,
-        rotating: bool,
+        mods: KeyMod,
         dragging: bool,
     ) -> RebuildFlags {
         let delta = pos - self.last_cursor_pos;
@@ -2047,7 +2042,7 @@ impl PapercraftContext {
             }
             _ => {
                 // The same key for rotating (shift) is used for removing the selection.
-                let adding = !rotating;
+                let adding = !mods.contains(KeyMod::Shift);
 
                 // No selection, check if we should build a pre-selection rectangle
                 let click = self.ui.trans_paper.paper_click(size, pos);
@@ -2093,7 +2088,7 @@ impl PapercraftContext {
             }
         }
 
-        if rotating {
+        if mods.contains(KeyMod::Shift) {
             // Rotate island
             let ppos = self.ui.trans_paper.paper_click(size, pos);
             let pcenter = *self.rotation_center.get_or_insert(ppos);
@@ -2179,12 +2174,11 @@ impl PapercraftContext {
         &mut self,
         size: Vector2,
         pos: Vector2,
-        shift_action: bool,
-        add_to_sel: bool,
+        mods: KeyMod,
         modifiable: bool,
     ) -> RebuildFlags {
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
-        let flags = if add_to_sel {
+        let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
         } else {
             SetSelectionFlags::empty()
@@ -2194,10 +2188,10 @@ impl PapercraftContext {
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 self.grabbed_island = None;
-                self.do_edge_action(i_edge, i_face, shift_action)
+                self.do_edge_action(i_edge, i_face, mods.contains(KeyMod::Shift))
             }
             (MouseMode::Flap, ClickResult::Edge(i_edge, _)) => {
-                self.do_flap_action(i_edge, shift_action)
+                self.do_flap_action(i_edge, mods.contains(KeyMod::Shift))
             }
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
                 let flags = self.set_selection(ClickResult::Face(f), flags);
@@ -2232,11 +2226,11 @@ impl PapercraftContext {
         &mut self,
         size: Vector2,
         pos: Vector2,
-        add_to_sel: bool,
+        mods: KeyMod,
     ) -> RebuildFlags {
         self.pre_selection = None;
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
-        let flags = if add_to_sel {
+        let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
         } else {
             SetSelectionFlags::empty()
@@ -2259,24 +2253,18 @@ impl PapercraftContext {
         RebuildFlags::PAPER_REDRAW | RebuildFlags::SELECTION
     }
     #[must_use]
-    pub fn paper_hover_event(
-        &mut self,
-        size: Vector2,
-        pos: Vector2,
-        alt_pressed: bool,
-        super_pressed: bool,
-    ) -> RebuildFlags {
+    pub fn paper_hover_event(&mut self, size: Vector2, pos: Vector2, mods: KeyMod) -> RebuildFlags {
         self.pre_selection = None;
         self.last_cursor_pos = pos;
         self.rotation_center = None;
         self.grabbed_island = None;
         // Super is usually only handled in the 3d scene, however when doing bit rotations the mouse will hover
         // the paper, and it is convenient to check it here too, at least when hovering.
-        if super_pressed {
+        if mods.contains(KeyMod::Super) {
             return RebuildFlags::empty();
         }
         let selection = self.paper_analyze_click(self.ui.mode, size, pos);
-        let flags = if alt_pressed {
+        let flags = if mods.contains(KeyMod::Alt) {
             SetSelectionFlags::ALT_PRESSED
         } else {
             SetSelectionFlags::empty()

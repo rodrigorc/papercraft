@@ -3066,7 +3066,7 @@ struct PrintableText {
     text: String,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(never)]
 unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<MainLoopEvent>) {
     // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
@@ -3093,7 +3093,7 @@ unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<Mai
     });
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<()>) {}
 
 impl imgui::UiBuilder for Box<GlobalContext> {

@@ -130,6 +130,7 @@ fn main() {
     }
 }
 
+#[allow(dead_code)]
 enum MainLoopEvent {
     Crash,
     ThumbnailLoaded(PathBuf, CancellationToken, Option<image::RgbaImage>),
@@ -3094,7 +3095,7 @@ unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<Mai
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<()>) {}
+unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<MainLoopEvent>) {}
 
 impl imgui::UiBuilder for Box<GlobalContext> {
     fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {

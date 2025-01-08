@@ -34,8 +34,8 @@ jobs:
           mkdir -p pkg64/papercraft
           cd pkg64/papercraft
           ln -s ../../win64target/x86_64-pc-windows-gnu/release/papercraft.exe .
-          ln -s /usr/lib/gcc/x86_64-w64-mingw32/10-win32/libstdc++-6.dll .
-          ln -s /usr/lib/gcc/x86_64-w64-mingw32/10-win32/libgcc_s_seh-1.dll .
+          ln -s /usr/lib/gcc/x86_64-w64-mingw32/*-win32/libstdc++-6.dll .
+          ln -s /usr/lib/gcc/x86_64-w64-mingw32/*-win32/libgcc_s_seh-1.dll .
           mkdir examples
           cd examples
           ln -s ../../../examples/*.craft .

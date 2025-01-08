@@ -1167,23 +1167,25 @@ impl PapercraftContext {
             let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
 
             // Edge ids
-            for cut_idx in cut_info.iter().flat_map(|c| c.descriptions()) {
-                let i_island_b = self.papercraft().island_by_face(cut_idx.i_face_b);
-                let ii = self
-                    .papercraft()
-                    .island_by_key(i_island_b)
-                    .map(|island_b| island_b.name())
-                    .unwrap_or("?");
-                let text = format!("{}:{}", ii, cut_idx.id);
-                let pos = cut_idx.pos(text_builder.font_text_line_scale() * edge_id_font_size);
-                let t = PrintableText {
-                    size: edge_id_font_size,
-                    pos,
-                    angle: cut_idx.angle,
-                    align: TextAlign::Center,
-                    text,
-                };
-                text_builder.make_text(&t, &mut args.vertices_text);
+            if !self.papercraft.options().island_name_only {
+                for cut_idx in cut_info.iter().flat_map(|c| c.descriptions()) {
+                    let i_island_b = self.papercraft().island_by_face(cut_idx.i_face_b);
+                    let ii = self
+                        .papercraft()
+                        .island_by_key(i_island_b)
+                        .map(|island_b| island_b.name())
+                        .unwrap_or("?");
+                    let text = format!("{}:{}", ii, cut_idx.id);
+                    let pos = cut_idx.pos(text_builder.font_text_line_scale() * edge_id_font_size);
+                    let t = PrintableText {
+                        size: edge_id_font_size,
+                        pos,
+                        angle: cut_idx.angle,
+                        align: TextAlign::Center,
+                        text,
+                    };
+                    text_builder.make_text(&t, &mut args.vertices_text);
+                }
             }
 
             for (i_island, _) in self.papercraft().islands() {

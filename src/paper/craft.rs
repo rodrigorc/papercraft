@@ -156,6 +156,8 @@ pub struct PaperOptions {
     pub edge_id_font_size: f32,
     #[serde(default)]
     pub edge_id_position: EdgeIdPosition,
+    #[serde(default)]
+    pub island_name_only: bool,
 }
 
 impl Default for PaperOptions {
@@ -181,6 +183,7 @@ impl Default for PaperOptions {
             show_page_number: true,
             edge_id_font_size: default_edge_id_font_size(),
             edge_id_position: EdgeIdPosition::default(),
+            island_name_only: false,
         }
     }
 }

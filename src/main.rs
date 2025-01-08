@@ -1365,6 +1365,11 @@ impl GlobalContext {
                             .build();
                             options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
                         });
+
+                        ui.checkbox(
+                            lbl_id(tr!("Piece names only"), "only_islands"),
+                            &mut options.island_name_only,
+                        );
                     });
                 ui.tree_node_config(lbl_id(tr!("Paper size"), "papersize"))
                     .flags(imgui::TreeNodeFlags::Framed)

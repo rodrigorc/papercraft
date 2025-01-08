@@ -816,30 +816,33 @@ impl GlobalContext {
                         }
                     }
                     // Edge ids
-                    for cut_idx in extra
-                        .cut_info()
-                        .unwrap()
-                        .iter()
-                        .flat_map(|ci| ci.descriptions())
-                    {
-                        let i_island_b = self.data.papercraft().island_by_face(cut_idx.i_face_b);
-                        let ii = self
-                            .data
-                            .papercraft()
-                            .island_by_key(i_island_b)
-                            .map(|island_b| island_b.name())
-                            .unwrap_or("?");
-                        let text = format!("{}:{}", ii, cut_idx.id);
-                        let (is_in_page, pos) =
-                            in_page(cut_idx.pos(self.font_text_line_scale * edge_id_font_size));
-                        if is_in_page {
-                            texts.push(PrintableText {
-                                size: edge_id_font_size,
-                                pos,
-                                angle: cut_idx.angle,
-                                align: TextAlign::Center,
-                                text,
-                            });
+                    if !options.island_name_only {
+                        for cut_idx in extra
+                            .cut_info()
+                            .unwrap()
+                            .iter()
+                            .flat_map(|ci| ci.descriptions())
+                        {
+                            let i_island_b =
+                                self.data.papercraft().island_by_face(cut_idx.i_face_b);
+                            let ii = self
+                                .data
+                                .papercraft()
+                                .island_by_key(i_island_b)
+                                .map(|island_b| island_b.name())
+                                .unwrap_or("?");
+                            let text = format!("{}:{}", ii, cut_idx.id);
+                            let (is_in_page, pos) =
+                                in_page(cut_idx.pos(self.font_text_line_scale * edge_id_font_size));
+                            if is_in_page {
+                                texts.push(PrintableText {
+                                    size: edge_id_font_size,
+                                    pos,
+                                    angle: cut_idx.angle,
+                                    align: TextAlign::Center,
+                                    text,
+                                });
+                            }
                         }
                     }
                 }

@@ -114,8 +114,11 @@ impl Papercraft {
         for (i_edge, (status, crossed)) in edge_status_map {
             // Is it a rim?
             if self.model[i_edge].faces().1.is_none() {
-                // Rims can't be crossed
-                self.edges[usize::from(i_edge)] = status;
+                // Rims can't be crossed, so ignore that
+                self.edges[usize::from(i_edge)] = match status {
+                    EdgeStatus::Cut(FlapSide::Hidden) | EdgeStatus::Cut(FlapSide::False) => status,
+                    _ => EdgeStatus::Cut(FlapSide::Hidden),
+                };
             } else {
                 match status {
                     EdgeStatus::Hidden => { /* should not happen, because they are filtered above */
@@ -282,5 +285,8 @@ impl Papercraft {
             }
         }
         self.memo = Memoization::default();
+
+        // Mixing two sane things may create something insane, fix it now
+        self.sanitize();
     }
 }

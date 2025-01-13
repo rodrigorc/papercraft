@@ -66,7 +66,7 @@ impl Papercraft {
         self.sanitize();
         self.recompute_edge_ids();
     }
-    fn sanitize(&mut self) {
+    pub fn sanitize(&mut self) {
         // Fix islands that are not acyclic graphs
         struct SanitizeTraverse<'a, 'b>(&'a Papercraft, &'b mut FxHashSet<EdgeIndex>);
 
@@ -156,7 +156,22 @@ impl Papercraft {
                 changed = true;
             }
         }
+
+        for (i_edge, edge) in self.model.edges() {
+            let (_, f1) = edge.faces();
+            // Rim edges can't have any status
+            if f1.is_none() {
+                match &mut self.edges[usize::from(i_edge)] {
+                    EdgeStatus::Cut(FlapSide::Hidden) | EdgeStatus::Cut(FlapSide::False) => (), // ok
+                    x => {
+                        log::warn!("Fix rim edge {i_edge:?}");
+                        *x = EdgeStatus::Cut(FlapSide::Hidden);
+                    }
+                }
+            }
+        }
     }
+
     fn recompute_edge_ids(&mut self) {
         let mut next_edge_id = 0;
         let mut edge_ids: Vec<Option<EdgeId>> = vec![None; self.model.num_edges()];

@@ -753,6 +753,7 @@ impl GlobalContext {
                     draw_fb_binder.rebind(&fbo);
                 }
 
+                self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
                 self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
 
                 let mut pixbuf =

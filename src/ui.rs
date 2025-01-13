@@ -2455,6 +2455,9 @@ impl GLObjects {
                 let mut blank = None;
                 unsafe {
                     let textures = glr::Texture::generate(gl)?;
+
+                    // Image crate does no alignment at all
+                    gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
                     gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(textures.id()));
                     gl.tex_image_3d(
                         glow::TEXTURE_2D_ARRAY,

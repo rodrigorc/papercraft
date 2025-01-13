@@ -2788,6 +2788,7 @@ impl GlobalContext {
 
             // Read the image
             self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
+            self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
             let mut pixbuf = image::RgbaImage::new(IMG_WIDTH as u32, IMG_HEIGHT as u32);
             self.gl.read_pixels(
                 0,

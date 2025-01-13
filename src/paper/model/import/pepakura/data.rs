@@ -9,8 +9,6 @@ use anyhow::anyhow;
 use std::cell::Cell;
 
 use super::super::*;
-type Vector2 = cgmath::Vector2<f32>;
-type Vector3 = cgmath::Vector3<f32>;
 use cgmath::Rad;
 
 #[derive(Debug)]

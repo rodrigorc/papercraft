@@ -2057,6 +2057,7 @@ impl GlobalContext {
                 chooser.add_filter(filters::wavefront());
                 chooser.add_filter(filters::pepakura());
                 chooser.add_filter(filters::stl());
+                chooser.add_filter(filters::gltf());
                 chooser.add_filter(filters::all_files());
                 self.file_dialog = Some(FileDialog::new(
                     chooser,
@@ -2082,6 +2083,7 @@ impl GlobalContext {
                 chooser.add_filter(filters::wavefront());
                 chooser.add_filter(filters::pepakura());
                 chooser.add_filter(filters::stl());
+                chooser.add_filter(filters::gltf());
                 chooser.add_filter(filters::all_files());
                 self.file_dialog = Some(FileDialog::new(
                     chooser,
@@ -3378,6 +3380,7 @@ mod filters {
     const PDF: FilterId = FilterId(6);
     const SVG: FilterId = FilterId(7);
     const PNG: FilterId = FilterId(8);
+    const GLTF: FilterId = FilterId(9);
 
     pub fn ext(filter: Option<FilterId>) -> Option<&'static str> {
         let ext = match filter? {
@@ -3396,7 +3399,7 @@ mod filters {
     pub fn craft() -> Filter {
         Filter {
             id: CRAFT,
-            text: tr!("Papercraft") + "(*.craft)",
+            text: tr!("Papercraft") + " (*.craft)",
             globs: vec![Pattern::new("*.craft").unwrap()],
         }
     }
@@ -3404,11 +3407,13 @@ mod filters {
     pub fn all_models() -> Filter {
         Filter {
             id: ALL_MODELS,
-            text: tr!("All models") + "(*.obj *.pdo *.stl)",
+            text: tr!("All models") + " (*.obj *.pdo *.stl *.gltf *.glb)",
             globs: vec![
                 Pattern::new("*.obj").unwrap(),
                 Pattern::new("*.pdo").unwrap(),
                 Pattern::new("*.stl").unwrap(),
+                Pattern::new("*.gltf").unwrap(),
+                Pattern::new("*.glb").unwrap(),
             ],
         }
     }
@@ -3416,7 +3421,7 @@ mod filters {
     pub fn wavefront() -> Filter {
         Filter {
             id: WAVEFRONT,
-            text: tr!("Wavefront") + "(*.obj)",
+            text: tr!("Wavefront") + " (*.obj)",
             globs: vec![Pattern::new("*.obj").unwrap()],
         }
     }
@@ -3424,7 +3429,7 @@ mod filters {
     pub fn pepakura() -> Filter {
         Filter {
             id: PEPAKURA,
-            text: tr!("Pepakura") + "(*.pdo)",
+            text: tr!("Pepakura") + " (*.pdo)",
             globs: vec![Pattern::new("*.pdo").unwrap()],
         }
     }
@@ -3432,15 +3437,26 @@ mod filters {
     pub fn stl() -> Filter {
         Filter {
             id: STL,
-            text: tr!("Stl") + "(*.stl)",
+            text: tr!("Stl") + " (*.stl)",
             globs: vec![Pattern::new("*.stl").unwrap()],
+        }
+    }
+
+    pub fn gltf() -> Filter {
+        Filter {
+            id: GLTF,
+            text: tr!("glTF") + " (*.gltf *.glb)",
+            globs: vec![
+                Pattern::new("*.gltf").unwrap(),
+                Pattern::new("*.glb").unwrap(),
+            ],
         }
     }
 
     pub fn pdf() -> Filter {
         Filter {
             id: PDF,
-            text: tr!("PDF documents") + "(*.pdf)",
+            text: tr!("PDF documents") + " (*.pdf)",
             globs: vec![Pattern::new("*.pdf").unwrap()],
         }
     }
@@ -3448,7 +3464,7 @@ mod filters {
     pub fn svg() -> Filter {
         Filter {
             id: SVG,
-            text: tr!("SVG images") + "(*.svg)",
+            text: tr!("SVG images") + " (*.svg)",
             globs: vec![Pattern::new("*.svg").unwrap()],
         }
     }
@@ -3456,7 +3472,7 @@ mod filters {
     pub fn png() -> Filter {
         Filter {
             id: PNG,
-            text: tr!("PNG images") + "(*.png)",
+            text: tr!("PNG images") + " (*.png)",
             globs: vec![Pattern::new("*.png").unwrap()],
         }
     }

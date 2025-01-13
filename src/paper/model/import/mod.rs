@@ -7,6 +7,7 @@ use super::{EdgeStatus, Island, MaterialIndex, Model, PaperOptions, Texture, Ver
 use crate::paper::{FlapSide, PageOffset, Papercraft};
 use crate::util_3d::{Vector2, Vector3};
 
+pub mod gltf;
 pub mod pepakura;
 pub mod stl;
 pub mod waveobj;
@@ -153,6 +154,11 @@ pub fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
             anyhow::bail!(
                 "MTL are material files for OBJ models. Try opening the OBJ file instead."
             );
+        }
+        "glb" | "gltf" => {
+            let importer = gltf::GltfImporter::new(f, file_name)
+                .with_context(|| format!("Error reading glTF file {}", file_name.display()))?;
+            Papercraft::import(importer)
         }
         // "obj" plus unknown extensions are tried as obj, that was the default previously
         _ => {

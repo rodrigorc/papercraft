@@ -1,6 +1,5 @@
 use super::*;
 use anyhow::Result;
-use paper::OrderedContour;
 use rayon::prelude::*;
 
 fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
@@ -410,11 +409,12 @@ impl GlobalContext {
 
             // begin layer Cut
             writeln!(&mut suffix, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
-            for (idx, (_, lines, contour)) in lines_by_island.iter().enumerate() {
-                let mut contour_points = Vec::with_capacity(contour.len());
+            for (idx, (i_island, lines)) in lines_by_island.iter().enumerate() {
+                let perimeter = self.data.papercraft().island_perimeter(*i_island);
+                let mut contour_points = Vec::with_capacity(perimeter.len());
                 let mut touching = false;
-                for &(i_edge, face_sign) in contour {
-                    lines.lines_by_cut_info(extra.cut_info().unwrap(), i_edge, face_sign, |p0, _| {
+                for peri in &perimeter {
+                    lines.lines_by_cut_info(extra.cut_info().unwrap(), peri.i_edge(), peri.face_sign(), |p0, _| {
                         let (is_in, p0) = in_page(p0);
                         touching |= is_in;
                         contour_points.push(p0);
@@ -438,7 +438,7 @@ impl GlobalContext {
             for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
                 writeln!(&mut suffix, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
                     if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
-                for (idx, (_, lines, _)) in lines_by_island.iter().enumerate() {
+                for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
                     let creases = lines.iter_crease(fold_kind);
                     // each crease can be checked for bounds individually
                     let page_creases = creases
@@ -525,7 +525,7 @@ impl GlobalContext {
             image::RgbaImage,
             &PaperDrawFaceArgsExtra,
             &[PrintableText],
-            &[(IslandKey, PaperDrawFaceArgs, OrderedContour)],
+            &[(IslandKey, PaperDrawFaceArgs)],
         ) -> Result<()>,
     {
         let options = self.data.papercraft().options();
@@ -801,15 +801,10 @@ impl GlobalContext {
                 }
                 if edge_id_position != EdgeIdPosition::None {
                     let in_page = options.is_in_page_fn(page);
-                    for (i_island, lines, contour) in &lines_by_island {
+                    for (i_island, lines) in &lines_by_island {
                         // Island ids
-                        let mut text = printable_island_name(
-                            self.data.papercraft(),
-                            *i_island,
-                            lines,
-                            &extra,
-                            Some(contour),
-                        );
+                        let mut text =
+                            printable_island_name(self.data.papercraft(), *i_island, lines, &extra);
                         let (is_in_page, pos) = in_page(text.pos);
                         if is_in_page {
                             text.pos = pos;

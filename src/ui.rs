@@ -30,7 +30,7 @@ use crate::{
     paper::{
         EdgeId, EdgeIdPosition, EdgeIndex, EdgeStatus, EdgeToggleFlapAction, Face, FaceIndex,
         FlapGeom, FlapSide, FlapStyle, FoldStyle, IslandKey, JoinResult, MaterialIndex, Model,
-        OrderedContour, PaperOptions, Papercraft,
+        PaperOptions, Papercraft,
     },
     printable_island_name,
 };
@@ -1190,7 +1190,7 @@ impl PapercraftContext {
 
             for (i_island, _) in self.papercraft().islands() {
                 // Island ids
-                let text = printable_island_name(&self.papercraft, i_island, &args, &extra, None);
+                let text = printable_island_name(&self.papercraft, i_island, &args, &extra);
                 text_builder.make_text(&text, &mut args.vertices_text);
             }
         }
@@ -2372,12 +2372,7 @@ impl PapercraftContext {
         self.selected_edges.is_some()
     }
 
-    pub fn lines_by_island(
-        &self,
-    ) -> (
-        Vec<(IslandKey, PaperDrawFaceArgs, OrderedContour)>,
-        PaperDrawFaceArgsExtra,
-    ) {
+    pub fn lines_by_island(&self) -> (Vec<(IslandKey, PaperDrawFaceArgs)>, PaperDrawFaceArgsExtra) {
         let mut extra = PaperDrawFaceArgsExtra::default();
         extra.add_cut_info(self.papercraft.model());
 
@@ -2390,8 +2385,7 @@ impl PapercraftContext {
                     self.paper_draw_face(face, i_face, mx, &mut args, &mut extra);
                     ControlFlow::Continue(())
                 });
-                let contour = self.papercraft.island_contour(id);
-                (id, args, contour)
+                (id, args)
             })
             .collect();
         (by_island, extra)

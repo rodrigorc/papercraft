@@ -293,12 +293,22 @@ pub struct FlapGeom {
 }
 
 #[derive(Debug, Clone)]
-struct FlapEdgeData {
+pub struct FlapEdgeData {
     i_edge: EdgeIndex,
     face_sign: bool,
     // Do not assume that these coordinates are the real ones in the paper, the movement of the island is not tracked.
     p0: Vector2,
     p1: Vector2,
+}
+
+impl FlapEdgeData {
+    pub fn i_edge(&self) -> EdgeIndex {
+        self.i_edge
+    }
+    pub fn face_sign(&self) -> bool {
+        self.face_sign
+    }
+    // Do not expose p0/p1 for now, because they have an arbitraty transformation
 }
 
 type FlatFaceFlapDimensions = FxHashMap<(FaceIndex, EdgeIndex), FlapGeom>;
@@ -338,7 +348,7 @@ impl Memoization {
     }
 }
 
-pub type OrderedContour = Vec<(EdgeIndex, bool)>;
+type OrderedContour = Vec<(EdgeIndex, bool)>;
 
 impl Papercraft {
     pub fn empty() -> Papercraft {
@@ -1258,8 +1268,7 @@ impl Papercraft {
     }
 
     // Returns the island perimeter in paper size, but, beware! with an arbitrary position
-    // The returned vec is unordered, use island_contour to get the proper order
-    fn island_perimeter(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
+    pub fn island_perimeter(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
         let mut memo = self.memo.island_perimeters.borrow_mut();
         use std::collections::hash_map::Entry::*;
         match memo.entry(island_key) {
@@ -1274,32 +1283,35 @@ impl Papercraft {
     fn island_perimeter_internal(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
         let island = self.island_by_key(island_key).unwrap();
         let scale = self.options.scale;
-        let mut perimeter = Vec::new();
 
-        self.traverse_faces(island, |i_face, face, mx| {
-            let plane = self.model.face_plane(face);
-            let tr = |v: VertexIndex| {
-                let v = &self.model[v];
-                let v = plane.project(&v.pos(), scale);
-                mx.transform_point(Point2::from_vec(v)).to_vec()
-            };
-            for (i_v0, i_v1, i_e) in face.vertices_with_edges() {
-                let e = self.edge_status(i_e);
-                if !matches!(e, EdgeStatus::Cut(_)) {
-                    // we want the cut-contour, without flaps
-                    continue;
-                }
-                let edata = FlapEdgeData {
-                    i_edge: i_e,
-                    face_sign: self.model[i_e].face_sign(i_face),
-                    p0: tr(i_v0),
-                    p1: tr(i_v1),
-                };
-                perimeter.push(edata);
-            }
+        let mut mxs = FxHashMap::default();
+        self.traverse_faces(island, |i_face, _, mx| {
+            mxs.insert(i_face, *mx);
             ControlFlow::Continue(())
         });
-        perimeter
+
+        self.island_contour(island_key)
+            .into_iter()
+            .map(|(i_edge, face_sign)| {
+                let edge = &self.model[i_edge];
+                let i_face = edge.face_by_sign(face_sign).unwrap();
+                let face = &self.model[i_face];
+                let (i_v0, i_v1) = face.vertices_of_edge(i_edge).unwrap();
+                let plane = self.model.face_plane(face);
+                let mx = &mxs[&i_face];
+                let tr = |v: VertexIndex| {
+                    let v = &self.model[v];
+                    let v = plane.project(&v.pos(), scale);
+                    mx.transform_point(Point2::from_vec(v)).to_vec()
+                };
+                FlapEdgeData {
+                    i_edge,
+                    face_sign,
+                    p0: tr(i_v0),
+                    p1: tr(i_v1),
+                }
+            })
+            .collect()
     }
 
     // Given an edge, compute the island perimeter, and the angles that it forms with its adjacent edges
@@ -1325,48 +1337,30 @@ impl Papercraft {
         let base = (base.p0, base.p1);
 
         // Get the order of the contour edges
-        let contour = self.island_contour(island_key);
-        let Some(base_pos) = contour
+        let Some(base_pos) = perimeter
             .iter()
-            .position(|&(i_e, sign)| i_e == i_edge && edge.face_sign(i_face_a) == sign)
+            .position(|flap| flap.i_edge == i_edge && flap.face_sign == edge.face_sign(i_face_a))
         else {
             // should not happen
             return SelfCollisionPerimeter::default();
         };
-        let (i_prev_edge, prev_sign) = contour[(base_pos + contour.len() - 1) % contour.len()];
-        let (i_next_edge, next_sign) = contour[(base_pos + 1) % contour.len()];
+        let prev_index = (base_pos + perimeter.len() - 1) % perimeter.len();
+        let next_index = (base_pos + 1) % perimeter.len();
+        let prev_flap = &perimeter[prev_index];
+        let next_flap = &perimeter[next_index];
 
-        // angle_{0,1} should always exist, but just in case...
-        let angle_0 = perimeter
-            .iter()
-            .enumerate()
-            .find(|(_, p)| p.i_edge == i_next_edge && p.face_sign == next_sign)
-            .map(|(i, e)| {
-                let a = Rad::turn_div_2() - (base.1 - base.0).angle(e.p1 - e.p0);
-                (a, i)
-            })
-            // should not happen
-            .unwrap_or((Rad::turn_div_2(), usize::MAX));
-        let angle_1 = perimeter
-            .iter()
-            .enumerate()
-            .find(|(_, p)| p.i_edge == i_prev_edge && p.face_sign == prev_sign)
-            .map(|(i, e)| {
-                let a = Rad::turn_div_2() - (e.p1 - e.p0).angle(base.1 - base.0);
-                (a, i)
-            })
-            // should not happen
-            .unwrap_or((Rad::turn_div_2(), usize::MAX));
+        let angle_0 = Rad::turn_div_2() - (base.1 - base.0).angle(next_flap.p1 - next_flap.p0);
+        let angle_1 = Rad::turn_div_2() - (prev_flap.p1 - prev_flap.p0).angle(base.1 - base.0);
 
         SelfCollisionPerimeter {
             perimeter,
             perimeter_egde_base,
-            angle_0,
-            angle_1,
+            angle_0: (angle_0, next_index),
+            angle_1: (angle_1, prev_index),
         }
     }
 
-    pub fn island_contour(&self, i_island: IslandKey) -> OrderedContour {
+    fn island_contour(&self, i_island: IslandKey) -> OrderedContour {
         let island = self.island_by_key(i_island).unwrap();
         let mut first = None;
         traverse_faces_ex(

@@ -56,8 +56,8 @@ const KARLA_TTF: &[u8] = include_bytes!("Karla-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
 
 use paper::{
-    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, OrderedContour,
-    PaperOptions, Papercraft,
+    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions,
+    Papercraft,
 };
 use util_3d::Matrix3;
 use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
@@ -3225,7 +3225,6 @@ fn printable_island_name(
     i_island: IslandKey,
     args: &PaperDrawFaceArgs,
     extra: &PaperDrawFaceArgsExtra,
-    contour: Option<&OrderedContour>,
 ) -> PrintableText {
     let options = papercraft.options();
     let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
@@ -3235,20 +3234,18 @@ fn printable_island_name(
         // On top (None should not happen)
         EdgeIdPosition::None | EdgeIdPosition::Outside => {
             let mut top = Vector2::new(f32::MAX, f32::MAX);
-            let contour_temp;
-            let contour = match contour {
-                Some(c) => c,
-                None => {
-                    contour_temp = papercraft.island_contour(i_island);
-                    &contour_temp
-                }
-            };
-            for &(i_edge, face_sign) in contour {
-                args.lines_by_cut_info(extra.cut_info().unwrap(), i_edge, face_sign, |p0, _| {
-                    if p0.y < top.y {
-                        top = p0;
-                    }
-                });
+            let perimeter = papercraft.island_perimeter(i_island);
+            for peri in &perimeter {
+                args.lines_by_cut_info(
+                    extra.cut_info().unwrap(),
+                    peri.i_edge(),
+                    peri.face_sign(),
+                    |p0, _| {
+                        if p0.y < top.y {
+                            top = p0;
+                        }
+                    },
+                );
             }
             top - Vector2::new(0.0, edge_id_font_size)
         }

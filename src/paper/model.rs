@@ -596,6 +596,13 @@ impl Edge {
             panic!();
         }
     }
+    pub fn face_by_sign(&self, face_sign: bool) -> Option<FaceIndex> {
+        if face_sign {
+            self.f1
+        } else {
+            Some(self.f0)
+        }
+    }
     pub fn angle(&self) -> Rad<f32> {
         self.angle
     }

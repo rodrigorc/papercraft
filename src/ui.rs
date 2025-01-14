@@ -29,8 +29,8 @@ use crate::{
 use crate::{
     paper::{
         EdgeId, EdgeIdPosition, EdgeIndex, EdgeStatus, EdgeToggleFlapAction, Face, FaceIndex,
-        FlapGeom, FlapSide, FlapStyle, FoldStyle, IslandContour, IslandKey, JoinResult,
-        MaterialIndex, Model, PaperOptions, Papercraft,
+        FlapGeom, FlapSide, FlapStyle, FoldStyle, IslandKey, JoinResult, MaterialIndex, Model,
+        OrderedContour, PaperOptions, Papercraft,
     },
     printable_island_name,
 };
@@ -2375,7 +2375,7 @@ impl PapercraftContext {
     pub fn lines_by_island(
         &self,
     ) -> (
-        Vec<(IslandKey, PaperDrawFaceArgs, IslandContour)>,
+        Vec<(IslandKey, PaperDrawFaceArgs, OrderedContour)>,
         PaperDrawFaceArgsExtra,
     ) {
         let mut extra = PaperDrawFaceArgsExtra::default();

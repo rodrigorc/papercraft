@@ -56,7 +56,7 @@ const KARLA_TTF: &[u8] = include_bytes!("Karla-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
 
 use paper::{
-    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandContour, IslandKey,
+    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, OrderedContour,
     PaperOptions, Papercraft,
 };
 use util_3d::Matrix3;
@@ -3225,7 +3225,7 @@ fn printable_island_name(
     i_island: IslandKey,
     args: &PaperDrawFaceArgs,
     extra: &PaperDrawFaceArgsExtra,
-    contour: Option<&IslandContour>,
+    contour: Option<&OrderedContour>,
 ) -> PrintableText {
     let options = papercraft.options();
     let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm

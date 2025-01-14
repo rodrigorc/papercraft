@@ -1,6 +1,6 @@
 use super::*;
 use anyhow::Result;
-use paper::IslandContour;
+use paper::OrderedContour;
 use rayon::prelude::*;
 
 fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
@@ -525,7 +525,7 @@ impl GlobalContext {
             image::RgbaImage,
             &PaperDrawFaceArgsExtra,
             &[PrintableText],
-            &[(IslandKey, PaperDrawFaceArgs, IslandContour)],
+            &[(IslandKey, PaperDrawFaceArgs, OrderedContour)],
         ) -> Result<()>,
     {
         let options = self.data.papercraft().options();

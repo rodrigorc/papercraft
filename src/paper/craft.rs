@@ -294,10 +294,8 @@ pub struct FlapGeom {
 
 #[derive(Debug, Clone)]
 struct FlapEdgeData {
-    i_face: FaceIndex,
     i_edge: EdgeIndex,
-    i_v0: VertexIndex,
-    i_v1: VertexIndex,
+    face_sign: bool,
     // Do not assume that these coordinates are the real ones in the paper, the movement of the island is not tracked.
     p0: Vector2,
     p1: Vector2,
@@ -340,7 +338,7 @@ impl Memoization {
     }
 }
 
-pub type IslandContour = Vec<(EdgeIndex, bool)>;
+pub type OrderedContour = Vec<(EdgeIndex, bool)>;
 
 impl Papercraft {
     pub fn empty() -> Papercraft {
@@ -842,44 +840,40 @@ impl Papercraft {
 
         let flat_contour = if let Some(i_face_b) = i_face_b {
             let flat_face = self.get_flat_faces_with_matrix(i_face_b);
-            let mut flat_contour: Vec<FlapEdgeData> = flat_face
-                .iter()
-                .flat_map(|(f, _)| {
-                    let face = &self.model()[*f];
-                    face.vertices_with_edges()
-                        .filter_map(|(i_v0, i_v1, i_edge)| {
-                            if self.edge_status(i_edge) == EdgeStatus::Hidden {
-                                return None;
-                            }
-                            let plane = self.model.face_plane(face);
 
-                            let p0 = plane.project(&self.model()[i_v0].pos(), scale);
-                            let p0 = flat_face[f].transform_point(Point2::from_vec(p0)).to_vec();
-                            let p1 = plane.project(&self.model()[i_v1].pos(), scale);
-                            let p1 = flat_face[f].transform_point(Point2::from_vec(p1)).to_vec();
-                            Some(FlapEdgeData {
-                                i_face: *f,
-                                i_edge,
-                                i_v0,
-                                i_v1,
-                                p0,
-                                p1,
-                            })
-                        })
+            // flat_perimeter will be the ordered perimeter of the flat extension of i_face_b, but with the coordinates contiguous to i_face_a
+            let contour = self.flat_face_contour(i_face_b);
+            let mut base_index = None;
+            let mut flat_perimeter: Vec<FlapEdgeData> = contour
+                .into_iter()
+                .enumerate()
+                .map(|(i, (i_e, s))| {
+                    let edge = &self.model[i_e];
+                    let i_face = edge.face_by_sign(s).unwrap();
+                    let face = &self.model[i_face];
+                    let (i_v0, i_v1) = face.vertices_of_edge(i_e).unwrap();
+                    let plane = self.model.face_plane(face);
+                    let mx = flat_face[&i_face];
+                    let p0 = plane.project(&self.model()[i_v0].pos(), scale);
+                    let p1 = plane.project(&self.model()[i_v1].pos(), scale);
+                    let p0 = mx.transform_point(Point2::from_vec(p0)).to_vec();
+                    let p1 = mx.transform_point(Point2::from_vec(p1)).to_vec();
+                    if i_e == i_edge && i_face == i_face_b {
+                        base_index = Some(i);
+                    }
+                    FlapEdgeData {
+                        i_edge: i_e,
+                        face_sign: s,
+                        p0,
+                        p1,
+                    }
                 })
                 .collect();
-            // The selected edge data
-            let the_edge = flat_contour.iter().find(|d| d.i_edge == i_edge).unwrap();
 
-            // Adjacent edges data
-            let d0 = flat_contour
-                .iter()
-                .find(|d| the_edge.i_v0 == d.i_v1)
-                .unwrap();
-            let d1 = flat_contour
-                .iter()
-                .find(|d| the_edge.i_v1 == d.i_v0)
-                .unwrap();
+            let base_index = base_index.unwrap();
+            let d0 =
+                &flat_perimeter[(base_index + flat_perimeter.len() - 1) % flat_perimeter.len()];
+            let d1 = &flat_perimeter[(base_index + 1) % flat_perimeter.len()];
 
             // ** Compute max flap angles **
             let e0 = d0.p1 - d0.p0;
@@ -891,21 +885,17 @@ impl Papercraft {
             a0 = Rad(a0.0.min(angle0.0));
             a1 = Rad(a1.0.min(angle1.0));
 
-            let d0_i_edge = d0.i_edge;
-            let d1_i_edge = d1.i_edge;
-            let d1_i_v1 = d1.i_v1;
-
             // Convert the flat_contour to island coordinates, we know that this edge should match, inverted
             let mx = Matrix3::from_translation(base.0)
                 * Matrix3::from_angle_z((d0.p1 - d1.p0).angle(base_vec))
                 * Matrix3::from_translation(-d1.p0);
 
-            for edata in &mut flat_contour {
+            for edata in &mut flat_perimeter {
                 edata.p0 = mx.transform_point(Point2::from_vec(edata.p0)).to_vec();
                 edata.p1 = mx.transform_point(Point2::from_vec(edata.p1)).to_vec();
             }
 
-            Some((flat_contour, d0_i_edge, d1_i_edge, d1_i_v1))
+            Some((flat_perimeter, base_index))
         } else {
             // It is a rim edge, no corresponding flat face
             None
@@ -956,23 +946,22 @@ impl Papercraft {
             const ONE: f32 = 1.0 + EPSILON;
 
             // Compute the lines that will limit this flap
-            let from_flat_contour =
+            let from_flat_contour = flat_contour.iter().flat_map(|(flat_contour, base_index)| {
                 flat_contour
                     .iter()
-                    .flat_map(|(flat_contour, d0_edge, d1_edge, d1_i_v1)| {
-                        flat_contour.iter().filter_map(|other| {
-                            // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
-                            // flap to avoid crossing those.
-                            if other.i_edge == i_edge
-                                || other.i_edge == *d0_edge
-                                || other.i_edge == *d1_edge
-                            {
-                                return None;
-                            }
-                            let check_base = other.i_v0 != *d1_i_v1;
-                            Some((other, check_base))
-                        })
-                    });
+                    .enumerate()
+                    .filter_map(|(index, other)| {
+                        // The selected edge and its adjacent edges don't need to be considered, because we adjust the angle of the real
+                        // flap to avoid crossing those.
+                        let prev = (*base_index + flat_contour.len() - 1) % flat_contour.len();
+                        let next = (*base_index + 1) % flat_contour.len();
+                        if index == *base_index || index == prev || index == next {
+                            return None;
+                        }
+                        let next_2 = (*base_index + 2) % flat_contour.len();
+                        Some((other, index != next_2))
+                    })
+            });
 
             let from_perimeter = perimeter.iter().enumerate().filter_map(|(i_other, other)| {
                 if i_other == perimeter_egde_0
@@ -1269,6 +1258,7 @@ impl Papercraft {
     }
 
     // Returns the island perimeter in paper size, but, beware! with an arbitrary position
+    // The returned vec is unordered, use island_contour to get the proper order
     fn island_perimeter(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
         let mut memo = self.memo.island_perimeters.borrow_mut();
         use std::collections::hash_map::Entry::*;
@@ -1300,10 +1290,8 @@ impl Papercraft {
                     continue;
                 }
                 let edata = FlapEdgeData {
-                    i_face,
                     i_edge: i_e,
-                    i_v0,
-                    i_v1,
+                    face_sign: self.model[i_e].face_sign(i_face),
                     p0: tr(i_v0),
                     p1: tr(i_v1),
                 };
@@ -1322,23 +1310,37 @@ impl Papercraft {
     ) -> SelfCollisionPerimeter {
         let island_key = self.island_by_face(i_face_a);
         let perimeter = self.island_perimeter(island_key);
+        let edge = &self.model[i_edge];
+        let face_sign = edge.face_sign(i_face_a);
         let base_on_paper = perimeter
             .iter()
-            .position(|e| i_edge == e.i_edge && i_face_a == e.i_face);
+            .position(|e| i_edge == e.i_edge && face_sign == e.face_sign);
 
         let Some(perimeter_egde_base) = base_on_paper else {
-            // Should not happen, just in case
+            // should not happen
             return SelfCollisionPerimeter::default();
         };
 
         let base = &perimeter[perimeter_egde_base];
         let base = (base.p0, base.p1);
 
+        // Get the order of the contour edges
+        let contour = self.island_contour(island_key);
+        let Some(base_pos) = contour
+            .iter()
+            .position(|&(i_e, sign)| i_e == i_edge && edge.face_sign(i_face_a) == sign)
+        else {
+            // should not happen
+            return SelfCollisionPerimeter::default();
+        };
+        let (i_prev_edge, prev_sign) = contour[(base_pos + contour.len() - 1) % contour.len()];
+        let (i_next_edge, next_sign) = contour[(base_pos + 1) % contour.len()];
+
         // angle_{0,1} should always exist, but just in case...
         let angle_0 = perimeter
             .iter()
             .enumerate()
-            .find(|(_, p)| p.p0.distance2(base.1) < 1e-4)
+            .find(|(_, p)| p.i_edge == i_next_edge && p.face_sign == next_sign)
             .map(|(i, e)| {
                 let a = Rad::turn_div_2() - (base.1 - base.0).angle(e.p1 - e.p0);
                 (a, i)
@@ -1348,13 +1350,14 @@ impl Papercraft {
         let angle_1 = perimeter
             .iter()
             .enumerate()
-            .find(|(_, p)| p.p1.distance2(base.0) < 1e-4)
+            .find(|(_, p)| p.i_edge == i_prev_edge && p.face_sign == prev_sign)
             .map(|(i, e)| {
                 let a = Rad::turn_div_2() - (e.p1 - e.p0).angle(base.1 - base.0);
                 (a, i)
             })
             // should not happen
             .unwrap_or((Rad::turn_div_2(), usize::MAX));
+
         SelfCollisionPerimeter {
             perimeter,
             perimeter_egde_base,
@@ -1363,9 +1366,7 @@ impl Papercraft {
         }
     }
 
-    pub fn island_contour(&self, i_island: IslandKey) -> IslandContour {
-        let mut contour = Vec::new();
-
+    pub fn island_contour(&self, i_island: IslandKey) -> OrderedContour {
         let island = self.island_by_key(i_island).unwrap();
         let mut first = None;
         traverse_faces_ex(
@@ -1384,17 +1385,43 @@ impl Papercraft {
             },
         );
 
-        let Some(first) = first else { return contour };
+        let Some((i_edge, i_face)) = first else {
+            return OrderedContour::default();
+        };
+        self.extend_contour(i_face, i_edge, |i_e| {
+            matches!(self.edge_status(i_e), EdgeStatus::Cut(_))
+        })
+    }
 
-        let (mut i_edge, mut i_face) = first;
+    pub fn flat_face_contour(&self, i_face: FaceIndex) -> OrderedContour {
+        let face = &self.model[i_face];
+        let first = face
+            .index_edges()
+            .into_iter()
+            .find(|&i_e| self.edge_status(i_e) != EdgeStatus::Hidden);
+
+        let Some(i_edge) = first else {
+            return OrderedContour::default();
+        };
+        self.extend_contour(i_face, i_edge, |i_e| {
+            self.edge_status(i_e) != EdgeStatus::Hidden
+        })
+    }
+
+    fn extend_contour(
+        &self,
+        mut i_face: FaceIndex,
+        mut i_edge: EdgeIndex,
+        is_contour: impl Fn(EdgeIndex) -> bool,
+    ) -> OrderedContour {
+        let mut contour = Vec::new();
         let first_edge = (i_edge, self.model[i_edge].face_sign(i_face));
-
         loop {
             let face = &self.model[i_face];
             let (i_edge_next, _) = face.next_edge(i_edge);
             i_edge = i_edge_next;
             let edge = &self.model[i_edge];
-            if let EdgeStatus::Cut(_) = self.edge_status(i_edge) {
+            if is_contour(i_edge) {
                 let next_edge = (i_edge, edge.face_sign(i_face));
                 contour.push((next_edge.0, next_edge.1));
                 if next_edge == first_edge {
@@ -1403,8 +1430,15 @@ impl Papercraft {
             } else {
                 let faces = edge.faces();
                 i_face = if faces.0 == i_face {
-                    faces.1.unwrap()
-                } else if i_face == faces.1.unwrap() {
+                    match faces.1 {
+                        Some(f) => f,
+                        None => {
+                            // Should not happen!
+                            log::error!("Broken contour!");
+                            break;
+                        }
+                    }
+                } else if Some(i_face) == faces.1 {
                     faces.0
                 } else {
                     // Should not happen!
@@ -1413,7 +1447,6 @@ impl Papercraft {
                 }
             }
         }
-
         contour
     }
 }

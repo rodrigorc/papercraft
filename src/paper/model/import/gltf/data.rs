@@ -32,17 +32,17 @@ impl<'a> Gltf<'a> {
     }
 
     fn parse_gltf(data: &'a [u8], dir: PathBuf) -> Result<Gltf<'a>> {
-        let header: Header = serde_json::from_slice(&data)?;
+        let header: Header = serde_json::from_slice(data)?;
         let gltf = Gltf::new(header, dir, None)?;
         Ok(gltf)
     }
 
     fn parse_glb(data: &'a [u8], dir: PathBuf) -> Result<Gltf<'a>> {
-        let version = get_u32(&data, 4).ok_or(anyhow!("read error"))?;
+        let version = get_u32(data, 4).ok_or(anyhow!("read error"))?;
         if version != 2 {
             bail!("only glTF version 2 is supported");
         }
-        let size = get_u32(&data, 8).ok_or(anyhow!("read error"))? as usize;
+        let size = get_u32(data, 8).ok_or(anyhow!("read error"))? as usize;
         if size > data.len() {
             bail!("glTF truncated");
         }
@@ -50,7 +50,7 @@ impl<'a> Gltf<'a> {
         let mut header = None;
         let mut bin_buffer = None;
         while !data.is_empty() {
-            let sz = get_u32(&data, 0).ok_or(anyhow!("read error"))? as usize;
+            let sz = get_u32(data, 0).ok_or(anyhow!("read error"))? as usize;
             let ty = data.get(4..8).ok_or(anyhow!("read error"))?;
             let bs = data.get(8..8 + sz).ok_or(anyhow!("read error"))?;
             data = &data[8 + sz..];
@@ -106,8 +106,8 @@ impl<'a> Gltf<'a> {
         Ok(gltf)
     }
     fn load_uri(&self, uri: &str) -> Result<Vec<u8>> {
-        if uri.starts_with("data:") {
-            return decode_data_uri(&uri[5..]);
+        if let Some(data) = uri.strip_prefix("data:") {
+            return decode_data_uri(data);
         }
 
         let file_name = uri_decode(uri)?;
@@ -234,7 +234,7 @@ impl<'a> Gltf<'a> {
                 .ok_or(anyhow!("missing node {}", i_node))?;
 
             let mx = mx_parent * node.transform.matrix();
-            let mut mx_normal = mx.invert().unwrap_or_else(|| Matrix4::identity());
+            let mut mx_normal = mx.invert().unwrap_or_else(Matrix4::identity);
             mx_normal.transpose_self();
 
             //let _rot = node.rotation;
@@ -284,29 +284,24 @@ impl<'a> Gltf<'a> {
                             let p = pos
                                 .get(index)
                                 .unwrap_or_else(|| Vector3::new(0.0, 0.0, 0.0));
-                            let p = mx.transform_point(cgmath::Point3::from_vec(p)).to_vec();
-                            p
+                            mx.transform_point(cgmath::Point3::from_vec(p)).to_vec()
                         });
                         let ns = norm.as_ref().map(|norm| {
-                            let n = indices.map(|index| {
+                            indices.map(|index| {
                                 let n = norm
                                     .get(index)
                                     .unwrap_or_else(|| Vector3::new(0.0, 0.0, 0.0));
-                                let n = mx_normal.transform_vector(n);
-                                n
-                            });
-                            n
+                                mx_normal.transform_vector(n)
+                            })
                         });
                         let uv = texcoord
                             .as_ref()
                             .map(|texcoord| {
-                                let uv = indices.map(|index| {
-                                    let uv = texcoord
+                                indices.map(|index| {
+                                    texcoord
                                         .get(index)
-                                        .unwrap_or_else(|| Vector2::new(0.0, 0.0));
-                                    uv
-                                });
-                                uv
+                                        .unwrap_or_else(|| Vector2::new(0.0, 0.0))
+                                })
                             })
                             .unwrap_or_else(|| [Vector2::new(0.0, 0.0); 3]);
                         f_emit_face(tex, ps, ns, uv);
@@ -614,8 +609,8 @@ struct Access<'a, T> {
 impl<T: AccessorType> Access<'_, T> {
     fn get(&self, idx: usize) -> Option<T> {
         let mut d = [T::Inner::default(); 3];
-        for i in 0..T::N {
-            d[i] = self.get_scalar(idx, i)?;
+        for (i, r) in d.iter_mut().enumerate().take(T::N) {
+            *r = self.get_scalar(idx, i)?;
         }
         Some(T::new(&d[..T::N]))
     }

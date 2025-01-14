@@ -342,7 +342,7 @@ impl GlobalContext {
                 },
             );
             // Send the possible error back to the main thread
-            tx_done.send(res.map_err(Into::into)).unwrap();
+            tx_done.send(res).unwrap();
             drop(tx_done);
         });
 

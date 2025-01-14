@@ -1,6 +1,6 @@
-use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::util_3d;
 use cgmath::{prelude::*, Deg, Rad};
@@ -327,7 +327,7 @@ struct Memoization {
     flat_face_flap_dimensions: RefCell<FxHashMap<IslandKey, FlatFaceFlapDimensions>>,
 
     // This depends on the islands, but not on the options
-    island_perimeters: RefCell<FxHashMap<IslandKey, Vec<FlapEdgeData>>>,
+    island_perimeters: RefCell<FxHashMap<IslandKey, Rc<[FlapEdgeData]>>>,
 }
 
 impl Memoization {
@@ -1268,14 +1268,14 @@ impl Papercraft {
     }
 
     // Returns the island perimeter in paper size, but, beware! with an arbitrary position
-    pub fn island_perimeter(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
+    pub fn island_perimeter(&self, island_key: IslandKey) -> Rc<[FlapEdgeData]> {
         let mut memo = self.memo.island_perimeters.borrow_mut();
         use std::collections::hash_map::Entry::*;
         match memo.entry(island_key) {
-            Occupied(o) => o.get().clone(),
+            Occupied(o) => Rc::clone(o.get()),
             Vacant(v) => {
                 let value = self.island_perimeter_internal(island_key);
-                v.insert(value).clone()
+                Rc::clone(v.insert(value.into()))
             }
         }
     }
@@ -1446,7 +1446,7 @@ impl Papercraft {
 }
 
 struct SelfCollisionPerimeter {
-    perimeter: Vec<FlapEdgeData>,
+    perimeter: Rc<[FlapEdgeData]>,
     perimeter_egde_base: usize,
     angle_0: (Rad<f32>, usize),
     angle_1: (Rad<f32>, usize),
@@ -1455,7 +1455,7 @@ struct SelfCollisionPerimeter {
 impl Default for SelfCollisionPerimeter {
     fn default() -> Self {
         SelfCollisionPerimeter {
-            perimeter: Vec::new(),
+            perimeter: Vec::new().into(),
             perimeter_egde_base: usize::MAX,
             angle_0: (Rad::turn_div_2(), usize::MAX),
             angle_1: (Rad::turn_div_2(), usize::MAX),

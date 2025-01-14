@@ -413,7 +413,7 @@ impl GlobalContext {
                 let perimeter = self.data.papercraft().island_perimeter(*i_island);
                 let mut contour_points = Vec::with_capacity(perimeter.len());
                 let mut touching = false;
-                for peri in &perimeter {
+                for peri in perimeter.iter() {
                     lines.lines_by_cut_info(extra.cut_info().unwrap(), peri.i_edge(), peri.face_sign(), |p0, _| {
                         let (is_in, p0) = in_page(p0);
                         touching |= is_in;

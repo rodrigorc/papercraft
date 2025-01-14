@@ -3235,7 +3235,7 @@ fn printable_island_name(
         EdgeIdPosition::None | EdgeIdPosition::Outside => {
             let mut top = Vector2::new(f32::MAX, f32::MAX);
             let perimeter = papercraft.island_perimeter(i_island);
-            for peri in &perimeter {
+            for peri in perimeter.iter() {
                 args.lines_by_cut_info(
                     extra.cut_info().unwrap(),
                     peri.i_edge(),

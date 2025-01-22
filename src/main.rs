@@ -2251,19 +2251,7 @@ impl GlobalContext {
     fn run_mouse_actions(&mut self, ui: &Ui) {
         let plus = ui.is_key_down(imgui::Key::KeypadAdd);
         let minus = ui.is_key_down(imgui::Key::KeypadSubtract);
-
-        let mut mods = imgui::KeyMod::empty();
-        for m in [
-            imgui::Key::ModShift,
-            imgui::Key::ModCtrl,
-            imgui::Key::ModAlt,
-            imgui::Key::ModSuper,
-        ] {
-            if ui.is_key_down(m) {
-                // Mods and Keys have the same inner value (TODO: helper easy_imgui function)
-                mods |= imgui::KeyMod::from_bits_retain(m.bits().0);
-            }
-        }
+        let mods = ui.key_mods();
 
         let mouse_pos = self.scene_ui_status.mouse_pos;
         if self.scene_ui_status.action != Canvas3dAction::None {

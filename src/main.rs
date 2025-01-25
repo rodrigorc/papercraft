@@ -134,6 +134,7 @@ fn main() {
 enum MainLoopEvent {
     Crash,
     ThumbnailLoaded(PathBuf, CancellationToken, Option<image::RgbaImage>),
+    NewVersionResult(Result<(Version, String)>),
 }
 
 struct AppData {
@@ -217,6 +218,8 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             options_opened: None,
             options_applied: None,
             about_visible: false,
+            current_version: Version::new(env!("CARGO_PKG_VERSION")),
+            check_version_status: CheckVersionStatus::Idle,
             option_button_height: 0.0,
             file_dialog: None,
             filechooser_atlas: Default::default(),
@@ -342,6 +345,21 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
                         log::error!("Thumbnail discarded {full_path:?}");
                     }
                 }
+            }
+            MainLoopEvent::NewVersionResult(version) => {
+                match version {
+                    Ok((ver, url)) => {
+                        if ver > self.current_version {
+                            self.check_version_status = CheckVersionStatus::Newer(ver, url);
+                        } else {
+                            self.check_version_status = CheckVersionStatus::Current;
+                        }
+                    }
+                    Err(err) => {
+                        self.check_version_status = CheckVersionStatus::Error(err.to_string())
+                    }
+                }
+                args.window.ping_user_input();
             }
         }
     }
@@ -523,6 +541,8 @@ struct GlobalContext {
     options_applied: Option<(PaperOptions, bool)>,
     option_button_height: f32,
     about_visible: bool,
+    current_version: Version,
+    check_version_status: CheckVersionStatus,
     file_dialog: Option<FileDialog>,
     filechooser_atlas: filechooser::CustomAtlas,
     file_action: Option<(FileAction, PathBuf)>,
@@ -615,6 +635,45 @@ fn load_thumbnail(full_name: &Path, ct: &CancellationToken) -> Result<image::Rgb
     let img = ir.decode()?;
     let img = img.to_rgba8();
     Ok(img)
+}
+
+#[derive(Debug)]
+enum CheckVersionStatus {
+    Idle,
+    Checking,
+    Newer(Version, String), // String is the url
+    Current,
+    Error(String),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Version {
+    major: u32,
+    minor: u32,
+    rev: u32,
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.rev)
+    }
+}
+
+impl Version {
+    fn new(mut s: &str) -> Version {
+        if let Some(p) = s.find('+') {
+            s = &s[..p];
+        }
+        if let Some(p) = s.find('-') {
+            s = &s[..p];
+        }
+
+        let mut pieces = s.split('.');
+        let major = pieces.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        let minor = pieces.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        let rev = pieces.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        Version { major, minor, rev }
+    }
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -754,8 +813,59 @@ impl GlobalContext {
                 });
 
                 advance_cursor(ui, 0.0, 1.0);
-                center_text(ui, &tr!("Version {}", env!("CARGO_PKG_VERSION")), sz_full.x);
-                advance_cursor(ui, 0.0, 1.0);
+
+                // This shouldn't be needed, maybe a bug in tr!?
+                let v = &self.current_version;
+                center_text(ui, &tr!("Version {}", v), sz_full.x);
+
+                // Version check
+                match &self.check_version_status {
+                    CheckVersionStatus::Checking => {
+                        ui.with_disabled(true, || {
+                            center_button(ui, tr!("Checking..."), "check_version", sz_full.x);
+                        });
+                    }
+                    _ => {
+                        if center_button(
+                            ui,
+                            tr!("Check for new version"),
+                            "check_version",
+                            sz_full.x,
+                        ) {
+                            let proxy = self.proxy.clone();
+                            std::thread::spawn(move || {
+                                let ver = check_version();
+                                let _ = proxy.send_event(MainLoopEvent::NewVersionResult(ver));
+                            });
+                            self.check_version_status = CheckVersionStatus::Checking;
+                        }
+                    }
+                }
+                match &self.check_version_status {
+                    CheckVersionStatus::Error(err) => {
+                        ui.with_push((imgui::ColorId::Text, imgui::Color::RED), || {
+                            ui.text_wrapped(err);
+                        });
+                    }
+                    CheckVersionStatus::Current => {
+                        ui.with_push((imgui::ColorId::Text, imgui::Color::GREEN), || {
+                            center_text(ui, &tr!("Already using latest version"), sz_full.x);
+                        });
+                    }
+                    CheckVersionStatus::Newer(version, url) => {
+                        center_url(
+                            ui,
+                            &tr!("New version {} available!", version),
+                            "new_version_link",
+                            Some(url),
+                            sz_full.x,
+                        );
+                    }
+                    _ => {
+                        advance_cursor(ui, 0.0, 1.0);
+                    }
+                };
+
                 center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
                 center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
@@ -2994,8 +3104,9 @@ fn load_image_from_memory(data: &[u8], premultiply: bool) -> Result<image::RgbaI
 }
 
 fn advance_cursor(ui: &Ui, x: f32, y: f32) {
-    let f = ui.get_font_size();
-    advance_cursor_pixels(ui, f * x, f * y);
+    let fx = ui.get_font_size();
+    let fy = ui.get_text_line_height_with_spacing();
+    advance_cursor_pixels(ui, fx * x, fy * y);
 }
 fn advance_cursor_pixels(ui: &Ui, x: f32, y: f32) {
     let mut pos = ui.get_cursor_screen_pos();
@@ -3011,7 +3122,18 @@ fn center_text(ui: &Ui, s: &str, w: f32) {
     ui.text(s);
 }
 
+fn center_button(ui: &Ui, s: String, id: &str, w: f32) -> bool {
+    let ss = ui.calc_text_size(&s);
+    let pad_x = ui.style().FramePadding.x;
+    let mut pos = ui.get_cursor_screen_pos();
+    pos.x += (w - ss.x) / 2.0 - pad_x;
+    ui.set_cursor_screen_pos(pos);
+    ui.button(lbl_id(s, id))
+}
+
 fn center_url(ui: &Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
+    // if w is 0 it would crash
+    let w = w.max(1.0);
     let ss = ui.calc_text_size(s);
     let mut pos = ui.get_cursor_screen_pos();
     let pos0 = pos;
@@ -3021,7 +3143,11 @@ fn center_url(ui: &Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     ui.with_push((imgui::ColorId::Text, color), || {
         ui.text(s);
         ui.set_cursor_screen_pos(pos0);
-        if ui.invisible_button_config(id).size(ss).build() {
+        if ui
+            .invisible_button_config(id)
+            .size(Vector2::new(w, ss.y))
+            .build()
+        {
             let _ = opener::open_browser(cmd.unwrap_or(s));
         }
         if ui.is_item_hovered() {
@@ -3516,4 +3642,30 @@ unsafe fn renderbuffer_storage_antialias<T: glr::BinderFBOTarget>(
     }
     log::debug!("antialias samples 0");
     0
+}
+
+fn check_version() -> Result<(Version, String)> {
+    let cli = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+
+    let req = cli
+        .get("https://github.com/rodrigorc/papercraft/releases/latest")
+        .build()?;
+    let res = cli.execute(req)?.error_for_status()?;
+    if !res.status().is_redirection() {
+        anyhow::bail!("no redirection");
+    }
+    let location = res
+        .headers()
+        .get(&reqwest::header::LOCATION)
+        .ok_or_else(|| anyhow::anyhow!("missing location header"))?
+        .to_str()?;
+    log::info!("Latest release at {location}");
+    let slash = location
+        .rfind('/')
+        .ok_or_else(|| anyhow::anyhow!("Unknown version"))?;
+    let version = &location[slash + 1..];
+    let version = version.strip_prefix("v").unwrap_or(version);
+    Ok((Version::new(version), String::from(location)))
 }

@@ -48,11 +48,7 @@ impl WaveObjImporter {
                         texture_map
                             .insert(lib.name().to_owned(), Cell::new((map_name.to_owned(), img)));
                     } else {
-                        return Err(anyhow!(
-                            "{} texture from {} matlib not found",
-                            map,
-                            matlib.display()
-                        ));
+                        anyhow::bail!("{} texture from {} matlib not found", map, matlib.display());
                     }
                 }
             }

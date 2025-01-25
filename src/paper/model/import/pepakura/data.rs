@@ -5,7 +5,6 @@
 // I don't use many of the values, but I'll keep them there for reference
 #![allow(dead_code)]
 
-use anyhow::anyhow;
 use std::cell::Cell;
 
 use super::super::*;
@@ -330,7 +329,7 @@ impl<R: Read> Reader<'_, R> {
         for s in SIGNATURE {
             let c = read_u8(self.rdr)?;
             if c != *s {
-                return Err(anyhow!("signature error"));
+                anyhow::bail!("signature error");
             }
         }
         self.version = read_u32(self.rdr)? as u8;

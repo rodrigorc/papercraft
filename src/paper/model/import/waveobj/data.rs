@@ -86,13 +86,13 @@ impl Model {
                             .and_then(|x| x.parse::<usize>().ok())
                             .map(|x| x - 1);
                         if v >= data.vs.len() {
-                            return Err(anyhow!("vertex index out of range"));
+                            anyhow::bail!("vertex index out of range");
                         }
                         if matches!(t, Some(t) if t >= data.ts.len()) {
-                            return Err(anyhow!("texture index out of range"));
+                            anyhow::bail!("texture index out of range");
                         }
                         if matches!(n, Some(n) if n >= data.ns.len()) {
-                            return Err(anyhow!("normal index out of range"));
+                            anyhow::bail!("normal index out of range");
                         }
                         let v = FaceVertex {
                             v: v as u32,

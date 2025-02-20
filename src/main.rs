@@ -11,7 +11,7 @@ use easy_imgui_window::{
         glow::{self, HasContext},
         Renderer,
     },
-    winit,
+    winit, AppEvent, EventLoopExt, LocalProxy,
 };
 use image::{EncodableLayout, GenericImage, GenericImageView, Pixel};
 use lazy_static::lazy_static;
@@ -23,10 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tr::tr;
-use winit::{
-    event::WindowEvent,
-    event_loop::{EventLoop, EventLoopProxy},
-};
+use winit::{event::WindowEvent, event_loop::EventLoop};
 
 type Ui = imgui::Ui<Box<GlobalContext>>;
 
@@ -103,10 +100,9 @@ fn main() {
     let cli = Cli::parse();
 
     let event_loop = EventLoop::with_user_event().build().unwrap();
-    let proxy = event_loop.create_proxy();
 
-    let data = AppData { proxy, cli, config };
-    let mut main = easy_imgui_window::AppHandler::<Box<GlobalContext>>::new(data);
+    let data = AppData { cli, config };
+    let mut main = easy_imgui_window::AppHandler::<Box<GlobalContext>>::new(&event_loop, data);
     let icon = winit::window::Icon::from_rgba(
         LOGO_IMG.as_bytes().to_owned(),
         LOGO_IMG.width(),
@@ -133,12 +129,9 @@ fn main() {
 #[allow(dead_code)]
 enum MainLoopEvent {
     Crash,
-    ThumbnailLoaded(PathBuf, CancellationToken, Option<image::RgbaImage>),
-    NewVersionResult(Result<(Version, String)>),
 }
 
 struct AppData {
-    proxy: EventLoopProxy<MainLoopEvent>,
     cli: Cli,
     config: config::Config,
 }
@@ -149,10 +142,12 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
     type UserEvent = MainLoopEvent;
     type Data = AppData;
 
-    fn new(args: easy_imgui_window::Args<AppData>) -> Box<GlobalContext> {
+    fn new(args: easy_imgui_window::Args<Self>) -> Box<GlobalContext> {
+        let local_proxy = args.local_proxy();
         let easy_imgui_window::Args {
             window,
-            data: AppData { proxy, cli, config },
+            data: AppData { cli, config },
+            event_proxy,
             ..
         } = args;
 
@@ -233,7 +228,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             quit_requested: BoolWithConfirm::None,
             title: String::new(),
             textures_to_delete: Vec::new(),
-            proxy: proxy.clone(),
+            proxy: local_proxy,
         };
         let mut ctx = Box::new(ctx);
         // SAFETY: This code will only be run once, and the ctx is in a box,
@@ -242,13 +237,13 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         // we'll never need it.
         unsafe {
             CTX.store(&mut *ctx, std::sync::atomic::Ordering::Release);
-            install_crash_backup(proxy.clone());
+            install_crash_backup(event_proxy.clone());
         }
         ctx
     }
     fn window_event(
         &mut self,
-        args: easy_imgui_window::Args<AppData>,
+        args: easy_imgui_window::Args<Self>,
         _event: WindowEvent,
         res: easy_imgui_window::EventResult,
     ) {
@@ -289,7 +284,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             event_loop.exit();
         }
     }
-    fn user_event(&mut self, args: easy_imgui_window::Args<AppData>, ev: MainLoopEvent) {
+    fn user_event(&mut self, _args: easy_imgui_window::Args<Self>, ev: MainLoopEvent) {
         match ev {
             MainLoopEvent::Crash => {
                 //Fatal signal: it is about to be aborted, just stop whatever it is doing and
@@ -297,69 +292,6 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
                 loop {
                     std::thread::park();
                 }
-            }
-            MainLoopEvent::ThumbnailLoaded(full_path, ct, maybe_img) => {
-                if maybe_img.is_some() {
-                    log::info!("Thumbnail loaded {full_path:?}");
-                }
-                match self.file_dialog.as_mut() {
-                    // If the datadialog is still opened and the proper file selected
-                    Some(fd)
-                        if fd
-                            .thumbnail_cancellation_guard
-                            .as_ref()
-                            .is_some_and(|ctc| ctc.0 == ct) =>
-                    {
-                        fd.tex = match maybe_img {
-                            None => None,
-                            Some(img) => {
-                                let gl = &self.gl;
-                                let ntex = glr::Texture::generate(gl).unwrap();
-                                unsafe {
-                                    gl.bind_texture(glow::TEXTURE_2D, Some(ntex.id()));
-                                    gl.tex_image_2d(
-                                        glow::TEXTURE_2D,
-                                        0,
-                                        glow::RGBA8 as i32,
-                                        img.width() as i32,
-                                        img.height() as i32,
-                                        0,
-                                        glow::RGBA,
-                                        glow::UNSIGNED_BYTE,
-                                        glow::PixelUnpackData::Slice(Some(img.as_bytes())),
-                                    );
-                                    gl.tex_parameter_i32(
-                                        glow::TEXTURE_2D,
-                                        glow::TEXTURE_MAX_LEVEL,
-                                        0,
-                                    );
-
-                                    gl.bind_texture(glow::TEXTURE_2D, None);
-                                }
-                                Some((ntex, Vector2::new(img.width() as f32, img.height() as f32)))
-                            }
-                        };
-                        args.window.ping_user_input();
-                    }
-                    _ => {
-                        log::error!("Thumbnail discarded {full_path:?}");
-                    }
-                }
-            }
-            MainLoopEvent::NewVersionResult(version) => {
-                match version {
-                    Ok((ver, url)) => {
-                        if ver > self.current_version {
-                            self.check_version_status = CheckVersionStatus::Newer(ver, url);
-                        } else {
-                            self.check_version_status = CheckVersionStatus::Current;
-                        }
-                    }
-                    Err(err) => {
-                        self.check_version_status = CheckVersionStatus::Error(err.to_string())
-                    }
-                }
-                args.window.ping_user_input();
             }
         }
     }
@@ -556,7 +488,7 @@ struct GlobalContext {
     title: String,
     // If a texture is added to a window-list, but then deleted, it should be kept alive until after the render.
     textures_to_delete: Vec<glr::Texture>,
-    proxy: EventLoopProxy<MainLoopEvent>,
+    proxy: LocalProxy<Box<GlobalContext>>,
 }
 
 struct FileDialog {
@@ -832,12 +764,17 @@ impl GlobalContext {
                             "check_version",
                             sz_full.x,
                         ) {
-                            let proxy = self.proxy.clone();
-                            std::thread::spawn(move || {
-                                let ver = check_version();
-                                let _ = proxy.send_event(MainLoopEvent::NewVersionResult(ver));
-                            });
                             self.check_version_status = CheckVersionStatus::Checking;
+                            std::thread::spawn({
+                                let proxy = self.proxy.event_proxy().clone();
+                                move || {
+                                    let version = check_version();
+                                    let _ = proxy.run_idle(|this, args| {
+                                        this.new_version_result(version);
+                                        args.window.ping_user_input();
+                                    });
+                                }
+                            });
                         }
                     }
                 }
@@ -889,6 +826,20 @@ impl GlobalContext {
                 //TODO: list third party SW
             });
     }
+
+    fn new_version_result(&mut self, version: Result<(Version, String)>) {
+        self.check_version_status = match version {
+            Ok((ver, url)) => {
+                if ver > self.current_version {
+                    CheckVersionStatus::Newer(ver, url)
+                } else {
+                    CheckVersionStatus::Current
+                }
+            }
+            Err(err) => CheckVersionStatus::Error(err.to_string()),
+        };
+    }
+
     // Returns true if the action has just been done successfully
     fn build_modal_wait_message_and_run_file_action(&mut self, ui: &Ui) -> bool {
         let mut ok = false;
@@ -2272,10 +2223,14 @@ impl GlobalContext {
                             fd.thumbnail_cancellation_guard = Some(CancellationGuard(ct.clone()));
                             std::thread::spawn({
                                 let full_path = fd.preview_file.clone();
-                                let proxy = self.proxy.clone();
+                                let proxy = self.proxy.event_proxy().clone();
                                 move || {
                                     let image = load_thumbnail(&full_path, &ct).ok();
-                                    let _ = proxy.send_event(MainLoopEvent::ThumbnailLoaded(full_path, ct, image));
+                                    let _ = proxy.run_idle(move |this, args| {
+                                        if this.thumbnail_loaded(full_path, ct, image) {
+                                            args.window.ping_user_input();
+                                        }
+                                    });
                                 }
                             });
                         };
@@ -2355,6 +2310,57 @@ impl GlobalContext {
         if open_wait {
             self.popup_time_start = Instant::now();
             ui.open_popup(id("Wait"));
+        }
+    }
+
+    fn thumbnail_loaded(
+        &mut self,
+        full_path: PathBuf,
+        ct: CancellationToken,
+        maybe_img: Option<image::RgbaImage>,
+    ) -> bool {
+        if maybe_img.is_some() {
+            log::info!("Thumbnail loaded {full_path:?}");
+        }
+        match self.file_dialog.as_mut() {
+            // If the datadialog is still opened and the proper file selected
+            Some(fd)
+                if fd
+                    .thumbnail_cancellation_guard
+                    .as_ref()
+                    .is_some_and(|ctc| ctc.0 == ct) =>
+            {
+                fd.tex = match maybe_img {
+                    None => None,
+                    Some(img) => {
+                        let gl = &self.gl;
+                        let ntex = glr::Texture::generate(gl).unwrap();
+                        unsafe {
+                            gl.bind_texture(glow::TEXTURE_2D, Some(ntex.id()));
+                            gl.tex_image_2d(
+                                glow::TEXTURE_2D,
+                                0,
+                                glow::RGBA8 as i32,
+                                img.width() as i32,
+                                img.height() as i32,
+                                0,
+                                glow::RGBA,
+                                glow::UNSIGNED_BYTE,
+                                glow::PixelUnpackData::Slice(Some(img.as_bytes())),
+                            );
+                            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, 0);
+
+                            gl.bind_texture(glow::TEXTURE_2D, None);
+                        }
+                        Some((ntex, Vector2::new(img.width() as f32, img.height() as f32)))
+                    }
+                };
+                true
+            }
+            _ => {
+                log::error!("Thumbnail discarded {full_path:?}");
+                false
+            }
         }
     }
 
@@ -3191,7 +3197,9 @@ struct PrintableText {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(never)]
-unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<MainLoopEvent>) {
+unsafe fn install_crash_backup(
+    event_loop: winit::event_loop::EventLoopProxy<AppEvent<Box<GlobalContext>>>,
+) {
     // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
     // the user's data, what's the worst that could happen?
     use signal_hook::consts::signal::*;
@@ -3208,7 +3216,7 @@ unsafe fn install_crash_backup(event_loop: winit::event_loop::EventLoopProxy<Mai
         );
 
         // Lock the main loop
-        if event_loop.send_event(MainLoopEvent::Crash).is_ok() {
+        if event_loop.send_user(MainLoopEvent::Crash).is_ok() {
             let ctx = unsafe { &*CTX.load(std::sync::atomic::Ordering::Acquire) };
             ctx.save_backup_on_panic();
             std::process::abort();

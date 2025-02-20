@@ -84,9 +84,8 @@ msgid "Version {}"
 msgstr "Versión {}"
 
 #: src/main.rs:827
-#, fuzzy
 msgid "Checking..."
-msgstr "Abriendo..."
+msgstr "Comprobando..."
 
 #: src/main.rs:831
 msgid "Check for new version"

@@ -1030,19 +1030,17 @@ impl GlobalContext {
 
                         let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
 
-                        unsafe {
-                            let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
-                            renderbuffer_storage_antialias(
-                                &self.gl,
-                                x,
-                                y,
-                                &fbo,
-                                &[
-                                    (&self.gl_fixs.rbo_scene_color, glow::RGBA8),
-                                    (&self.gl_fixs.rbo_scene_depth, glow::DEPTH_COMPONENT),
-                                ],
-                            );
-                        }
+                        let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
+                        renderbuffer_storage_antialias(
+                            &self.gl,
+                            x,
+                            y,
+                            &fbo,
+                            &[
+                                (&self.gl_fixs.rbo_scene_color, glow::RGBA8),
+                                (&self.gl_fixs.rbo_scene_depth, glow::DEPTH_COMPONENT),
+                            ],
+                        );
                     }
 
                     if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
@@ -1052,19 +1050,17 @@ impl GlobalContext {
                         let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
                         self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
 
-                        unsafe {
-                            let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
-                            renderbuffer_storage_antialias(
-                                &self.gl,
-                                x,
-                                y,
-                                &fbo,
-                                &[
-                                    (&self.gl_fixs.rbo_paper_color, glow::RGBA8),
-                                    (&self.gl_fixs.rbo_paper_stencil, glow::STENCIL_INDEX),
-                                ],
-                            );
-                        }
+                        let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
+                        renderbuffer_storage_antialias(
+                            &self.gl,
+                            x,
+                            y,
+                            &fbo,
+                            &[
+                                (&self.gl_fixs.rbo_paper_color, glow::RGBA8),
+                                (&self.gl_fixs.rbo_paper_stencil, glow::STENCIL_INDEX),
+                            ],
+                        );
                     }
                 });
             },
@@ -3612,44 +3608,46 @@ lazy_static! {
         .unwrap_or(i32::MAX);
 }
 
-unsafe fn renderbuffer_storage_antialias<T: glr::BinderFBOTarget>(
+fn renderbuffer_storage_antialias<T: glr::BinderFBOTarget>(
     gl: &GlContext,
     width: i32,
     height: i32,
     fbo: &glr::BinderFramebufferT<T>,
     rbos: &[(&glr::Renderbuffer, u32)],
 ) -> i32 {
-    let rb_binder = BinderRenderbuffer::bind(rbos[0].0);
-    for samples in MULTISAMPLES {
-        gl.get_error(); //clear error
-        if *samples > *MAX_ANTIALIAS {
-            continue;
+    unsafe {
+        let rb_binder = BinderRenderbuffer::bind(rbos[0].0);
+        for samples in MULTISAMPLES {
+            gl.get_error(); //clear error
+            if *samples > *MAX_ANTIALIAS {
+                continue;
+            }
+
+            for (rbo, internal_format) in rbos {
+                rb_binder.rebind(rbo);
+                gl.renderbuffer_storage_multisample(
+                    rb_binder.target(),
+                    *samples,
+                    *internal_format,
+                    width,
+                    height,
+                );
+            }
+            if gl.get_error() == 0
+                && gl.check_framebuffer_status(fbo.target()) == glow::FRAMEBUFFER_COMPLETE
+            {
+                log::debug!("antialias samples {}", *samples);
+                return *samples;
+            }
         }
 
         for (rbo, internal_format) in rbos {
             rb_binder.rebind(rbo);
-            gl.renderbuffer_storage_multisample(
-                rb_binder.target(),
-                *samples,
-                *internal_format,
-                width,
-                height,
-            );
+            gl.renderbuffer_storage(rb_binder.target(), *internal_format, width, height);
         }
-        if gl.get_error() == 0
-            && gl.check_framebuffer_status(fbo.target()) == glow::FRAMEBUFFER_COMPLETE
-        {
-            log::debug!("antialias samples {}", *samples);
-            return *samples;
-        }
+        log::debug!("antialias samples 0");
+        0
     }
-
-    for (rbo, internal_format) in rbos {
-        rb_binder.rebind(rbo);
-        gl.renderbuffer_storage(rb_binder.target(), *internal_format, width, height);
-    }
-    log::debug!("antialias samples 0");
-    0
 }
 
 fn check_version() -> Result<(Version, String)> {

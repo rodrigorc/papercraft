@@ -295,7 +295,7 @@ fn default_transformations(
     (trans_scene, trans_paper)
 }
 
-unsafe fn set_texture_filter(gl: &GlContext, tex_filter: bool) {
+unsafe fn set_texture_filter(gl: &GlContext, tex_filter: bool) { unsafe {
     if tex_filter {
         gl.tex_parameter_i32(
             glow::TEXTURE_2D_ARRAY,
@@ -319,7 +319,7 @@ unsafe fn set_texture_filter(gl: &GlContext, tex_filter: bool) {
             glow::NEAREST as i32,
         );
     }
-}
+}}
 
 #[derive(Debug)]
 pub enum ClickResult {

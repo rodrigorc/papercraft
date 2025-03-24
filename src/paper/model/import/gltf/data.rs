@@ -1,6 +1,6 @@
 use crate::paper::{Matrix4, Vector2, Vector3};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use cgmath::{EuclideanSpace, SquareMatrix};
 use easy_imgui_window::easy_imgui_renderer::glow;
 use image::{DynamicImage, ImageReader};

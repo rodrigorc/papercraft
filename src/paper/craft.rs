@@ -3,10 +3,10 @@ use std::ops::ControlFlow;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::util_3d;
-use cgmath::{prelude::*, Deg, Rad};
+use cgmath::{Deg, Rad, prelude::*};
 use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
-use slotmap::{new_key_type, SlotMap};
+use slotmap::{SlotMap, new_key_type};
 
 use super::*;
 mod file;
@@ -196,7 +196,7 @@ pub struct PageOffset {
 }
 
 const PAGE_SEP: f32 = 10.0; // Currently not configurable
-                            //
+//
 impl PaperOptions {
     pub fn page_position(&self, page: u32) -> Vector2 {
         let page_cols = self.page_cols;
@@ -1779,7 +1779,7 @@ impl<'de> Deserialize<'de> for EdgeIdPosition {
             _ => {
                 return Err(serde::de::Error::missing_field(
                     "invalid edge_id_position value",
-                ))
+                ));
             }
         };
         Ok(res)

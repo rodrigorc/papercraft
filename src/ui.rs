@@ -3,7 +3,7 @@ use core::f32;
 use std::ops::ControlFlow;
 
 use anyhow::Result;
-use cgmath::{prelude::*, Deg, Rad};
+use cgmath::{Deg, Rad, prelude::*};
 use easy_imgui_window::{
     easy_imgui::KeyMod,
     easy_imgui_renderer::{
@@ -18,13 +18,14 @@ use crate::util_3d::{
     self, Matrix2, Matrix3, Matrix4, Point2, Point3, Quaternion, Vector2, Vector3,
 };
 use crate::util_gl::{
-    MLine3DStatus, MStatus, MVertex2D, MVertex2DColor, MVertex2DLine, MVertex3D, MVertex3DLine,
-    MVertexText, MLINE3D_CUT, MLINE3D_HIDDEN, MLINE3D_NORMAL, MLINE3D_RIM, MLINE3D_RIM_TAB,
-    MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL,
+    MLINE3D_CUT, MLINE3D_HIDDEN, MLINE3D_NORMAL, MLINE3D_RIM, MLINE3D_RIM_TAB, MLine3DStatus,
+    MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL, MStatus, MVertex2D, MVertex2DColor, MVertex2DLine,
+    MVertex3D, MVertex3DLine, MVertexText,
 };
+use crate::{FONT_SIZE, TextBuilder};
 use crate::{
-    glr::{self, Rgba},
     PrintableText, TextAlign,
+    glr::{self, Rgba},
 };
 use crate::{
     paper::{
@@ -34,7 +35,6 @@ use crate::{
     },
     printable_island_name,
 };
-use crate::{TextBuilder, FONT_SIZE};
 use tr::tr;
 
 // In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
@@ -125,9 +125,11 @@ bitflags::bitflags! {
         const PAPER_REDRAW = 0x0010;
         const SCENE_REDRAW = 0x0020;
         const ISLANDS = 0x0040;
+        const SCENE_FBO = 0x0080;
+        const PAPER_FBO = 0x0100;
 
-        const ANY_REDRAW_PAPER = Self::PAGES.bits() | Self::PAPER.bits() | Self::SELECTION.bits() | Self::PAPER_REDRAW.bits() | Self::ISLANDS.bits();
-        const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits() | Self::SELECTION.bits() | Self::SCENE_REDRAW.bits();
+        const ANY_REDRAW_PAPER = Self::PAGES.bits() | Self::PAPER.bits() | Self::SELECTION.bits() | Self::PAPER_REDRAW.bits() | Self::ISLANDS.bits() | Self::PAPER_FBO.bits();
+        const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits() | Self::SELECTION.bits() | Self::SCENE_REDRAW.bits() | Self::SCENE_FBO.bits();
     }
 }
 
@@ -295,31 +297,33 @@ fn default_transformations(
     (trans_scene, trans_paper)
 }
 
-unsafe fn set_texture_filter(gl: &GlContext, tex_filter: bool) { unsafe {
-    if tex_filter {
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D_ARRAY,
-            glow::TEXTURE_MIN_FILTER,
-            glow::LINEAR_MIPMAP_LINEAR as i32,
-        );
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D_ARRAY,
-            glow::TEXTURE_MAG_FILTER,
-            glow::LINEAR as i32,
-        );
-    } else {
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D_ARRAY,
-            glow::TEXTURE_MIN_FILTER,
-            glow::NEAREST as i32,
-        );
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D_ARRAY,
-            glow::TEXTURE_MAG_FILTER,
-            glow::NEAREST as i32,
-        );
+unsafe fn set_texture_filter(gl: &GlContext, tex_filter: bool) {
+    unsafe {
+        if tex_filter {
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D_ARRAY,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR_MIPMAP_LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D_ARRAY,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+        } else {
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D_ARRAY,
+                glow::TEXTURE_MIN_FILTER,
+                glow::NEAREST as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D_ARRAY,
+                glow::TEXTURE_MAG_FILTER,
+                glow::NEAREST as i32,
+            );
+        }
     }
-}}
+}
 
 #[derive(Debug)]
 pub enum ClickResult {

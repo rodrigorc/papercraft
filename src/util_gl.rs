@@ -1,7 +1,7 @@
 use crate::glr::{self, Rgba, UniformField};
 use crate::paper::MaterialIndex;
 use crate::util_3d::*;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use easy_imgui_window::easy_imgui_renderer::easy_imgui_opengl::{attrib, uniform};
 
 //////////////////////////////////////

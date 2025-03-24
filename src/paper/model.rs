@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use crate::paper::import::Importer;
 use crate::util_3d::{self, Vector2, Vector3};
 
-use super::{traverse_faces_ex, BodyTraverse, EdgeStatus, Island, PaperOptions};
+use super::{BodyTraverse, EdgeStatus, Island, PaperOptions, traverse_faces_ex};
 
 pub mod import;
 
@@ -597,11 +597,7 @@ impl Edge {
         }
     }
     pub fn face_by_sign(&self, face_sign: bool) -> Option<FaceIndex> {
-        if face_sign {
-            self.f1
-        } else {
-            Some(self.f0)
-        }
+        if face_sign { self.f1 } else { Some(self.f0) }
     }
     pub fn angle(&self) -> Rad<f32> {
         self.angle

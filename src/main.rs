@@ -1,17 +1,18 @@
 use anyhow::{Context, Result};
 use cancel_rw::{Cancellable, CancellationGuard, CancellationToken};
-use cgmath::{prelude::*, Deg, Rad, Vector3};
+use cgmath::{Deg, Rad, Vector3, prelude::*};
 use easy_imgui_window::{
-    easy_imgui::{self as imgui, id, lbl, lbl_id, vec2, Color, MouseButton, Vector2},
+    AppEvent, EventLoopExt, LocalProxy,
+    easy_imgui::{self as imgui, Color, MouseButton, TextureId, Vector2, id, lbl, lbl_id, vec2},
     easy_imgui_renderer::{
+        Renderer,
         easy_imgui_opengl::{
             self as glr, BinderDrawFramebuffer, BinderFramebuffer, BinderReadFramebuffer,
             BinderRenderbuffer, GlContext, Rgba,
         },
         glow::{self, HasContext},
-        Renderer,
     },
-    winit, AppEvent, EventLoopExt, LocalProxy,
+    winit,
 };
 use image::{EncodableLayout, GenericImage, GenericImageView, Pixel};
 use lazy_static::lazy_static;
@@ -53,8 +54,8 @@ const KARLA_TTF: &[u8] = include_bytes!("Karla-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
 
 use paper::{
-    import::import_model_file, EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions,
-    Papercraft,
+    EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions, Papercraft,
+    import::import_model_file,
 };
 use util_3d::Matrix3;
 use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
@@ -1020,47 +1021,20 @@ impl GlobalContext {
 
                     // Resize FBOs
                     if sz_scene != self.sz_scene && sz_scene.x > 1.0 && sz_scene.y > 1.0 {
-                        self.add_rebuild(RebuildFlags::SCENE_REDRAW);
+                        self.add_rebuild(RebuildFlags::SCENE_FBO);
                         self.sz_scene = sz_scene;
 
                         self.data.ui.trans_scene.persp =
                             cgmath::perspective(Deg(60.0), sz_scene.x / sz_scene.y, 1.0, 100.0);
                         self.data.ui.trans_scene.persp_inv =
                             self.data.ui.trans_scene.persp.invert().unwrap();
-
-                        let (x, y) = (sz_scene.x as i32, sz_scene.y as i32);
-
-                        let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
-                        renderbuffer_storage_antialias(
-                            &self.gl,
-                            x,
-                            y,
-                            &fbo,
-                            &[
-                                (&self.gl_fixs.rbo_scene_color, glow::RGBA8),
-                                (&self.gl_fixs.rbo_scene_depth, glow::DEPTH_COMPONENT),
-                            ],
-                        );
                     }
 
                     if sz_paper != self.sz_paper && sz_paper.x > 1.0 && sz_paper.y > 1.0 {
-                        self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                        self.add_rebuild(RebuildFlags::PAPER_FBO);
                         self.sz_paper = sz_paper;
 
-                        let (x, y) = (sz_paper.x as i32, sz_paper.y as i32);
                         self.data.ui.trans_paper.ortho = util_3d::ortho2d(sz_paper.x, sz_paper.y);
-
-                        let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
-                        renderbuffer_storage_antialias(
-                            &self.gl,
-                            x,
-                            y,
-                            &fbo,
-                            &[
-                                (&self.gl_fixs.rbo_paper_color, glow::RGBA8),
-                                (&self.gl_fixs.rbo_paper_stencil, glow::STENCIL_INDEX),
-                            ],
-                        );
                     }
                 });
             },
@@ -1068,10 +1042,18 @@ impl GlobalContext {
         advance_cursor(ui, 0.25, 0.0);
 
         let status_text = match self.data.ui.mode {
-            MouseMode::Face => tr!("Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it."),
-            MouseMode::Edge => tr!("Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads."),
-            MouseMode::Flap => tr!("Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide a flap."),
-            MouseMode::ReadOnly => tr!("View mode. Click to highlight a piece. Move the mouse over an edge to highlight the matching pair."),
+            MouseMode::Face => tr!(
+                "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it."
+            ),
+            MouseMode::Edge => tr!(
+                "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads."
+            ),
+            MouseMode::Flap => tr!(
+                "Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide a flap."
+            ),
+            MouseMode::ReadOnly => tr!(
+                "View mode. Click to highlight a piece. Move the mouse over an edge to highlight the matching pair."
+            ),
         };
         ui.text(&status_text);
 
@@ -1909,7 +1891,8 @@ impl GlobalContext {
                 let width = self.sz_scene.x as i32;
                 let height = self.sz_scene.y as i32;
 
-                ui.window_draw_list().add_callback({
+                let draw_list = ui.window_draw_list();
+                draw_list.add_callback({
                     move |this| {
                         unsafe {
                             // blit the FBO to the real FB
@@ -2497,9 +2480,10 @@ impl GlobalContext {
                 ),
                 glow::TRIANGLES,
             );
+            self.gl.bind_vertex_array(None);
         }
     }
-    fn render_paper(&mut self, ui: &Ui) {
+    fn render_paper(&mut self, text_tex: TextureId) {
         let gl_fixs = &self.gl_fixs;
 
         let mut u = Uniforms2D {
@@ -2673,10 +2657,8 @@ impl GlobalContext {
             // Draw the texts
             if self.data.ui.show_texts {
                 self.gl.active_texture(glow::TEXTURE0);
-                self.gl.bind_texture(
-                    glow::TEXTURE_2D,
-                    Renderer::unmap_tex(ui.font_atlas().texture_id()),
-                );
+                self.gl
+                    .bind_texture(glow::TEXTURE_2D, Renderer::unmap_tex(text_tex));
                 gl_fixs
                     .prg_text
                     .draw(&u, &self.data.gl_objs().paper_text, glow::TRIANGLES);
@@ -3261,6 +3243,8 @@ impl imgui::UiBuilder for Box<GlobalContext> {
     }
     fn do_ui(&mut self, ui: &Ui) {
         //ui.show_demo_window(None);
+
+        self.rebuild = RebuildFlags::empty();
         ui.set_next_window_pos(vec2(0.0, 0.0), imgui::Cond::Always, vec2(0.0, 0.0));
         let vw = ui.get_main_viewport();
         let sz = vw.size(); //&ui.get_content_region_avail();
@@ -3291,32 +3275,6 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                 self.run_menu_actions(ui, &menu_actions);
                 self.run_mouse_actions(ui);
 
-                if self
-                    .rebuild
-                    .intersects(RebuildFlags::ANY_REDRAW_SCENE | RebuildFlags::ANY_REDRAW_PAPER)
-                {
-                    self.pre_render_flags(ui, self.rebuild);
-                    let vp = glr::PushViewport::new(&self.gl);
-                    if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
-                        let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
-                        vp.viewport(0, 0, self.sz_scene.x as i32, self.sz_scene.y as i32);
-                        unsafe {
-                            self.gl.clear_color(0.2, 0.2, 0.4, 1.0);
-                            self.gl.clear_depth_f32(1.0);
-                            self.gl
-                                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-                        }
-                        let scale = ui.display_scale();
-                        self.render_scene(scale);
-                    }
-                    if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
-                        let _draw_fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
-                        vp.viewport(0, 0, self.sz_paper.x as i32, self.sz_paper.y as i32);
-                        self.render_paper(ui);
-                    }
-                    self.rebuild = RebuildFlags::empty();
-                }
-
                 match (menu_actions.quit, self.quit_requested) {
                     (BoolWithConfirm::Confirmed, _) | (_, BoolWithConfirm::Confirmed) => {
                         self.quit_requested = BoolWithConfirm::Confirmed
@@ -3333,6 +3291,59 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                     _ => (),
                 }
             });
+
+        // pre-render
+        self.pre_render_flags(ui, self.rebuild);
+
+        let scale = ui.display_scale();
+        let text_tex = ui.font_atlas().texture_id();
+
+        if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
+            if self.rebuild.contains(RebuildFlags::SCENE_FBO) {
+                let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
+                renderbuffer_storage_antialias(
+                    &self.gl,
+                    self.sz_scene.x as i32,
+                    self.sz_scene.y as i32,
+                    &fbo,
+                    &[
+                        (&self.gl_fixs.rbo_scene_color, glow::RGBA8),
+                        (&self.gl_fixs.rbo_scene_depth, glow::DEPTH_COMPONENT),
+                    ],
+                );
+            }
+            let vp = glr::PushViewport::new(&self.gl);
+            let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
+            vp.viewport(0, 0, self.sz_scene.x as i32, self.sz_scene.y as i32);
+            unsafe {
+                self.gl.clear_color(0.2, 0.2, 0.4, 1.0);
+                self.gl.clear_depth_f32(1.0);
+                self.gl
+                    .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            }
+            self.render_scene(scale);
+        }
+
+        if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
+            if self.rebuild.contains(RebuildFlags::PAPER_FBO) {
+                let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
+                renderbuffer_storage_antialias(
+                    &self.gl,
+                    self.sz_paper.x as i32,
+                    self.sz_paper.y as i32,
+                    &fbo,
+                    &[
+                        (&self.gl_fixs.rbo_paper_color, glow::RGBA8),
+                        (&self.gl_fixs.rbo_paper_stencil, glow::STENCIL_INDEX),
+                    ],
+                );
+            }
+            let vp = glr::PushViewport::new(&self.gl);
+            let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
+            vp.viewport(0, 0, self.sz_paper.x as i32, self.sz_paper.y as i32);
+            self.render_paper(text_tex);
+        }
+        self.rebuild = RebuildFlags::empty();
     }
 }
 

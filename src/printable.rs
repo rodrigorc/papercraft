@@ -51,10 +51,10 @@ impl GlobalContext {
 
     fn generate_pdf(&self, file_name: &Path) -> Result<()> {
         use lopdf::{
+            Document, Object, ObjectId, Stream, StringFormat,
             content::{Content, Operation},
             dictionary,
             xref::XrefType,
-            Document, Object, ObjectId, Stream, StringFormat,
         };
 
         let options = self.data.papercraft().options();

@@ -6,8 +6,8 @@ pub use model::*;
 
 use crate::util_3d::*;
 use serde::{
-    ser::{SerializeSeq, SerializeStruct},
     Deserialize, Serialize,
+    ser::{SerializeSeq, SerializeStruct},
 };
 mod ser {
     use super::*;

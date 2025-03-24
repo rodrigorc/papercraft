@@ -25,10 +25,7 @@ impl GlobalContext {
         {
             Some("pdf") => self.generate_pdf(file_name),
             Some("svg") => self.generate_svg(file_name),
-            Some("png") => {
-                let text_tex_id = Renderer::unmap_tex(imgui.io().font_atlas().texture_id());
-                self.generate_png(text_tex_id, file_name)
-            }
+            Some("png") => self.generate_png(imgui.io().font_atlas(), file_name),
             _ => anyhow::bail!(
                 "{}",
                 tr!(
@@ -414,7 +411,7 @@ impl GlobalContext {
                     });
                 }
                 if touching {
-                    writeln!(&mut suffix, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{}" d=""#, idx)?;
+                    writeln!(&mut suffix, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{idx}" d=""#)?;
                     write!(&mut suffix, r#"M "#)?;
                     for p in contour_points {
                         writeln!(&mut suffix, r#"{},{}"#, p.x, p.y)?;
@@ -471,7 +468,7 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_png(&self, text_tex_id: Option<glow::Texture>, file_name: &Path) -> Result<()> {
+    fn generate_png(&self, font_atlas: &imgui::FontAtlas, file_name: &Path) -> Result<()> {
         let (tx_compress, rx_compress) = std::sync::mpsc::channel::<(u32, image::RgbaImage)>();
         let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
 
@@ -499,7 +496,7 @@ impl GlobalContext {
             drop(tx_done);
         });
 
-        self.generate_pages(text_tex_id, |page, pixbuf, _, _texts, _| {
+        self.generate_pages(Some(font_atlas), |page, pixbuf, _, _texts, _| {
             tx_compress.send((page, pixbuf)).unwrap();
             Ok(())
         })?;
@@ -511,7 +508,11 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn generate_pages<F>(&self, text_tex_id: Option<glow::Texture>, mut do_page_fn: F) -> Result<()>
+    fn generate_pages<F>(
+        &self,
+        font_atlas: Option<&imgui::FontAtlas>,
+        mut do_page_fn: F,
+    ) -> Result<()>
     where
         F: FnMut(
             u32,
@@ -646,12 +647,17 @@ impl GlobalContext {
                 };
 
                 // Draw the texts
-                if text_tex_id.is_some() && options.edge_id_position == EdgeIdPosition::Outside {
+                if let Some(font_atlas) = font_atlas.as_ref()
+                    && options.edge_id_position == EdgeIdPosition::Outside
+                {
                     self.gl.active_texture(glow::TEXTURE0);
-                    self.gl.bind_texture(glow::TEXTURE_2D, text_tex_id);
-                    gl_fixs
-                        .prg_text
-                        .draw(&u, &self.data.gl_objs().paper_text, glow::TRIANGLES);
+                    for (ut, pt) in &self.data.gl_objs().paper_text {
+                        self.gl.bind_texture(
+                            glow::TEXTURE_2D,
+                            Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),
+                        );
+                        gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
+                    }
                 }
 
                 // Line Flaps
@@ -718,15 +724,20 @@ impl GlobalContext {
                 );
 
                 // Draw the texts
-                if text_tex_id.is_some() && options.edge_id_position == EdgeIdPosition::Inside {
+                if let Some(font_atlas) = font_atlas.as_ref()
+                    && options.edge_id_position == EdgeIdPosition::Inside
+                {
                     self.gl.active_texture(glow::TEXTURE0);
-                    self.gl.bind_texture(glow::TEXTURE_2D, text_tex_id);
-                    gl_fixs
-                        .prg_text
-                        .draw(&u, &self.data.gl_objs().paper_text, glow::TRIANGLES);
+                    for (ut, pt) in &self.data.gl_objs().paper_text {
+                        self.gl.bind_texture(
+                            glow::TEXTURE_2D,
+                            Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),
+                        );
+                        gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
+                    }
                 }
-                // End render
 
+                // End render
                 if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
                     read_fb_binder.rebind(&fbo);
                     draw_fb_binder.rebind(fbo_no_aa);

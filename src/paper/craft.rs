@@ -796,14 +796,13 @@ impl Papercraft {
         use std::collections::hash_map::Entry::*;
         let i_island = self.island_by_face(i_face_a);
         let island_data = memo.entry(i_island).or_default();
-        let res = match island_data.entry((i_face_a, i_edge)) {
+        match island_data.entry((i_face_a, i_edge)) {
             Occupied(o) => *o.get(),
             Vacant(v) => {
                 let value = self.flat_face_flap_dimensions_internal(i_face_a, i_face_b, i_edge);
                 *v.insert(value)
             }
-        };
-        res
+        }
     }
     pub fn island_edges(&self, island: &Island) -> FxHashSet<EdgeIndex> {
         let mut res = FxHashSet::default();

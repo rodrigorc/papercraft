@@ -85,16 +85,16 @@ impl<'a> Gltf<'a> {
             .min_version
             .or(header.asset.version)
             .ok_or(anyhow!("missing version in glTF header"))?;
-        log::info!("glTF version: {}", version);
+        log::info!("glTF version: {version}");
         let i_ver = version.split('.').next().unwrap().parse::<u32>()?;
         if i_ver != 2 {
             bail!("Unknown glTF major version {}", version);
         }
         if let Some(copyright) = header.asset.copyright {
-            log::info!("glTF copyright: {}", copyright);
+            log::info!("glTF copyright: {copyright}");
         }
         if let Some(generator) = header.asset.generator {
-            log::info!("glTF generator: {}", generator);
+            log::info!("glTF generator: {generator}");
         }
         //dbg!(&header);
         let mut gltf = Gltf {
@@ -173,7 +173,7 @@ impl<'a> Gltf<'a> {
             let name = img
                 .name
                 .map(String::from)
-                .unwrap_or_else(|| format!("tex_{}", i));
+                .unwrap_or_else(|| format!("tex_{i}"));
             images.push((name, pixbuf));
         }
         Ok(images)
@@ -250,7 +250,7 @@ impl<'a> Gltf<'a> {
                     };
                     let mode = pri.mode.unwrap_or(4);
                     if mode != 4 {
-                        log::warn!("unsupported primitive model {0}", mode);
+                        log::warn!("unsupported primitive model {mode}");
                         continue;
                     }
                     let pos = self
@@ -541,7 +541,7 @@ impl Scalar for u32 {
                 Some(x)
             }
             _ => {
-                log::warn!("Unknown component type 0x{:X}", component_type);
+                log::warn!("Unknown component type 0x{component_type:X}");
                 None
             }
         }
@@ -557,7 +557,7 @@ impl Scalar for f32 {
                 Some(f32::from_bits(x))
             }
             _ => {
-                log::warn!("Unknown component type 0x{:X}", component_type);
+                log::warn!("Unknown component type 0x{component_type:X}");
                 None
             }
         }

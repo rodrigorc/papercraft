@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use anyhow::Result;
 use cgmath::{Deg, Rad, prelude::*};
 use easy_imgui_window::{
-    easy_imgui::KeyMod,
+    easy_imgui::{KeyMod, TextureUniqueId},
     easy_imgui_renderer::{
         easy_imgui_opengl::GlContext,
         glow::{self, HasContext},
@@ -67,7 +67,7 @@ pub struct GLObjects {
     pub paper_vertices_flap_edge: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_shadow_flap: glr::DynamicVertexArray<MVertex2DColor>,
-    pub paper_text: glr::DynamicVertexArray<MVertexText>,
+    pub paper_text: Vec<(TextureUniqueId, glr::DynamicVertexArray<MVertexText>)>,
 
     // 2D background
     pub paper_vertices_page: glr::DynamicVertexArray<MVertex2DColor>,
@@ -127,6 +127,8 @@ bitflags::bitflags! {
         const ISLANDS = 0x0040;
         const SCENE_FBO = 0x0080;
         const PAPER_FBO = 0x0100;
+
+        const SHOW_TEXTS = 0x0200;
 
         const ANY_REDRAW_PAPER = Self::PAGES.bits() | Self::PAPER.bits() | Self::SELECTION.bits() | Self::PAPER_REDRAW.bits() | Self::ISLANDS.bits() | Self::PAPER_FBO.bits();
         const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits() | Self::SELECTION.bits() | Self::SCENE_REDRAW.bits() | Self::SCENE_FBO.bits();
@@ -345,7 +347,7 @@ pub struct PaperDrawFaceArgs {
     vertices_flap: Vec<MVertex2DColor>,
     vertices_flap_edge: Vec<Line2D>,
     vertices_shadow_flap: Vec<MVertex2DColor>,
-    vertices_text: Vec<MVertexText>,
+    vertices_text: Vec<(TextureUniqueId, Vec<MVertexText>)>,
 
     // Optional fields:
     flap_cache: Option<Vec<(FaceIndex, FlapVertices)>>,
@@ -648,14 +650,14 @@ impl PapercraftContext {
     }
 
     pub fn pre_render(&mut self, rebuild: RebuildFlags, text_builder: &impl TextBuilder) {
-        if rebuild.contains(RebuildFlags::ISLANDS) && self.ui.show_texts {
+        if rebuild.contains(RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS) {
             self.papercraft.rebuild_island_names();
         }
         if rebuild.contains(RebuildFlags::PAGES) {
             self.pages_rebuild();
         }
         if rebuild.contains(RebuildFlags::PAPER) {
-            self.paper_rebuild(text_builder);
+            self.paper_rebuild(text_builder, rebuild.contains(RebuildFlags::SHOW_TEXTS));
         }
         if rebuild.contains(RebuildFlags::SELECTION) {
             self.selection_rebuild();
@@ -1117,11 +1119,11 @@ impl PapercraftContext {
         }
     }
 
-    fn paper_rebuild(&mut self, text_builder: &impl TextBuilder) {
+    fn paper_rebuild(&mut self, text_builder: &impl TextBuilder, show_texts: bool) {
         let options = self.papercraft.options();
         let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
         let mut extra = PaperDrawFaceArgsExtra::default();
-        if options.edge_id_position != EdgeIdPosition::None && self.ui.show_texts {
+        if options.edge_id_position != EdgeIdPosition::None && show_texts {
             extra.add_cut_info(self.papercraft.model());
         }
 
@@ -1257,7 +1259,13 @@ impl PapercraftContext {
         self.gl_objs
             .paper_vertices_shadow_flap
             .set(args.vertices_shadow_flap);
-        self.gl_objs.paper_text.set(args.vertices_text);
+
+        self.gl_objs.paper_text.clear();
+        for vt in args.vertices_text {
+            let mut a = glr::DynamicVertexArray::new(self.gl_objs.paper_vertices.gl()).unwrap();
+            a.set(vt.1);
+            self.gl_objs.paper_text.push((vt.0, a));
+        }
     }
 
     fn pages_rebuild(&mut self) {
@@ -2610,7 +2618,7 @@ impl GLObjects {
         let paper_vertices_page = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_margin = glr::DynamicVertexArray::new(gl)?;
 
-        let paper_text = glr::DynamicVertexArray::new(gl)?;
+        let paper_text = Vec::new();
 
         Ok(GLObjects {
             textures,

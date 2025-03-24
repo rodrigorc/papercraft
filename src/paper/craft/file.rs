@@ -443,11 +443,10 @@ impl Papercraft {
             .enumerate()
             .map(|(i_v, id)| {
                 let vid = next_id[id.unwrap()];
-                let id = *fx.entry(vid).or_insert_with(|| {
+                *fx.entry(vid).or_insert_with(|| {
                     vertex_pos.push(self.model[VertexIndex::from(i_v)].pos());
                     vertex_pos.len() as u32
-                });
-                id
+                })
             })
             .collect();
 

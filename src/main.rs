@@ -3,7 +3,10 @@ use cancel_rw::{Cancellable, CancellationGuard, CancellationToken};
 use cgmath::{Deg, Rad, Vector3, prelude::*};
 use easy_imgui_window::{
     AppEvent, EventLoopExt, LocalProxy,
-    easy_imgui::{self as imgui, Color, MouseButton, TextureId, Vector2, id, lbl, lbl_id, vec2},
+    easy_imgui::{
+        self as imgui, Color, FontAndSize, MouseButton, TextureRef, TextureUniqueId, Vector2, id,
+        lbl, lbl_id, vec2,
+    },
     easy_imgui_renderer::{
         Renderer,
         easy_imgui_opengl::{
@@ -195,14 +198,16 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         };
 
         let gl_fixs = build_gl_fixs(&gl).unwrap();
+
         let ctx = GlobalContext {
             config: config.clone(),
             gl,
             gl_fixs,
             font_default: imgui::FontId::default(),
-            font_big: imgui::FontId::default(),
-            font_small: imgui::FontId::default(),
-            font_text: imgui::FontId::default(),
+            font_default_size: 1.0,
+            font_big_size: 1.0,
+            font_small_size: 1.0,
+            font_text_size: 1.0,
             font_text_line_scale: 1.0,
             icons_rect: [imgui::CustomRectIndex::default(); 3],
             logo_rect: imgui::CustomRectIndex::default(),
@@ -238,6 +243,8 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             proxy: local_proxy,
         };
         let mut ctx = Box::new(ctx);
+        ctx.build_fonts(imgui.io_mut().font_atlas_mut());
+
         // SAFETY: This code will only be run once, and the ctx is in a box,
         // so it will not be moved around memory.
         // Using the pointer will still be technical UB, probably, but hopefully
@@ -266,7 +273,6 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         if let Some((options, push_undo)) = self.options_applied.take() {
             self.data.set_papercraft_options(options, push_undo);
             self.add_rebuild(RebuildFlags::all());
-            window.imgui().invalidate_font_atlas();
         }
         let imgui = window.imgui();
         if let Some(new_config) = self.config_applied.take() {
@@ -284,12 +290,10 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         }
 
         if let Some(mut op) = self.file_operation.take() {
-            if let FileOperationStep::WaitForStart(instant) = op.step {
-                if instant.elapsed() > Duration::from_millis(250) {
-                    // Do the thing!
-                    let res = self.run_file_action(imgui, &op);
-                    op.step = FileOperationStep::Done(res);
-                }
+            if let FileOperationStep::ReadyToStart = op.step {
+                // Do the thing!
+                let res = self.run_file_action(imgui, &op);
+                op.step = FileOperationStep::Done(res);
             }
             self.file_operation = Some(op);
             window.ping_user_input();
@@ -462,6 +466,7 @@ impl FileAction {
 enum FileOperationStep {
     New,
     WaitForStart(Instant),
+    ReadyToStart,
     Done(Result<()>),
 }
 
@@ -493,9 +498,10 @@ struct GlobalContext {
     gl: GlContext,
     gl_fixs: GLFixedObjects,
     font_default: imgui::FontId,
-    font_big: imgui::FontId,
-    font_small: imgui::FontId,
-    font_text: imgui::FontId,
+    font_default_size: f32,
+    font_big_size: f32,
+    font_small_size: f32,
+    font_text_size: f32,
     font_text_line_scale: f32,
     icons_rect: [imgui::CustomRectIndex; 3],
     logo_rect: imgui::CustomRectIndex,
@@ -586,7 +592,7 @@ impl filechooser::PreviewBuilder<Box<GlobalContext>> for &Option<(glr::Texture, 
             (Vector2::new(p1.x + mx, p1.y), Vector2::new(p2.x - mx, p2.y))
         };
         dl.add_image(
-            Renderer::map_tex(tex.id()),
+            TextureRef::Id(Renderer::map_tex(tex.id())),
             p1,
             p2,
             Vector2::new(0.0, 0.0),
@@ -694,16 +700,15 @@ fn do_modal_dialog(
 
             ui.separator();
 
-            if let Some(cancel) = cancel {
-                if ui
+            if let Some(cancel) = cancel
+                && ui
                     .button_config(lbl_id(cancel, "cancel"))
                     .size(vec2(font_sz * 5.5, 0.0))
                     .build()
                     | ui.shortcut(imgui::Key::Escape)
-                {
-                    ui.close_current_popup();
-                    output = Some(false);
-                }
+            {
+                ui.close_current_popup();
+                output = Some(false);
             }
             if let Some(ok) = ok {
                 if cancel.is_some() {
@@ -777,14 +782,13 @@ impl GlobalContext {
                 let sz_full = ui.get_content_region_avail();
                 let f = ui.get_font_size();
                 let logo_height = f * 8.0;
-                let logo_rect = ui.io().font_atlas().get_custom_rect(self.logo_rect);
-                let logo_scale = logo_height / logo_rect.Height as f32;
-                let logo_width = logo_rect.Width as f32 * logo_scale;
+                let logo_rect = ui.get_custom_rect(self.logo_rect).unwrap().rect;
+                let logo_scale = logo_height / logo_rect.h as f32;
+                let logo_width = logo_rect.w as f32 * logo_scale;
                 advance_cursor_pixels(ui, (sz_full.x - logo_width) / 2.0, 0.0);
-                //ui.do_image(self.logo_tex, [logo_width, logo_height])
                 ui.image_with_custom_rect_config(self.logo_rect, logo_scale)
                     .build();
-                ui.with_push(self.font_big, || {
+                ui.with_push(FontAndSize(self.font_default, self.font_big_size), || {
                     center_text(ui, &tr!("Papercraft"), sz_full.x);
                 });
 
@@ -852,7 +856,7 @@ impl GlobalContext {
                 center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
                 // Keep the legal text untranslated
-                ui.with_push(self.font_small, || {
+                ui.with_push(FontAndSize(self.font_default, self.font_small_size), || {
                     center_text(ui, "© Copyright 2024 - Rodrigo Rivas Costa", sz_full.x);
                     center_text(
                         ui,
@@ -888,15 +892,6 @@ impl GlobalContext {
     fn build_modal_file_action(&mut self, ui: &Ui) {
         if let Some(mut file_operation) = self.file_operation.take() {
             if let FileOperationStep::New = file_operation.step {
-                if file_operation.action == FileAction::GeneratePrintable {
-                    // Rebuild everything, just in case.
-                    // For now it must be done during the ImGui frame to be able to create glyphs.
-                    //TODO: should pass show_texts as argument?
-                    let old_show_texts = self.data.ui.show_texts;
-                    self.data.ui.show_texts = true;
-                    self.pre_render_flags(ui, RebuildFlags::all());
-                    self.data.ui.show_texts = old_show_texts;
-                }
                 file_operation.step = FileOperationStep::WaitForStart(Instant::now());
                 ui.open_popup(id("wait"));
             }
@@ -2523,7 +2518,7 @@ impl GlobalContext {
             self.gl.bind_vertex_array(None);
         }
     }
-    fn render_paper(&mut self, text_tex: TextureId) {
+    fn render_paper(&mut self, imgui: &mut imgui::CurrentContext<'_>) {
         let gl_fixs = &self.gl_fixs;
 
         let mut u = Uniforms2D {
@@ -2697,11 +2692,19 @@ impl GlobalContext {
             // Draw the texts
             if self.data.ui.show_texts {
                 self.gl.active_texture(glow::TEXTURE0);
-                self.gl
-                    .bind_texture(glow::TEXTURE_2D, Renderer::unmap_tex(text_tex));
-                gl_fixs
-                    .prg_text
-                    .draw(&u, &self.data.gl_objs().paper_text, glow::TRIANGLES);
+                for (ut, pt) in &self.data.gl_objs().paper_text {
+                    self.gl.bind_texture(
+                        glow::TEXTURE_2D,
+                        Renderer::unmap_tex(
+                            imgui
+                                .io()
+                                .font_atlas()
+                                .get_texture_by_unique_id(*ut)
+                                .unwrap(),
+                        ),
+                    );
+                    gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
+                }
             }
         }
     }
@@ -2988,7 +2991,8 @@ impl GlobalContext {
         let text_helper = TextHelper {
             ui,
             font_text_line_scale: self.font_text_line_scale,
-            font_id: self.font_text,
+            font_id: self.font_default,
+            font_size: self.font_text_size,
         };
         self.data.pre_render(rebuild, &text_helper);
     }
@@ -3240,45 +3244,45 @@ unsafe fn install_crash_backup(
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<MainLoopEvent>) {}
 
-impl imgui::UiBuilder for Box<GlobalContext> {
-    fn build_custom_atlas(&mut self, atlas: &mut imgui::FontAtlasMut<'_, Self>) {
+//impl imgui::UiBuilder for Box<GlobalContext> {
+impl GlobalContext {
+    fn build_fonts(&mut self, atlas: &mut imgui::FontAtlas) {
         self.add_rebuild(RebuildFlags::all());
 
-        self.font_default = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 18.0));
-        self.font_big = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 28.0));
-        self.font_small = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, 12.0));
+        self.font_default = atlas.add_font(imgui::FontInfo::new(KARLA_TTF));
+        self.font_default_size = 18.0;
+        self.font_big_size = 28.0;
+        self.font_small_size = 12.0;
         let options = self.data.papercraft().options();
 
-        // Do not go too big or Dear ImGui will assert!
-        let edge_id_font_size =
-            (options.edge_id_font_size * options.resolution as f32 / 72.0).min(350.0);
-        self.font_text = atlas.add_font(imgui::FontInfo::new(KARLA_TTF, edge_id_font_size));
+        let edge_id_font_size = options.edge_id_font_size * options.resolution as f32 / 72.0;
+        self.font_text_size = edge_id_font_size;
         // This is eye-balled, depending on the particular font
         self.font_text_line_scale = 0.80;
 
-        self.logo_rect =
-            atlas.add_custom_rect_regular([LOGO_IMG.width(), LOGO_IMG.height()], |_, img| {
-                img.copy_from(&*LOGO_IMG, 0, 0).unwrap();
-            });
+        self.logo_rect = atlas.add_custom_rect([LOGO_IMG.width(), LOGO_IMG.height()], |img| {
+            img.copy_from(&*LOGO_IMG, 0, 0).unwrap();
+        });
 
         // Each image is 48x48
         const W: u32 = 48;
         const H: u32 = 48;
-        self.icons_rect[0] = atlas.add_custom_rect_regular([W, H], |_, img| {
+        self.icons_rect[0] = atlas.add_custom_rect([W, H], |img| {
             img.copy_from(&*ICONS_IMG.view(0, 0, W, H), 0, 0).unwrap();
         });
-        self.icons_rect[1] = atlas.add_custom_rect_regular([W, H], |_, img| {
+        self.icons_rect[1] = atlas.add_custom_rect([W, H], |img| {
             img.copy_from(&*ICONS_IMG.view(W, 0, W, H), 0, 0).unwrap();
         });
-        self.icons_rect[2] = atlas.add_custom_rect_regular([W, H], |_, img| {
+        self.icons_rect[2] = atlas.add_custom_rect([W, H], |img| {
             img.copy_from(&*ICONS_IMG.view(0, H, W, H), 0, 0).unwrap();
         });
 
         self.filechooser_atlas = filechooser::build_custom_atlas(atlas);
     }
+}
+impl imgui::UiBuilder for Box<GlobalContext> {
     fn do_ui(&mut self, ui: &Ui) {
         //ui.show_demo_window(None);
-
         ui.set_next_window_pos(vec2(0.0, 0.0), imgui::Cond::Always, vec2(0.0, 0.0));
         let vw = ui.get_main_viewport();
         let sz = vw.size(); //&ui.get_content_region_avail();
@@ -3324,11 +3328,42 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                 }
             });
 
-        // pre-render
-        self.pre_render_flags(ui, self.rebuild);
+        // Check if the atlas textures are still valid.
+        let text_ok = self
+            .data
+            .gl_objs()
+            .paper_text
+            .iter()
+            .all(|&(ut, _)| ui.io().font_atlas().check_texture_unique_id(ut));
+        if !text_ok {
+            // If not, rebuild the texts, paper that contains the texts.
+            self.rebuild |= RebuildFlags::PAPER;
+        }
 
-        let scale = ui.io().display_scale();
-        let text_tex = ui.io().font_atlas().texture_id();
+        if self.data.ui.show_texts {
+            // SHOW_TEXTS is handled a bit differently.
+            self.rebuild |= RebuildFlags::SHOW_TEXTS;
+        }
+
+        // Check if there is a file operation ready
+        if let Some(op) = self.file_operation.as_mut()
+            && let FileOperationStep::WaitForStart(instant) = op.step
+            && instant.elapsed() > Duration::from_millis(250)
+        {
+            op.step = FileOperationStep::ReadyToStart;
+            if op.action == FileAction::GeneratePrintable {
+                // Rebuild everything, to build a printable, just in case.
+                // It must be done during the ImGui frame to be able to create glyphs.
+                // Doing it in just the very last frame we are sure that all atlas textures are
+                // valid during the export.
+                self.rebuild = RebuildFlags::all();
+            }
+        }
+
+        self.pre_render_flags(ui, self.rebuild);
+    }
+    fn pre_render(&mut self, imgui: &mut imgui::CurrentContext<'_>) {
+        let scale = imgui.io().display_scale();
 
         if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
             if self.rebuild.contains(RebuildFlags::SCENE_FBO) {
@@ -3373,7 +3408,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
             let vp = glr::PushViewport::new(&self.gl);
             let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
             vp.viewport(0, 0, self.sz_paper.x as i32, self.sz_paper.y as i32);
-            self.render_paper(text_tex);
+            self.render_paper(imgui);
         }
         self.rebuild = RebuildFlags::empty();
     }
@@ -3437,43 +3472,56 @@ fn printable_island_name(
 }
 
 struct TextHelper<'a> {
+    // To use the imgui fonts we need a Ui.
     ui: &'a Ui,
     font_text_line_scale: f32,
     font_id: imgui::FontId,
+    font_size: f32,
 }
 
 trait TextBuilder {
     fn font_text_line_scale(&self) -> f32;
-    fn make_text(&self, p: &PrintableText, v: &mut Vec<util_gl::MVertexText>);
+    fn make_text(
+        &self,
+        p: &PrintableText,
+        vs: &mut Vec<(TextureUniqueId, Vec<util_gl::MVertexText>)>,
+    );
 }
 
 impl TextBuilder for TextHelper<'_> {
     fn font_text_line_scale(&self) -> f32 {
         self.font_text_line_scale
     }
-    // To use the imgui fonts we need a Ui, so this is the only class that can do it.
-    fn make_text(&self, pt: &PrintableText, vs: &mut Vec<util_gl::MVertexText>) {
-        let f = self.ui.get_font(self.font_id);
+    fn make_text(
+        &self,
+        pt: &PrintableText,
+        vs: &mut Vec<(TextureUniqueId, Vec<util_gl::MVertexText>)>,
+    ) {
+        let baked_font = self
+            .ui
+            .get_font_baked(self.font_id, self.font_size, Some(2.0));
         let mut x = 0.0;
-        let width = pt
-            .text
-            .chars()
-            .map(|c| {
-                let r = self.ui.find_glyph(self.font_id, c);
-                r.advance_x()
-            })
-            .sum::<f32>();
+        let width = || {
+            pt.text
+                .chars()
+                .map(|c| {
+                    let r = baked_font.find_glyph(c);
+                    r.advance_x()
+                })
+                .sum::<f32>()
+        };
         let x_offset = match pt.align {
             TextAlign::Near => 0.0,
-            TextAlign::Center => -width / 2.0,
-            TextAlign::Far => -width,
+            TextAlign::Center => -width() / 2.0,
+            TextAlign::Far => -width(),
         };
         let m = Matrix3::from_translation(pt.pos)
             * Matrix3::from(cgmath::Matrix2::from_angle(pt.angle))
-            * Matrix3::from_scale(pt.size / f.FontSize)
-            * Matrix3::from_translation(Vector2::new(x_offset, -f.Ascent));
+            * Matrix3::from_scale(pt.size / self.font_size)
+            * Matrix3::from_translation(Vector2::new(x_offset, -baked_font.Ascent));
         for c in pt.text.chars() {
-            let r = self.ui.find_glyph(self.font_id, c);
+            let r = baked_font.find_glyph(c);
+            let unique_id = self.ui.io().font_atlas().current_texture_unique_id();
             let mut p0 = r.p0();
             let mut p1 = r.p1();
             p0.x += x;
@@ -3509,7 +3557,12 @@ impl TextBuilder for TextHelper<'_> {
                 v.pos.x = p.x;
                 v.pos.y = p.y;
             }
-            vs.extend(q);
+
+            if let Some(vs) = vs.iter_mut().find(|v| v.0 == unique_id) {
+                vs.1.extend(q);
+            } else {
+                vs.push((unique_id, q.into()));
+            }
             x += r.advance_x();
         }
     }
@@ -3522,7 +3575,12 @@ impl TextBuilder for TextBuilderDummy {
         1.0
     }
 
-    fn make_text(&self, _p: &PrintableText, _v: &mut Vec<util_gl::MVertexText>) {}
+    fn make_text(
+        &self,
+        _p: &PrintableText,
+        _vs: &mut Vec<(TextureUniqueId, Vec<util_gl::MVertexText>)>,
+    ) {
+    }
 }
 
 mod filters {

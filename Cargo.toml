@@ -25,7 +25,7 @@ opt-level = 3
 opt-level = 3
 
 [build-dependencies]
-include-po = "0.1"
+include-po = "0.2"
 
 [dependencies]
 cgmath = { version = "0.18", features = ["mint"] }
@@ -34,7 +34,7 @@ base64 = "0.22"
 slotmap = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-zip = "3.0.0"
+zip = "4.2.0"
 bitflags = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clap = { version = "4", features = ["derive", "cargo"] }
@@ -43,7 +43,7 @@ env_logger = "0.11"
 flate2 = "1"
 fxhash = "0.2"
 signal-hook = "0.3"
-opener = { version = "0.7", default-features = false }
+opener = { version = "0.8", default-features = false }
 maybe-owned = { version = "0.3", features = ["serde"] }
 lazy_static = "1"
 tr = { version = "0.1.10", default-features = false }
@@ -51,8 +51,10 @@ tr = { version = "0.1.10", default-features = false }
 lopdf = "0.36"
 time = { version = "0.3", features = ["local-offset"] }
 
-easy-imgui-window = { git = "https://github.com/rodrigorc/easy-imgui-rs", rev="ce48775da3d955861577abe6bdbdcf36f770be02" }
-easy-imgui-filechooser = { git = "https://github.com/rodrigorc/easy-imgui-rs", rev="ce48775da3d955861577abe6bdbdcf36f770be02", features = ["tr"] }
+#easy-imgui-window = { git = "https://github.com/rodrigorc/easy-imgui-rs", rev="d8c496ffe5f34b18fb46c5668a450ffb988468e9" }
+#easy-imgui-filechooser = { git = "https://github.com/rodrigorc/easy-imgui-rs", rev="d8c496ffe5f34b18fb46c5668a450ffb988468e9", features = ["tr"] }
+easy-imgui-window =  "0.16.1"
+easy-imgui-filechooser = { version = "0.3", features = ["tr"] }
 
 sys-locale = "0.3"
 directories = "6"

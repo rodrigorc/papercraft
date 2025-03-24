@@ -60,7 +60,7 @@ struct SetSerModel<'a> {
     _pd: PhantomData<&'a Model>,
 }
 impl SetSerModel<'_> {
-    fn new(m: &Model) -> SetSerModel {
+    fn new(m: &Model) -> SetSerModel<'_> {
         let old = SER_MODEL.replace(Some(m));
         SetSerModel {
             old,

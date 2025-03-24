@@ -335,45 +335,45 @@ impl<R: Read> Reader<'_, R> {
         self.version = read_u32(self.rdr)? as u8;
         log::debug!("Version: {}", self.version);
         let mbcs = read_u32(self.rdr)?;
-        log::debug!("MBCS: {}", mbcs);
+        log::debug!("MBCS: {mbcs}");
         let _unk = read_u32(self.rdr)?;
         if self.version >= 5 {
             let designer = self.read_string()?;
-            log::debug!("Designer: {}", designer);
+            log::debug!("Designer: {designer}");
             self.shift = read_u32(self.rdr)?;
             log::debug!("Shift: {}", self.shift);
         }
         let locale = self.read_string()?;
-        log::debug!("Locale: {}", locale);
+        log::debug!("Locale: {locale}");
         let codepage = self.read_string()?;
-        log::debug!("Codepage: {}", codepage);
+        log::debug!("Codepage: {codepage}");
 
         let texlock = read_u32(self.rdr)?;
-        log::debug!("Texlock: {}", texlock);
+        log::debug!("Texlock: {texlock}");
         if self.version >= 6 {
             let show_startup_notes = read_bool(self.rdr)?;
-            log::debug!("ShowStartupNotes: {}", show_startup_notes);
+            log::debug!("ShowStartupNotes: {show_startup_notes}");
             let password_flag = read_bool(self.rdr)?;
-            log::debug!("PasswordFlag: {}", password_flag);
+            log::debug!("PasswordFlag: {password_flag}");
         }
         let key = self.read_string()?;
-        log::debug!("Key: {}", key);
+        log::debug!("Key: {key}");
         if self.version >= 6 {
             let v6_lock = read_u32(self.rdr)?;
-            log::debug!("V6Lock: {}", v6_lock);
+            log::debug!("V6Lock: {v6_lock}");
             for _ in 0..v6_lock {
                 let _ = read_u64(self.rdr)?;
             }
         } else if self.version == 5 {
             let show_startup_notes = read_bool(self.rdr)?;
-            log::debug!("ShowStartupNotes: {}", show_startup_notes);
+            log::debug!("ShowStartupNotes: {show_startup_notes}");
             let password_flag = read_bool(self.rdr)?;
-            log::debug!("PasswordFlags: {}", password_flag);
+            log::debug!("PasswordFlags: {password_flag}");
         }
         let assembled_height = read_f64(self.rdr)?;
-        log::debug!("AssembledHeight: {}", assembled_height);
+        log::debug!("AssembledHeight: {assembled_height}");
         let origin = read_vector3_f64(self.rdr)?;
-        log::debug!("Origin: {:?}", origin);
+        log::debug!("Origin: {origin:?}");
 
         let n_objects = read_u32(self.rdr)?;
         let mut objs = Vec::with_capacity(n_objects as usize);

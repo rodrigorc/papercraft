@@ -46,7 +46,7 @@ fn compute_island_to_faces_map(pc: &Papercraft) -> IslandFaceMap {
     let mut new_faces_map = FxHashMap::default();
     for (i_new, island) in pc.islands() {
         let mut faces = FxHashSet::default();
-        pc.traverse_faces_no_matrix(island, |f| {
+        let _ = pc.traverse_faces_no_matrix(island, |f| {
             faces.insert(f);
             ControlFlow::Continue(())
         });
@@ -251,7 +251,7 @@ impl Papercraft {
                     // Look for any other face that is in both islands, and if found,
                     // do some math to fit in the equivalent place
                     let mut res = None;
-                    old_obj.traverse_faces(oisland, |o_f, _f, m| {
+                    let _ = old_obj.traverse_faces(oisland, |o_f, _f, m| {
                         match oi_real_face_map.get(&o_f) {
                             Some(&i_f) if self.contains_face(island, i_f) => {
                                 res = Some((i_f, Rad::atan2(m.x.y, m.x.x), m.z.truncate()));

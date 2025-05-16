@@ -17,14 +17,7 @@ fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
 }
 
 impl GlobalContext {
-    pub fn generate_printable(&mut self, ui: &Ui, file_name: &Path) -> Result<()> {
-        // Rebuild everything, just in case
-        //TODO: should pass show_texts as argument?
-        let old_show_texts = self.data.ui.show_texts;
-        self.data.ui.show_texts = true;
-        self.pre_render_flags(ui, RebuildFlags::all());
-        self.data.ui.show_texts = old_show_texts;
-
+    pub fn generate_printable(&mut self, imgui: &imgui::Context, file_name: &Path) -> Result<()> {
         let res = match file_name
             .extension()
             .map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase())
@@ -33,7 +26,7 @@ impl GlobalContext {
             Some("pdf") => self.generate_pdf(file_name),
             Some("svg") => self.generate_svg(file_name),
             Some("png") => {
-                let text_tex_id = Renderer::unmap_tex(ui.font_atlas().texture_id());
+                let text_tex_id = Renderer::unmap_tex(imgui.io().font_atlas().texture_id());
                 self.generate_png(text_tex_id, file_name)
             }
             _ => anyhow::bail!(

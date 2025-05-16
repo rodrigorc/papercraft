@@ -92,7 +92,7 @@ impl Papercraft {
             changed = false;
             for (_i_island, island) in &self.islands {
                 let mut faults = FxHashSet::default();
-                traverse_faces_ex(
+                let _ = traverse_faces_ex(
                     &self.model,
                     island.root,
                     (),
@@ -136,7 +136,7 @@ impl Papercraft {
             changed = false;
             let mut all_faces: FxHashSet<FaceIndex> = self.model.faces().map(|(i, _)| i).collect();
             for (_i_island, island) in &self.islands {
-                self.traverse_faces_no_matrix(island, |i_face| {
+                let _ = self.traverse_faces_no_matrix(island, |i_face| {
                     all_faces.remove(&i_face);
                     ControlFlow::Continue(())
                 });
@@ -251,7 +251,7 @@ impl Papercraft {
         while let Some(root) = pending_faces.iter().copied().next() {
             pending_faces.remove(&root);
 
-            traverse_faces_ex(
+            let _ = traverse_faces_ex(
                 &model,
                 root,
                 (),

@@ -1137,7 +1137,7 @@ impl PapercraftContext {
             None
         };
         for (_i_island, island) in self.papercraft.islands() {
-            self.papercraft.traverse_faces(island, |i_face, face, mx| {
+            let _ = self.papercraft.traverse_faces(island, |i_face, face, mx| {
                 if let Some(mx_face) = &mut shadow_cache {
                     mx_face.insert(i_face, *mx);
                 }
@@ -1440,7 +1440,7 @@ impl PapercraftContext {
 
         let fn_body_to_top = |vertices_sel: &mut glr::DynamicVertexArray<MStatus>,
                               i_face: FaceIndex| {
-            crate::paper::traverse_faces_ex(
+            let _ = crate::paper::traverse_faces_ex(
                 self.papercraft.model(),
                 i_face,
                 (),
@@ -1460,7 +1460,7 @@ impl PapercraftContext {
             let body_to_top =
                 vertices_sel_top_by_face(&self.gl_objs.vertices_sel, island.root_face()) == -1;
 
-            self.papercraft.traverse_faces_no_matrix(island, |i_face| {
+            let _ = self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                 vertices_sel_by_face(&mut self.gl_objs.vertices_sel, i_face).fill(MStatus {
                     color: MSTATUS_SEL.color,
                     top,
@@ -1492,7 +1492,7 @@ impl PapercraftContext {
             }
 
             if body_to_top {
-                crate::paper::traverse_faces_ex(
+                let _ = crate::paper::traverse_faces_ex(
                     self.papercraft.model(),
                     i_sel_face,
                     (),
@@ -1815,7 +1815,7 @@ impl PapercraftContext {
             .into_iter()
             .rev()
         {
-            self.papercraft.traverse_faces(island, |i_face, face, fmx| {
+            let _ = self.papercraft.traverse_faces(island, |i_face, face, fmx| {
                 let plane = self.papercraft.model().face_plane(face);
 
                 let tri = face.index_vertices();
@@ -2069,7 +2069,7 @@ impl PapercraftContext {
                         // An island is in the selection box if any of its vertices is inside the
                         // rectangle.
                         for (island_key, island) in self.papercraft.islands() {
-                            self.papercraft.traverse_faces_no_matrix(island, |i_face| {
+                            let _ = self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                                 let idx = 3 * usize::from(i_face);
                                 for i in idx..idx + 3 {
                                     let pos = self.gl_objs.paper_vertices[i].pos_2d;
@@ -2385,7 +2385,7 @@ impl PapercraftContext {
             .islands()
             .map(|(id, island)| {
                 let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
-                self.papercraft.traverse_faces(island, |i_face, face, mx| {
+                let _ = self.papercraft.traverse_faces(island, |i_face, face, mx| {
                     self.paper_draw_face(face, i_face, mx, &mut args, &mut extra);
                     ControlFlow::Continue(())
                 });

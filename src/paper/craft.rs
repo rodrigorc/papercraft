@@ -422,7 +422,7 @@ impl Papercraft {
     ) -> (Vector2, Vector2) {
         let mx = island.matrix() * Matrix3::from(Matrix2::from_angle(angle));
         let mut vx = Vec::new();
-        traverse_faces_ex(
+        let _ = traverse_faces_ex(
             &self.model,
             island.root_face(),
             mx,
@@ -486,7 +486,7 @@ impl Papercraft {
         // instead of creating it from scratch every time, but is it worth it?
         memo.resize(self.model.num_faces(), IslandKey::default());
         for (i_island, island) in self.islands() {
-            self.traverse_faces_no_matrix(island, |i_face| {
+            let _ = self.traverse_faces_no_matrix(island, |i_face| {
                 memo[usize::from(i_face)] = i_island;
                 ControlFlow::Continue(())
             });
@@ -576,7 +576,7 @@ impl Papercraft {
         self.edges[usize::from(i_edge)] = EdgeStatus::Cut(FlapSide::False);
 
         let mut data_found = None;
-        self.traverse_faces(&self.islands[i_island], |i_face, _, fmx| {
+        let _ = self.traverse_faces(&self.islands[i_island], |i_face, _, fmx| {
             if i_face == i_face_a {
                 data_found = Some((*fmx, i_face_b, i_face_a));
             } else if i_face == i_face_b {
@@ -694,7 +694,7 @@ impl Papercraft {
     }
     pub fn contains_face(&self, island: &Island, face: FaceIndex) -> bool {
         let mut found = false;
-        self.traverse_faces_no_matrix(island, |i_face| {
+        let _ = self.traverse_faces_no_matrix(island, |i_face| {
             if i_face == face {
                 found = true;
                 ControlFlow::Break(())
@@ -706,7 +706,7 @@ impl Papercraft {
     }
     pub fn island_face_count(&self, island: &Island) -> u32 {
         let mut count = 0;
-        self.traverse_faces_no_matrix(island, |_| {
+        let _ = self.traverse_faces_no_matrix(island, |_| {
             count += 1;
             ControlFlow::Continue(())
         });
@@ -714,7 +714,7 @@ impl Papercraft {
     }
     pub fn island_area(&self, island: &Island) -> f32 {
         let mut area = 0.0;
-        self.traverse_faces_no_matrix(island, |face| {
+        let _ = self.traverse_faces_no_matrix(island, |face| {
             area += self.model().face_area(face);
             ControlFlow::Continue(())
         });
@@ -722,7 +722,7 @@ impl Papercraft {
     }
     pub fn get_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
         let mut res = FxHashSet::default();
-        traverse_faces_ex(
+        let _ = traverse_faces_ex(
             &self.model,
             i_face,
             (),
@@ -736,7 +736,7 @@ impl Papercraft {
     }
     fn get_flat_faces_with_matrix(&self, i_face: FaceIndex) -> FxHashMap<FaceIndex, Matrix3> {
         let mut res = FxHashMap::default();
-        traverse_faces_ex(
+        let _ = traverse_faces_ex(
             &self.model,
             i_face,
             Matrix3::one(),
@@ -807,7 +807,7 @@ impl Papercraft {
     }
     pub fn island_edges(&self, island: &Island) -> FxHashSet<EdgeIndex> {
         let mut res = FxHashSet::default();
-        self.traverse_faces_no_matrix(island, |i_f| {
+        let _ = self.traverse_faces_no_matrix(island, |i_f| {
             res.extend(
                 self.model[i_f]
                     .index_edges()
@@ -1244,7 +1244,7 @@ impl Papercraft {
     pub fn get_biggest_flat_face(&self, island: &Island) -> (Vec<(FaceIndex, f32)>, f32) {
         let mut biggest_face = None;
         let mut visited = FxHashSet::<FaceIndex>::default();
-        self.traverse_faces_no_matrix(island, |i_face| {
+        let _ = self.traverse_faces_no_matrix(island, |i_face| {
             if !visited.contains(&i_face) {
                 let flat_face = self.get_flat_faces(i_face);
                 visited.extend(&flat_face);
@@ -1285,7 +1285,7 @@ impl Papercraft {
         let scale = self.options.scale;
 
         let mut mxs = FxHashMap::default();
-        self.traverse_faces(island, |i_face, _, mx| {
+        let _ = self.traverse_faces(island, |i_face, _, mx| {
             mxs.insert(i_face, *mx);
             ControlFlow::Continue(())
         });
@@ -1363,7 +1363,7 @@ impl Papercraft {
     fn island_contour(&self, i_island: IslandKey) -> OrderedContour {
         let island = self.island_by_key(i_island).unwrap();
         let mut first = None;
-        traverse_faces_ex(
+        let _ = traverse_faces_ex(
             &self.model,
             island.root_face(),
             (),

@@ -158,8 +158,8 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         let gl = renderer.gl_context().clone();
         let imgui = renderer.imgui();
         let mut imgui = unsafe { imgui.set_current() };
-        imgui.set_allow_user_scaling(true);
-        imgui.nav_enable_keyboard();
+        imgui.io_mut().set_allow_user_scaling(true);
+        imgui.io_mut().nav_enable_keyboard();
 
         // Initialize papercraft status
         let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
@@ -168,7 +168,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
                 name: Some(name),
                 read_only: false,
                 ..
-            } => Some((FileAction::ImportModel, name.to_owned())),
+            } => Some(FileOperation::new(FileAction::ImportModel, name.clone())),
             Cli {
                 name: Some(name),
                 read_only: true,
@@ -176,13 +176,20 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             } => {
                 // This will be rewritten when/if the file is loaded, but setting it here avoids a UI flicker
                 data.ui.mode = MouseMode::ReadOnly;
-                Some((FileAction::OpenCraftReadOnly, name.to_owned()))
+                Some(FileOperation::new(
+                    FileAction::OpenCraftReadOnly,
+                    name.clone(),
+                ))
             }
             _ => None,
         };
 
-        let last_path = if let Some((_, path)) = &cmd_file_action {
-            path.parent().map(|p| p.to_owned()).unwrap_or_default()
+        let last_path = if let Some(file_op) = &cmd_file_action {
+            file_op
+                .file_name
+                .parent()
+                .map(|p| p.to_owned())
+                .unwrap_or_default()
         } else {
             PathBuf::new()
         };
@@ -219,13 +226,12 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             option_button_height: 0.0,
             file_dialog: None,
             filechooser_atlas: Default::default(),
-            file_action: None,
+            file_operation: None,
+            cmd_file_operation: cmd_file_action,
             last_path,
             last_export: PathBuf::new(),
             error_message: None,
             confirmable_action: None,
-            popup_time_start: Instant::now(),
-            cmd_file_action,
             quit_requested: BoolWithConfirm::None,
             title: String::new(),
             textures_to_delete: Vec::new(),
@@ -260,21 +266,33 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         if let Some((options, push_undo)) = self.options_applied.take() {
             self.data.set_papercraft_options(options, push_undo);
             self.add_rebuild(RebuildFlags::all());
-            window.renderer().imgui().invalidate_font_atlas();
+            window.imgui().invalidate_font_atlas();
         }
+        let imgui = window.imgui();
         if let Some(new_config) = self.config_applied.take() {
             self.config = new_config;
             set_locale(&self.config.locale);
-            let mut imgui = unsafe { window.renderer().imgui().set_current() };
             if self.config.light_mode {
-                imgui.style().set_colors_light();
+                imgui.style_mut().set_colors_light();
             } else {
-                imgui.style().set_colors_dark();
+                imgui.style_mut().set_colors_dark();
             }
             match self.config.save() {
                 Ok(_) => log::info!("Saved config {:?}", self.config),
                 Err(e) => log::error!("Error saving config {e}"),
             }
+        }
+
+        if let Some(mut op) = self.file_operation.take() {
+            if let FileOperationStep::WaitForStart(instant) = op.step {
+                if instant.elapsed() > Duration::from_millis(250) {
+                    // Do the thing!
+                    let res = self.run_file_action(imgui, &op);
+                    op.step = FileOperationStep::Done(res);
+                }
+            }
+            self.file_operation = Some(op);
+            window.ping_user_input();
         }
 
         if res.window_closed && self.quit_requested == BoolWithConfirm::None {
@@ -440,6 +458,30 @@ impl FileAction {
     }
 }
 
+#[derive(Debug)]
+enum FileOperationStep {
+    New,
+    WaitForStart(Instant),
+    Done(Result<()>),
+}
+
+#[derive(Debug)]
+struct FileOperation {
+    action: FileAction,
+    file_name: PathBuf,
+    step: FileOperationStep,
+}
+
+impl FileOperation {
+    fn new(action: FileAction, file_name: impl Into<PathBuf>) -> FileOperation {
+        FileOperation {
+            action,
+            file_name: file_name.into(),
+            step: FileOperationStep::New,
+        }
+    }
+}
+
 struct ConfirmableAction {
     title: String,
     message: String,
@@ -478,13 +520,14 @@ struct GlobalContext {
     check_version_status: CheckVersionStatus,
     file_dialog: Option<FileDialog>,
     filechooser_atlas: filechooser::CustomAtlas,
-    file_action: Option<(FileAction, PathBuf)>,
+    // Like file_action but from the command line, only used in the very first frame.
+    cmd_file_operation: Option<FileOperation>,
+    // file_operation is done out of the ui frame.
+    file_operation: Option<FileOperation>,
     last_path: PathBuf,
     last_export: PathBuf,
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
-    popup_time_start: Instant,
-    cmd_file_action: Option<(FileAction, PathBuf)>,
     quit_requested: BoolWithConfirm,
     title: String,
     // If a texture is added to a window-list, but then deleted, it should be kept alive until after the render.
@@ -734,7 +777,7 @@ impl GlobalContext {
                 let sz_full = ui.get_content_region_avail();
                 let f = ui.get_font_size();
                 let logo_height = f * 8.0;
-                let logo_rect = ui.font_atlas().get_custom_rect(self.logo_rect);
+                let logo_rect = ui.io().font_atlas().get_custom_rect(self.logo_rect);
                 let logo_scale = logo_height / logo_rect.Height as f32;
                 let logo_width = logo_rect.Width as f32 * logo_scale;
                 advance_cursor_pixels(ui, (sz_full.x - logo_width) / 2.0, 0.0);
@@ -842,43 +885,48 @@ impl GlobalContext {
     }
 
     // Returns true if the action has just been done successfully
-    fn build_modal_wait_message_and_run_file_action(&mut self, ui: &Ui) -> bool {
-        let mut ok = false;
-        if let Some(file_action) = self.file_action.take() {
-            let (action, file) = &file_action;
-            let title = action.title();
+    fn build_modal_file_action(&mut self, ui: &Ui) {
+        if let Some(mut file_operation) = self.file_operation.take() {
+            if let FileOperationStep::New = file_operation.step {
+                if file_operation.action == FileAction::GeneratePrintable {
+                    // Rebuild everything, just in case.
+                    // For now it must be done during the ImGui frame to be able to create glyphs.
+                    //TODO: should pass show_texts as argument?
+                    let old_show_texts = self.data.ui.show_texts;
+                    self.data.ui.show_texts = true;
+                    self.pre_render_flags(ui, RebuildFlags::all());
+                    self.data.ui.show_texts = old_show_texts;
+                }
+                file_operation.step = FileOperationStep::WaitForStart(Instant::now());
+                ui.open_popup(id("wait"));
+            }
+
+            let title = file_operation.action.title();
             let mut res = None;
             // Build the modal itself
             ui.set_next_window_size(vec2(150.0, 0.0), imgui::Cond::Once);
-            ui.popup_modal_config(lbl_id(title, "Wait"))
+            ui.popup_modal_config(lbl_id(title, "wait"))
                 .flags(imgui::WindowFlags::NoResize)
                 .with(|| {
                     ui.text(&tr!("Please, wait..."));
-
-                    // Give time to the fading modal, because the action is blocking and will
-                    // freeze the UI for a while. This should be enough.
-                    let run = self.popup_time_start.elapsed() > Duration::from_millis(250);
-                    if run {
-                        res = Some(self.run_file_action(ui, *action, file));
+                    if let FileOperationStep::Done(done_res) = &file_operation.step {
                         ui.close_current_popup();
+                        res = Some(done_res);
                     }
                 });
 
             match res {
                 None => {
                     // keep the action pending, for now.
-                    self.file_action = Some(file_action);
+                    self.file_operation = Some(file_operation);
                 }
-                Some(Ok(())) => {
-                    ok = true;
-                }
+                Some(Ok(())) => {}
                 Some(Err(e)) => {
                     self.error_message = Some(format!("{e:?}"));
                     ui.open_popup(id("error"));
                 }
             }
         }
-        ok
     }
 
     fn build_ui(&mut self, ui: &Ui) -> MenuActions {
@@ -996,7 +1044,7 @@ impl GlobalContext {
                         self.sz_full = sz_full;
                     }
 
-                    let scale = ui.display_scale();
+                    let scale = ui.io().display_scale();
 
                     self.build_scene(ui, self.splitter_pos);
                     let sz_scene = scale * ui.get_item_rect_size();
@@ -1060,7 +1108,7 @@ impl GlobalContext {
         self.build_config_dialog(ui);
         self.build_options_dialog(ui);
         self.build_modal_error_message(ui);
-        self.build_modal_wait_message_and_run_file_action(ui);
+        self.build_modal_file_action(ui);
         self.build_confirm_message(ui, &mut menu_actions);
         self.build_about(ui);
 
@@ -1880,9 +1928,9 @@ impl GlobalContext {
             .size(vec2(width, 0.0))
             .child_flags(imgui::ChildFlags::Borders)
             .with(|| {
-                let scale = ui.display_scale();
+                let scale = ui.io().display_scale();
                 let pos = scale * ui.get_cursor_screen_pos();
-                let dsp_size = scale * ui.display_size();
+                let dsp_size = scale * ui.io().display_size();
 
                 canvas3d(ui, &mut self.scene_ui_status);
 
@@ -1925,9 +1973,9 @@ impl GlobalContext {
             .child_config(lbl("paper"))
             .child_flags(imgui::ChildFlags::Borders)
             .with(|| {
-                let scale = ui.display_scale();
+                let scale = ui.io().display_scale();
                 let pos = scale * ui.get_cursor_screen_pos();
-                let dsp_size = scale * ui.display_size();
+                let dsp_size = scale * ui.io().display_size();
 
                 canvas3d(ui, &mut self.paper_ui_status);
 
@@ -2034,7 +2082,6 @@ impl GlobalContext {
 
         let mut save_as = false;
         let mut open_file_dialog = false;
-        let mut open_wait = false;
 
         match menu_actions.open {
             BoolWithConfirm::Requested => {
@@ -2063,8 +2110,7 @@ impl GlobalContext {
         if menu_actions.save {
             match &self.file_name {
                 Some(f) => {
-                    self.file_action = Some((FileAction::SaveAsCraft, f.clone()));
-                    open_wait = true;
+                    self.file_operation = Some(FileOperation::new(FileAction::SaveAsCraft, f));
                 }
                 None => save_as = true,
             }
@@ -2177,7 +2223,7 @@ impl GlobalContext {
             ui.open_popup(id("file_dialog_modal"));
         }
         if let Some(mut fd) = self.file_dialog.take() {
-            let dsp_size = ui.display_size();
+            let dsp_size = ui.io().display_size();
             let min_size = 0.25 * dsp_size;
             let max_size = 0.90 * dsp_size;
             ui.set_next_window_size_constraints(min_size, max_size);
@@ -2243,8 +2289,7 @@ impl GlobalContext {
                                 }
                                 _ => {
                                     finish_file_dialog = true;
-                                    open_wait = true;
-                                    self.file_action = Some((action, file));
+                                    self.file_operation = Some(FileOperation::new(action, file));
                                 }
                             }
                         }
@@ -2268,8 +2313,7 @@ impl GlobalContext {
                         match reply {
                             Some(true) => {
                                 finish_file_dialog = true;
-                                open_wait = true;
-                                self.file_action = Some((fd.action, confirm_name));
+                                self.file_operation = Some(FileOperation::new(fd.action, confirm_name));
                             }
                             Some(false) => {}
                             None => { fd.confirm = Some(confirm_name); }
@@ -2285,10 +2329,6 @@ impl GlobalContext {
                         self.file_dialog = Some(fd);
                     }
                 });
-        }
-        if open_wait {
-            self.popup_time_start = Instant::now();
-            ui.open_popup(id("Wait"));
         }
     }
 
@@ -2709,14 +2749,9 @@ impl GlobalContext {
             Some(&self.title)
         }
     }
-    fn run_file_action(
-        &mut self,
-        ui: &Ui,
-        action: FileAction,
-        file_name: impl AsRef<Path>,
-    ) -> Result<()> {
-        let file_name = file_name.as_ref();
-        match action {
+    fn run_file_action(&mut self, imgui: &imgui::Context, action: &FileOperation) -> Result<()> {
+        let file_name = action.file_name.as_ref();
+        match action.action {
             FileAction::OpenCraft => {
                 self.open_craft(file_name)?;
                 self.file_name = Some(file_name.to_owned());
@@ -2750,7 +2785,7 @@ impl GlobalContext {
             }
             FileAction::ExportObj => self.export_obj(file_name)?,
             FileAction::GeneratePrintable => {
-                self.generate_printable(ui, file_name)?;
+                self.generate_printable(imgui, file_name)?;
             }
         }
         Ok(())
@@ -2999,7 +3034,7 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
     ui.invisible_button_config("canvas3d").size(sz).build();
     let hovered = ui.is_item_hovered();
     let pos = ui.get_item_rect_min();
-    let scale = ui.display_scale();
+    let scale = ui.io().display_scale();
     let mouse_pos = scale * (ui.get_mouse_pos() - pos);
 
     let action = match &st.action {
@@ -3244,7 +3279,6 @@ impl imgui::UiBuilder for Box<GlobalContext> {
     fn do_ui(&mut self, ui: &Ui) {
         //ui.show_demo_window(None);
 
-        self.rebuild = RebuildFlags::empty();
         ui.set_next_window_pos(vec2(0.0, 0.0), imgui::Cond::Always, vec2(0.0, 0.0));
         let vw = ui.get_main_viewport();
         let sz = vw.size(); //&ui.get_content_region_avail();
@@ -3265,10 +3299,8 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                 (imgui::StyleVar::WindowRounding, imgui::StyleValue::F32(0.0)),
             ))
             .with(|| {
-                if let Some(cmd_file_action) = self.cmd_file_action.take() {
-                    self.popup_time_start = Instant::now();
-                    self.file_action = Some(cmd_file_action);
-                    ui.open_popup(id("Wait"));
+                if let Some(cmd_file_operation) = self.cmd_file_operation.take() {
+                    self.file_operation = Some(cmd_file_operation);
                 }
 
                 let menu_actions = self.build_ui(ui);
@@ -3295,8 +3327,8 @@ impl imgui::UiBuilder for Box<GlobalContext> {
         // pre-render
         self.pre_render_flags(ui, self.rebuild);
 
-        let scale = ui.display_scale();
-        let text_tex = ui.font_atlas().texture_id();
+        let scale = ui.io().display_scale();
+        let text_tex = ui.io().font_atlas().texture_id();
 
         if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
             if self.rebuild.contains(RebuildFlags::SCENE_FBO) {

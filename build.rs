@@ -46,16 +46,10 @@ fn build_resource() -> Result<()> {
                 .arg("res/resource.rc")
                 .status()?
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "RC or WINDRES should be defined",
-            ));
+            return Err(std::io::Error::other("RC or WINDRES should be defined"));
         };
         if !status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "windres error",
-            ));
+            return Err(std::io::Error::other("windres error"));
         }
         println!("cargo:rustc-link-arg={}", output.display());
         for entry in std::fs::read_dir("res")? {

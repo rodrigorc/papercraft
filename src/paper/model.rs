@@ -396,7 +396,7 @@ impl Model {
         let first_face = self.faces().next();
         if let Some((i_face, _)) = first_face {
             let mut count = 0;
-            traverse_faces_ex(self, i_face, (), BodyTraverse, |_, _, _| {
+            let _ = traverse_faces_ex(self, i_face, (), BodyTraverse, |_, _, _| {
                 count += 1;
                 std::ops::ControlFlow::Continue(())
             });

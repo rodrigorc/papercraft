@@ -149,7 +149,7 @@ Did you import an OBJ model into Papercraft and then lost the original model? No
 
 The main purpose of this program is to create a document with the 2D unwrapping of the 3D model. This option does it. Big models with big paper and high resolution may take a while, so be patient.
 
-There are currently three formats for the printable document:
+There are currently four formats for the printable document:
 
 * PDF: default format. It will create a multi-page PDF.
 * PNG: it creates one PNG file per page, autonumbered.
@@ -157,6 +157,7 @@ There are currently three formats for the printable document:
     * One visible layer with the image to be printed.
     * One hidden layer with the cuts.
     * One hidden layer with the folds: one sublayer with the _valleys_ another with the _mountains_.
+* Inkscape SVG multipage: Inkscape implements a SVG extension that does support multiple pages in the same file. If you open such a file in other SVG viewer you'll probably only see the first page. It has the same layers than the previous SVG format, but repeated for every page.
 
 ### View/Textures
 

@@ -890,9 +890,9 @@ dependencies = [
 
 [[package]]
 name = "easy-imgui-filechooser"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4836fe7f97711b1f91ab77ff810776d88ea943a921c1f34d5ea83f35573eee39"
+checksum = "abf396478d8617ff439cbbdfb2ceaab7be3772237dd4ed647d582d6fe456918b"
 dependencies = [
  "bitflags 2.9.1",
  "bytesize",

@@ -17,15 +17,25 @@ fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
 }
 
 impl GlobalContext {
-    pub fn generate_printable(&mut self, imgui: &imgui::Context, file_name: &Path) -> Result<()> {
-        let res = match file_name
-            .extension()
-            .map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("pdf") => self.generate_pdf(file_name),
-            Some("svg") => self.generate_svg(file_name),
-            Some("png") => self.generate_png(imgui.io().font_atlas(), file_name),
+    pub fn generate_printable(
+        &mut self,
+        imgui: &imgui::Context,
+        file_name: &Path,
+        file_format: Option<easy_imgui_filechooser::FilterId>,
+    ) -> Result<()> {
+        use crate::filters;
+
+        let res = match (
+            file_name
+                .extension()
+                .map(|s| s.to_string_lossy().into_owned().to_ascii_lowercase())
+                .as_deref(),
+            file_format,
+        ) {
+            (Some("pdf"), _) => self.generate_pdf(file_name),
+            (Some("svg"), Some(filters::SVG_MULTIPAGE)) => self.generate_svg_multipage(file_name),
+            (Some("svg"), _) => self.generate_svg(file_name),
+            (Some("png"), _) => self.generate_png(imgui.io().font_atlas(), file_name),
             _ => anyhow::bail!(
                 "{}",
                 tr!(
@@ -36,6 +46,7 @@ impl GlobalContext {
         };
         res.with_context(|| tr!("Error exporting to {}", file_name.display()))?;
         self.last_export = file_name.to_path_buf();
+        self.last_export_filter = file_format;
         Ok(())
     }
 
@@ -290,13 +301,16 @@ impl GlobalContext {
 
     fn generate_svg(&self, file_name: &Path) -> Result<()> {
         let options = self.data.papercraft().options();
+        let page_size = Vector2::from(options.page_size);
         let edge_id_position = options.edge_id_position;
 
+        // The channel moves (page_no, image, svg_text_before_image, svg_text_after_image)
         let (tx_compress, rx_compress) =
             std::sync::mpsc::channel::<(u32, image::RgbaImage, Vec<u8>, Vec<u8>)>();
         let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
 
         let file_name = PathBuf::from(file_name);
+        // This parallel loop reads from the channel, compresses the image and stores the file
         rayon::spawn(move || {
             let res: Result<()> = rx_compress.into_iter().par_bridge().try_for_each(
                 |(page, pixbuf, prefix, suffix)| {
@@ -309,20 +323,7 @@ impl GlobalContext {
                         let mut out = std::io::BufWriter::new(out);
 
                         out.write_all(&prefix)?;
-
-                        // Can't write directly the image to the file as a base64, because Image::write_to requires `Seek`, but `base64::EncoderWriter` doesn't implement it.
-                        {
-                            use base64::prelude::*;
-                            let mut png = Vec::new();
-                            let mut cpng = std::io::Cursor::new(&mut png);
-                            pixbuf.write_to(&mut cpng, image::ImageFormat::Png)?;
-
-                            let mut b64png =
-                                base64::write::EncoderWriter::new(&mut out, &BASE64_STANDARD);
-                            b64png.write_all(&png)?;
-                            b64png.finish()?;
-                        }
-
+                        Self::svg_write_layer_background(&mut out, &pixbuf, page_size)?;
                         out.write_all(&suffix)?;
 
                         log::debug!("Saved page {}", name.display());
@@ -337,8 +338,6 @@ impl GlobalContext {
         });
 
         self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
-            let page_size = Vector2::from(options.page_size);
-            let in_page = options.is_in_page_fn(page);
 
             let mut prefix = Vec::new();
 
@@ -349,111 +348,17 @@ impl GlobalContext {
                 page_size.x, page_size.y
             )?;
 
-            let write_layer_text = |out: &mut Vec<u8>| -> Result<()> {
-                if texts.is_empty() {
-                    return Ok(());
-                }
-                // begin layer Text
-                writeln!(out, r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#)?;
-                for text in texts {
-                    let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-text.angle);
-                    let pos = basis2.rotate_vector(text.pos);
-                    writeln!(out, r#"<text x="{}" y="{}" style="{}font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
-                        pos.x,
-                        pos.y,
-                        match text.align {
-                            TextAlign::Near => "",
-                            TextAlign::Center => "text-anchor:middle;",
-                            TextAlign::Far => "text-anchor:end;",
-                        },
-                        text.size,
-                        Deg::from(text.angle).0,
-                        text.text,
-                    )?;
-                }
-                writeln!(out, r#"</g>"#)?;
-                // end layer Text
-                Ok(())
-            };
-
             if edge_id_position != EdgeIdPosition::Inside {
-                write_layer_text(&mut prefix)?;
+                Self::svg_write_layer_text(&mut prefix, texts)?;
             }
-
-            // begin layer Background
-            writeln!(&mut prefix, r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#)?;
-            write!(
-                &mut prefix,
-                r#"<image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/png;base64,"#,
-                page_size.x, page_size.y)?;
 
             let mut suffix = Vec::new();
-            writeln!(&mut suffix, r#"" id="background" x="0" y="0" style="display:inline"/>"#)?;
-
-            writeln!(&mut suffix, r#"</g>"#)?;
-            // end layer Background
 
             if edge_id_position == EdgeIdPosition::Inside {
-                write_layer_text(&mut suffix)?;
+                Self::svg_write_layer_text(&mut suffix, texts)?;
             }
 
-            // begin layer Cut
-            writeln!(&mut suffix, r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#)?;
-            for (idx, (i_island, lines)) in lines_by_island.iter().enumerate() {
-                let perimeter = self.data.papercraft().island_perimeter(*i_island);
-                let mut contour_points = Vec::with_capacity(perimeter.len());
-                let mut touching = false;
-                for peri in perimeter.iter() {
-                    lines.lines_by_cut_info(extra.cut_info().unwrap(), peri.i_edge(), peri.face_sign(), |p0, _| {
-                        let (is_in, p0) = in_page(p0);
-                        touching |= is_in;
-                        contour_points.push(p0);
-                    });
-                }
-                if touching {
-                    writeln!(&mut suffix, r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{idx}" d=""#)?;
-                    write!(&mut suffix, r#"M "#)?;
-                    for p in contour_points {
-                        writeln!(&mut suffix, r#"{},{}"#, p.x, p.y)?;
-                    }
-                    writeln!(&mut suffix, r#"z"#)?;
-                    writeln!(&mut suffix, r#"" />"#)?;
-                }
-            }
-            writeln!(&mut suffix, r#"</g>"#)?;
-            // end layer Cut
-
-            // begin layer Fold
-            writeln!(&mut suffix, r#"<g inkscape:label="Fold" inkscape:groupmode="layer" id="Fold" style="display:none">"#)?;
-            for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
-                writeln!(&mut suffix, r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
-                    if fold_kind == EdgeDrawKind::Mountain { "Mountain"} else { "Valley" })?;
-                for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
-                    let creases = lines.iter_crease(fold_kind);
-                    // each crease can be checked for bounds individually
-                    let page_creases = creases
-                        .filter_map(|(a, b)| {
-                            let (is_in_a, a) = in_page(a);
-                            let (is_in_b, b) = in_page(b);
-                            (is_in_a || is_in_b).then_some((a, b))
-                        })
-                        .collect::<Vec<_>>();
-                    if !page_creases.is_empty() {
-                        writeln!(&mut suffix, r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
-                            idx,
-                            if fold_kind == EdgeDrawKind::Mountain  { "#ff0000" } else { "#0000ff" },
-                            if fold_kind == EdgeDrawKind::Mountain  { "foldm" } else { "foldv" }
-                        )?;
-                        for (a, b) in page_creases {
-                            writeln!(&mut suffix, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
-                        }
-                        writeln!(&mut suffix, r#"" />"#)?;
-                    }
-                }
-                writeln!(&mut suffix, r#"</g>"#)?;
-            }
-            writeln!(&mut suffix, r#"</g>"#)?;
-            // end layer Fold
+            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, &extra)?;
 
             writeln!(&mut suffix, r#"</svg>"#)?;
 
@@ -462,6 +367,312 @@ impl GlobalContext {
         })?;
 
         drop(tx_compress);
+        // Forward the error, if any
+        rx_done.into_iter().collect::<Result<()>>()?;
+
+        Ok(())
+    }
+
+    fn svg_write_layer_background(
+        w: &mut impl Write,
+        pixbuf: &image::RgbaImage,
+        page_size: Vector2,
+    ) -> Result<()> {
+        // begin layer Background
+        writeln!(
+            w,
+            r#"<g inkscape:label="Background" inkscape:groupmode="layer" id="Background">"#
+        )?;
+        write!(
+            w,
+            r#"<image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/png;base64,"#,
+            page_size.x, page_size.y
+        )?;
+
+        Self::image_to_base64(w, pixbuf)?;
+
+        writeln!(
+            w,
+            r#"" id="background" x="0" y="0" style="display:inline"/>"#
+        )?;
+        writeln!(w, r#"</g>"#)?;
+        // end layer Background
+        Ok(())
+    }
+
+    fn image_to_base64(w: &mut impl Write, pixbuf: &image::RgbaImage) -> Result<()> {
+        // Can't write directly the image to the file as a base64, because Image::write_to requires `Seek`, but `base64::EncoderWriter` doesn't implement it.
+        use base64::prelude::*;
+        let mut png = Vec::new();
+        let mut cpng = std::io::Cursor::new(&mut png);
+        pixbuf.write_to(&mut cpng, image::ImageFormat::Png)?;
+
+        let mut b64png = base64::write::EncoderWriter::new(w, &BASE64_STANDARD);
+        b64png.write_all(&png)?;
+        b64png.finish()?;
+        Ok(())
+    }
+
+    fn svg_write_layer_text(out: &mut Vec<u8>, texts: &[PrintableText]) -> Result<()> {
+        if texts.is_empty() {
+            return Ok(());
+        }
+        // begin layer Text
+        writeln!(
+            out,
+            r#"<g inkscape:label="Text" inkscape:groupmode="layer" id="Text">"#
+        )?;
+        for text in texts {
+            let basis2: cgmath::Basis2<f32> = Rotation2::from_angle(-text.angle);
+            let pos = basis2.rotate_vector(text.pos);
+            writeln!(
+                out,
+                r#"<text x="{}" y="{}" style="{}font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
+                pos.x,
+                pos.y,
+                match text.align {
+                    TextAlign::Near => "",
+                    TextAlign::Center => "text-anchor:middle;",
+                    TextAlign::Far => "text-anchor:end;",
+                },
+                text.size,
+                Deg::from(text.angle).0,
+                text.text,
+            )?;
+        }
+        writeln!(out, r#"</g>"#)?;
+        // end layer Text
+        Ok(())
+    }
+
+    fn svg_write_layer_cut_fold(
+        &self,
+        page: u32,
+        suffix: &mut Vec<u8>,
+        lines_by_island: &[(IslandKey, PaperDrawFaceArgs)],
+        extra: &PaperDrawFaceArgsExtra,
+    ) -> Result<()> {
+        // begin layer Cut
+        let options = self.data.papercraft().options();
+        let in_page = options.is_in_page_fn(page);
+        writeln!(
+            suffix,
+            r#"<g inkscape:label="Cut" inkscape:groupmode="layer" id="Cut" style="display:none">"#
+        )?;
+        for (idx, (i_island, lines)) in lines_by_island.iter().enumerate() {
+            let perimeter = self.data.papercraft().island_perimeter(*i_island);
+            let mut contour_points = Vec::with_capacity(perimeter.len());
+            let mut touching = false;
+            for peri in perimeter.iter() {
+                lines.lines_by_cut_info(
+                    extra.cut_info().unwrap(),
+                    peri.i_edge(),
+                    peri.face_sign(),
+                    |p0, _| {
+                        let (is_in, p0) = in_page(p0);
+                        touching |= is_in;
+                        contour_points.push(p0);
+                    },
+                );
+            }
+            if touching {
+                writeln!(
+                    suffix,
+                    r#"<path style="fill:none;stroke:#000000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="cut_{idx}" d=""#
+                )?;
+                write!(suffix, r#"M "#)?;
+                for p in contour_points {
+                    writeln!(suffix, r#"{},{}"#, p.x, p.y)?;
+                }
+                writeln!(suffix, r#"z"#)?;
+                writeln!(suffix, r#"" />"#)?;
+            }
+        }
+        writeln!(suffix, r#"</g>"#)?;
+        // end layer Cut
+
+        // begin layer Fold
+        writeln!(
+            suffix,
+            r#"<g inkscape:label="Fold" inkscape:groupmode="layer" id="Fold" style="display:none">"#
+        )?;
+        for fold_kind in [EdgeDrawKind::Mountain, EdgeDrawKind::Valley] {
+            writeln!(
+                suffix,
+                r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
+                if fold_kind == EdgeDrawKind::Mountain {
+                    "Mountain"
+                } else {
+                    "Valley"
+                }
+            )?;
+            for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
+                let creases = lines.iter_crease(fold_kind);
+                // each crease can be checked for bounds individually
+                let page_creases = creases
+                    .filter_map(|(a, b)| {
+                        let (is_in_a, a) = in_page(a);
+                        let (is_in_b, b) = in_page(b);
+                        (is_in_a || is_in_b).then_some((a, b))
+                    })
+                    .collect::<Vec<_>>();
+                if !page_creases.is_empty() {
+                    writeln!(
+                        suffix,
+                        r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
+                        idx,
+                        if fold_kind == EdgeDrawKind::Mountain {
+                            "#ff0000"
+                        } else {
+                            "#0000ff"
+                        },
+                        if fold_kind == EdgeDrawKind::Mountain {
+                            "foldm"
+                        } else {
+                            "foldv"
+                        }
+                    )?;
+                    for (a, b) in page_creases {
+                        writeln!(suffix, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;
+                    }
+                    writeln!(suffix, r#"" />"#)?;
+                }
+            }
+            writeln!(suffix, r#"</g>"#)?;
+        }
+        writeln!(suffix, r#"</g>"#)?;
+        // end layer Fold
+        Ok(())
+    }
+
+    fn generate_svg_multipage(&self, file_name: &Path) -> Result<()> {
+        let options = self.data.papercraft().options();
+        let page_size = Vector2::from(options.page_size);
+        let edge_id_position = options.edge_id_position;
+
+        // The channel moves (page_no, image, svg_text_before_image, svg_text_after_image)
+        let (tx_compress, rx_compress) =
+            std::sync::mpsc::channel::<(u32, image::RgbaImage, Vec<u8>, Vec<u8>)>();
+        // This other channel moves (page_no, svg_text_for_page)
+        let (tx_page, rx_page) = std::sync::mpsc::channel::<(u32, Vec<u8>)>();
+
+        let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
+
+        // This parallel loop reads from the channel, compresses the image and sends the piece of
+        // SVG to tx_page, back to the main thread.
+        rayon::spawn(move || {
+            let res: Result<()> = rx_compress.into_iter().par_bridge().try_for_each(
+                |(page, pixbuf, mut prefix, suffix)| {
+                    // A try block would be nice here
+                    ((|| -> Result<()> {
+                        log::debug!("SVG page {}", page);
+
+                        Self::svg_write_layer_background(&mut prefix, &pixbuf, page_size)?;
+                        prefix.write_all(&suffix)?;
+
+                        log::debug!("Saved page {}", page);
+                        tx_page.send((page, prefix))?;
+                        Ok(())
+                    })())
+                    .with_context(|| tr!("Error saving page {}", page))
+                },
+            );
+            // Send the possible error back to the main thread
+            tx_done.send(res).unwrap();
+            drop(tx_done);
+        });
+
+        self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
+            let page_offs = options.page_position(page);
+
+            let mut prefix = Vec::new();
+
+            // start layer Page
+            writeln!(&mut prefix, r#"<g inkscape:label="Page_{}" inkscape:groupmode="layer" id="Text" transform="translate({},{})">"#,
+                page + 1, page_offs.x, page_offs.y)?;
+
+            if edge_id_position != EdgeIdPosition::Inside {
+                Self::svg_write_layer_text(&mut prefix, texts)?;
+            }
+
+            let mut suffix = Vec::new();
+
+            if edge_id_position == EdgeIdPosition::Inside {
+                Self::svg_write_layer_text(&mut suffix, texts)?;
+            }
+
+            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, &extra)?;
+
+            writeln!(&mut suffix, r#"</g>"#)?;
+            // end layer Page
+
+            tx_compress.send((page, pixbuf, prefix, suffix)).unwrap();
+            Ok(())
+        })?;
+        drop(tx_compress);
+
+        let file_name = PathBuf::from(file_name);
+        let f = std::fs::File::create(&file_name)?;
+        let mut f = std::io::BufWriter::new(f);
+
+        let page_size = Vector2::from(options.page_size);
+        writeln!(
+            &mut f,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#
+        )?;
+        writeln!(
+            &mut f,
+            r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
+            page_size.x, page_size.y
+        )?;
+
+        writeln!(&mut f, r#"<sodipodi:namedview>"#)?;
+        for page in 0..options.pages {
+            let page_offs = options.page_position(page);
+            writeln!(
+                &mut f,
+                r#"<inkscape:page x="{}" y="{}" width="{}" height="{}" id="Page_{}" />"#, // margin?
+                page_offs.x,
+                page_offs.y,
+                page_size.x,
+                page_size.y,
+                page + 1
+            )?;
+        }
+        writeln!(&mut f, r#"</sodipodi:namedview>"#)?;
+
+        // Here we get all the pages in an unspecified order, that is not very nice. We want to save
+        // them in the file ordered. So we keep the future pages in a Vec
+        let mut desired_page = 0;
+        let mut received_pages: Vec<Vec<u8>> = (0..options.pages).map(|_| Vec::new()).collect();
+
+        let res: Result<()> = rx_page.into_iter().try_for_each(|(page, mut data)| {
+            log::info!("Got SVG page {}", page + 1);
+            if page == desired_page {
+                loop {
+                    log::info!("Writing desired page {}", desired_page + 1);
+                    f.write_all(&data)?;
+                    desired_page += 1;
+                    if desired_page >= options.pages {
+                        // file complete
+                        break;
+                    }
+                    data = std::mem::take(&mut received_pages[desired_page as usize]);
+                    if data.is_empty() {
+                        // wait for next page
+                        break;
+                    }
+                }
+            } else {
+                // store for later
+                log::info!("Storing page {}", page + 1);
+                received_pages[page as usize] = data;
+            }
+            Ok(())
+        });
+        res?;
+        writeln!(&mut f, r#"</svg>"#)?;
+
         // Forward the error, if any
         rx_done.into_iter().collect::<Result<()>>()?;
 

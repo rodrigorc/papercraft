@@ -235,6 +235,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             cmd_file_operation: cmd_file_action,
             last_path,
             last_export: PathBuf::new(),
+            last_export_filter: None,
             error_message: None,
             confirmable_action: None,
             quit_requested: BoolWithConfirm::None,
@@ -474,14 +475,23 @@ enum FileOperationStep {
 struct FileOperation {
     action: FileAction,
     file_name: PathBuf,
+    file_format: Option<easy_imgui_filechooser::FilterId>,
     step: FileOperationStep,
 }
 
 impl FileOperation {
     fn new(action: FileAction, file_name: impl Into<PathBuf>) -> FileOperation {
+        Self::new_with_file_format(action, file_name, None)
+    }
+    fn new_with_file_format(
+        action: FileAction,
+        file_name: impl Into<PathBuf>,
+        file_format: Option<easy_imgui_filechooser::FilterId>,
+    ) -> FileOperation {
         FileOperation {
             action,
             file_name: file_name.into(),
+            file_format,
             step: FileOperationStep::New,
         }
     }
@@ -532,6 +542,7 @@ struct GlobalContext {
     file_operation: Option<FileOperation>,
     last_path: PathBuf,
     last_export: PathBuf,
+    last_export_filter: Option<easy_imgui_filechooser::FilterId>,
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
     quit_requested: BoolWithConfirm,
@@ -2202,8 +2213,12 @@ impl GlobalContext {
             chooser.set_file_name(last_file);
             chooser.add_filter(filters::pdf());
             chooser.add_filter(filters::svg());
+            chooser.add_filter(filters::svg_multipage());
             chooser.add_filter(filters::png());
             chooser.add_filter(filters::all_files());
+            if let Some(f) = self.last_export_filter {
+                chooser.set_active_filter(f);
+            }
             self.file_dialog = Some(FileDialog::new(
                 chooser,
                 tr!("Generate Printable..."),
@@ -2265,7 +2280,8 @@ impl GlobalContext {
                             finish_file_dialog = true;
                         }
                         filechooser::Output::Ok => {
-                            let file = fd.chooser.full_path(filters::ext(fd.chooser.active_filter()));
+                            let file_format = fd.chooser.active_filter();
+                            let file = fd.chooser.full_path(filters::ext(file_format));
                             if let Some(path) = file.parent() {
                                 self.last_path = path.to_owned();
                             }
@@ -2284,7 +2300,7 @@ impl GlobalContext {
                                 }
                                 _ => {
                                     finish_file_dialog = true;
-                                    self.file_operation = Some(FileOperation::new(action, file));
+                                    self.file_operation = Some(FileOperation::new_with_file_format(action, file, file_format));
                                 }
                             }
                         }
@@ -2308,7 +2324,7 @@ impl GlobalContext {
                         match reply {
                             Some(true) => {
                                 finish_file_dialog = true;
-                                self.file_operation = Some(FileOperation::new(fd.action, confirm_name));
+                                self.file_operation = Some(FileOperation::new_with_file_format(fd.action, confirm_name, fd.chooser.active_filter()));
                             }
                             Some(false) => {}
                             None => { fd.confirm = Some(confirm_name); }
@@ -2788,7 +2804,7 @@ impl GlobalContext {
             }
             FileAction::ExportObj => self.export_obj(file_name)?,
             FileAction::GeneratePrintable => {
-                self.generate_printable(imgui, file_name)?;
+                self.generate_printable(imgui, file_name, action.file_format)?;
             }
         }
         Ok(())
@@ -3593,10 +3609,11 @@ mod filters {
     const WAVEFRONT: FilterId = FilterId(3);
     const PEPAKURA: FilterId = FilterId(4);
     const STL: FilterId = FilterId(5);
-    const PDF: FilterId = FilterId(6);
+    pub const PDF: FilterId = FilterId(6);
     const SVG: FilterId = FilterId(7);
     const PNG: FilterId = FilterId(8);
     const GLTF: FilterId = FilterId(9);
+    pub const SVG_MULTIPAGE: FilterId = FilterId(10);
 
     pub fn ext(filter: Option<FilterId>) -> Option<&'static str> {
         let ext = match filter? {
@@ -3605,7 +3622,7 @@ mod filters {
             PEPAKURA => "pdo",
             STL => "stl",
             PDF => "pdf",
-            SVG => "svg",
+            SVG | SVG_MULTIPAGE => "svg",
             PNG => "png",
             _ => return None,
         };
@@ -3681,6 +3698,14 @@ mod filters {
         Filter {
             id: SVG,
             text: tr!("SVG images") + " (*.svg)",
+            globs: vec![Pattern::new("*.svg").unwrap()],
+        }
+    }
+
+    pub fn svg_multipage() -> Filter {
+        Filter {
+            id: SVG_MULTIPAGE,
+            text: tr!("Inkscape SVG multipage") + " (*.svg)",
             globs: vec![Pattern::new("*.svg").unwrap()],
         }
     }

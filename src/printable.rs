@@ -358,7 +358,7 @@ impl GlobalContext {
                 Self::svg_write_layer_text(&mut suffix, texts)?;
             }
 
-            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, &extra)?;
+            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)?;
 
             writeln!(&mut suffix, r#"</svg>"#)?;
 
@@ -565,12 +565,12 @@ impl GlobalContext {
                 |(page, pixbuf, mut prefix, suffix)| {
                     // A try block would be nice here
                     ((|| -> Result<()> {
-                        log::debug!("SVG page {}", page);
+                        log::debug!("SVG page {page}");
 
                         Self::svg_write_layer_background(&mut prefix, &pixbuf, page_size)?;
                         prefix.write_all(&suffix)?;
 
-                        log::debug!("Saved page {}", page);
+                        log::debug!("Saved page {page}");
                         tx_page.send((page, prefix))?;
                         Ok(())
                     })())
@@ -601,7 +601,7 @@ impl GlobalContext {
                 Self::svg_write_layer_text(&mut suffix, texts)?;
             }
 
-            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, &extra)?;
+            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)?;
 
             writeln!(&mut suffix, r#"</g>"#)?;
             // end layer Page

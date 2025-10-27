@@ -160,9 +160,8 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         renderer.set_background_color(Some(Color::BLACK));
         let gl = renderer.gl_context().clone();
         let imgui = renderer.imgui();
-        let mut imgui = unsafe { imgui.set_current() };
         imgui.io_mut().set_allow_user_scaling(true);
-        imgui.io_mut().nav_enable_keyboard();
+        imgui.io_mut().nav_enable_keyboard(true);
 
         // Initialize papercraft status
         let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
@@ -1262,10 +1261,10 @@ impl GlobalContext {
                             .display_format(imgui::FloatFormat::G)
                             .build();
                         options.scale = options.scale.max(0.0);
-                        ui.same_line_ex(0.0, font_sz * 3.0);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 3.0));
                         ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
                             ui.checkbox(lbl_id(tr!("Textured"), "textured"), &mut options.texture);
-                            ui.same_line_ex(0.0, font_sz * 3.0);
+                            ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 3.0));
                             ui.checkbox(
                                 lbl_id(tr!("Texture filter"), "tex_filter"),
                                 &mut options.tex_filter,
@@ -1296,7 +1295,9 @@ impl GlobalContext {
                                 &mut options.flap_style,
                             );
 
-                            ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
+                            ui.same_line_ex(imgui::SameLine::OffsetFromStart(
+                                font_sz * (12.0 + 1.5),
+                            ));
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.slider_float_config(
                                 lbl_id(tr!("Shadow"), "shadow"),
@@ -1315,7 +1316,9 @@ impl GlobalContext {
                             .build();
                             options.flap_width = options.flap_width.max(0.0);
 
-                            ui.same_line_ex(font_sz * 12.0, font_sz * 1.5);
+                            ui.same_line_ex(imgui::SameLine::OffsetFromStart(
+                                font_sz * (12.0 + 1.5),
+                            ));
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.input_float_config(
                                 lbl_id(tr!("Angle"), "angle"),
@@ -1355,7 +1358,9 @@ impl GlobalContext {
                                 &mut options.fold_style,
                             );
 
-                            ui.same_line_ex(0.0, font_sz * 1.5);
+                            ui.same_line_ex(imgui::SameLine::OffsetFromStart(
+                                font_sz * (12.0 + 1.5),
+                            ));
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.with_disabled(
                                 matches!(options.fold_style, FoldStyle::None | FoldStyle::Full),
@@ -1369,7 +1374,7 @@ impl GlobalContext {
                                     options.fold_line_len = options.fold_line_len.max(0.0);
                                 },
                             );
-                            ui.same_line_ex(0.0, font_sz * 1.5);
+                            ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
                                 ui.input_float_config(
@@ -1405,7 +1410,7 @@ impl GlobalContext {
                             .build();
                         options.pages = i.clamp(1, 1000) as _;
 
-                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                         ui.set_next_item_width(font_sz * 5.5);
 
                         let mut i = options.page_cols as _;
@@ -1419,7 +1424,7 @@ impl GlobalContext {
                             &mut options.show_self_promotion,
                         );
 
-                        ui.same_line_ex(0.0, font_sz * 3.0);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 3.0));
                         ui.set_next_item_width(font_sz * 11.0);
                         ui.checkbox(
                             lbl_id(tr!("Print page number"), "page_num"),
@@ -1446,7 +1451,7 @@ impl GlobalContext {
                             &mut options.edge_id_position,
                         );
 
-                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
 
                         ui.set_next_item_width(font_sz * 3.0);
                         ui.with_disabled(options.edge_id_position == EdgeIdPosition::None, || {
@@ -1475,7 +1480,7 @@ impl GlobalContext {
                         .display_format(imgui::FloatFormat::G)
                         .build();
                         options.page_size.0 = options.page_size.0.max(1.0);
-                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                         ui.set_next_item_width(font_sz * 5.5);
                         ui.input_float_config(
                             lbl_id(tr!("Height"), "height"),
@@ -1484,7 +1489,7 @@ impl GlobalContext {
                         .display_format(imgui::FloatFormat::G)
                         .build();
                         options.page_size.1 = options.page_size.1.max(1.0);
-                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                         ui.set_next_item_width(font_sz * 5.5);
                         let mut resolution = options.resolution as f32;
                         ui.input_float_config(lbl_id(tr!("DPI"), "dpi"), &mut resolution)
@@ -1569,17 +1574,17 @@ impl GlobalContext {
                         ui.input_float_config(lbl_id(tr!("Top"), "top"), &mut options.margin.0)
                             .display_format(imgui::FloatFormat::G)
                             .build();
-                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                         ui.set_next_item_width(font_sz * 4.0);
                         ui.input_float_config(lbl_id(tr!("Left"), "left"), &mut options.margin.1)
                             .display_format(imgui::FloatFormat::G)
                             .build();
-                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                         ui.set_next_item_width(font_sz * 4.0);
                         ui.input_float_config(lbl_id(tr!("Right"), "right"), &mut options.margin.2)
                             .display_format(imgui::FloatFormat::G)
                             .build();
-                        ui.same_line_ex(0.0, font_sz * 1.5);
+                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                         ui.set_next_item_width(font_sz * 4.0);
                         ui.input_float_config(
                             lbl_id(tr!("Bottom"), "bottom"),

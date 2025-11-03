@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use cancel_rw::{Cancellable, CancellationGuard, CancellationToken};
 use cgmath::{Deg, Rad, Vector3, prelude::*};
 use easy_imgui_window::{
-    AppEvent, EventLoopExt, LocalProxy,
+    EventLoopExt, LocalProxy,
     easy_imgui::{
         self as imgui, Color, FontAndSize, MouseButton, TextureRef, TextureUniqueId, Vector2, id,
         lbl, lbl_id, vec2,
@@ -3236,7 +3236,7 @@ struct PrintableText {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(never)]
 unsafe fn install_crash_backup(
-    event_loop: winit::event_loop::EventLoopProxy<AppEvent<Box<GlobalContext>>>,
+    event_loop: winit::event_loop::EventLoopProxy<easy_imgui_window::AppEvent<Box<GlobalContext>>>,
 ) {
     // This is quite unsafe, maybe even UB, but we are crashing anyway, and we are trying to save
     // the user's data, what's the worst that could happen?
@@ -3262,8 +3262,11 @@ unsafe fn install_crash_backup(
     });
 }
 
+// In a non-POSIX (Windows) system, there is no signal hook.
+// The actual type of the argument doesn't matter, so make it generic to avoid having to keep it
+// synchronized with the one above.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-unsafe fn install_crash_backup(_event_loop: winit::event_loop::EventLoopProxy<MainLoopEvent>) {}
+unsafe fn install_crash_backup<T>(_: T) {}
 
 //impl imgui::UiBuilder for Box<GlobalContext> {
 impl GlobalContext {

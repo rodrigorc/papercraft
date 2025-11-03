@@ -11,7 +11,7 @@ jobs:
   papercraft:
     name: ${{ inputs.name }}
     # Oldest LTS ubuntu still with support
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,12 +25,6 @@ jobs:
         run: |
           ( cd bin ; wget -nv https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage )
           chmod a+x bin/linuxdeploy-x86_64.AppImage
-      - name: Hack g++
-        run: |
-          # Old G++ doesn't support -std=c++20, but it does support -std=c++2a
-          # This script hacks that
-          cp distro/docker/g++ bin/g++
-          cp distro/docker/g++ bin/c++
       - name: Build
         run: |
           cargo build --release

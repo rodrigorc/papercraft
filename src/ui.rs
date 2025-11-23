@@ -37,10 +37,6 @@ use crate::{
 };
 use tr::tr;
 
-// In millimeters, these are not configurable, but they should be cut out, so they should not be visible anyways
-const FLAP_LINE_WIDTH: f32 = 0.2;
-const BORDER_LINE_WIDTH: f32 = 0.1;
-
 // In pixels
 const LINE_SEL_WIDTH: f32 = 5.0;
 
@@ -109,7 +105,7 @@ pub enum UndoAction {
         join_result: JoinResult,
     },
     DocConfig {
-        options: PaperOptions,
+        options: Box<PaperOptions>,
         island_pos: FxHashMap<FaceIndex, (Rad<f32>, Vector2)>,
     },
     Modified,
@@ -540,7 +536,7 @@ impl CutDescription {
 pub enum UndoResult {
     False,
     Model,
-    ModelAndOptions(PaperOptions),
+    ModelAndOptions(Box<PaperOptions>),
 }
 
 pub struct Rectangle {
@@ -598,7 +594,7 @@ impl PapercraftContext {
 
         if let Some(island_pos) = island_pos {
             self.push_undo_action(vec![UndoAction::DocConfig {
-                options: old_options,
+                options: Box::new(old_options),
                 island_pos,
             }]);
         }
@@ -792,7 +788,7 @@ impl PapercraftContext {
             } else if draw_flap.is_visible() {
                 (fold_line_width, 0.0)
             } else {
-                (BORDER_LINE_WIDTH, 0.0)
+                (options.cut_line_width, 0.0)
             };
 
             let v_len = v.magnitude();
@@ -911,7 +907,7 @@ impl PapercraftContext {
                         p1: p[1],
                         dash0: 0.0,
                         dash1: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
+                        width_left: options.tab_line_width,
                         width_right: 0.0,
                     };
                     let mut line_1 = Line2D {
@@ -919,7 +915,7 @@ impl PapercraftContext {
                         p1: p[2],
                         dash0: 0.0,
                         dash1: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
+                        width_left: options.tab_line_width,
                         width_right: 0.0,
                     };
                     // Weird flaps are drawn differently:
@@ -942,7 +938,7 @@ impl PapercraftContext {
                         p1: p[1],
                         dash0: 0.0,
                         dash1: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
+                        width_left: options.tab_line_width,
                         width_right: 0.0,
                     };
                     let mut line_1 = Line2D {
@@ -950,7 +946,7 @@ impl PapercraftContext {
                         p1: p[2],
                         dash0: 0.0,
                         dash1: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
+                        width_left: options.tab_line_width,
                         width_right: 0.0,
                     };
                     let mut line_2 = Line2D {
@@ -958,7 +954,7 @@ impl PapercraftContext {
                         p1: p[3],
                         dash0: 0.0,
                         dash1: 0.0,
-                        width_left: FLAP_LINE_WIDTH,
+                        width_left: options.tab_line_width,
                         width_right: 0.0,
                     };
                     if edge.faces().1.is_none() {
@@ -1243,18 +1239,18 @@ impl PapercraftContext {
         build_vertices_for_lines_2d(
             self.gl_objs.paper_vertices_edge_cut.data_mut(),
             &args.vertices_edge_cut,
-            Rgba::new(0.0, 0.0, 0.0, 1.0),
+            options.cut_line_color.to_rgba(),
         );
         build_vertices_for_lines_2d(
             self.gl_objs.paper_vertices_edge_crease.data_mut(),
             args.vertices_edge_crease.iter().map(|(v, _)| v),
-            Rgba::new(0.0, 0.0, 0.0, 1.0),
+            options.fold_line_color.to_rgba(),
         );
         self.gl_objs.paper_vertices_flap.set(args.vertices_flap);
         build_vertices_for_lines_2d(
             self.gl_objs.paper_vertices_flap_edge.data_mut(),
             &args.vertices_flap_edge,
-            Rgba::new(0.0, 0.0, 0.0, 1.0),
+            options.tab_line_color.to_rgba(),
         );
         self.gl_objs
             .paper_vertices_shadow_flap
@@ -1378,9 +1374,15 @@ impl PapercraftContext {
                 MLINE3D_HIDDEN
             } else if i_fb.is_none() {
                 if matches!(status, EdgeStatus::Cut(FlapSide::Hidden)) {
-                    MLINE3D_RIM
+                    self.papercraft
+                        .options()
+                        .line3d_rim
+                        .to_3dstatus(&MLINE3D_RIM)
                 } else {
-                    MLINE3D_RIM_TAB
+                    self.papercraft
+                        .options()
+                        .line3d_rim_tab
+                        .to_3dstatus(&MLINE3D_RIM_TAB)
                 }
             } else {
                 match status {
@@ -1392,10 +1394,17 @@ impl PapercraftContext {
                         {
                             MLINE3D_HIDDEN
                         } else {
-                            MLINE3D_NORMAL
+                            self.papercraft
+                                .options()
+                                .line3d_normal
+                                .to_3dstatus(&MLINE3D_NORMAL)
                         }
                     }
-                    EdgeStatus::Cut(_) => MLINE3D_CUT,
+                    EdgeStatus::Cut(_) => self
+                        .papercraft
+                        .options()
+                        .line3d_cut
+                        .to_3dstatus(&MLINE3D_CUT),
                 }
             };
 

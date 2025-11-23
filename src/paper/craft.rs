@@ -3,7 +3,10 @@ use std::ops::ControlFlow;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::util_3d;
+use crate::util_gl::MLine3DStatus;
 use cgmath::{Deg, Rad, prelude::*};
+use easy_imgui_window::easy_imgui::Color;
+use easy_imgui_window::easy_imgui_renderer::easy_imgui_opengl::Rgba;
 use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
@@ -114,11 +117,82 @@ pub struct JoinResult {
 fn my_true() -> bool {
     true
 }
+fn default_fold_line_color() -> MyColor {
+    MyColor(Color::BLACK)
+}
 fn default_fold_line_width() -> f32 {
     0.1
 }
+
+fn default_cut_line_color() -> MyColor {
+    MyColor(Color::BLACK)
+}
+fn default_cut_line_width() -> f32 {
+    0.1
+}
+
+fn default_tab_line_color() -> MyColor {
+    MyColor(Color::BLACK)
+}
+fn default_tab_line_width() -> f32 {
+    0.2
+}
+
 fn default_edge_id_font_size() -> f32 {
     8.0
+}
+
+fn default_line3d_normal() -> LineConfig {
+    LineConfig {
+        thick: 1.0,
+        color: Color::BLACK,
+    }
+}
+
+fn default_line3d_rim() -> LineConfig {
+    LineConfig {
+        thick: 1.0,
+        color: Color::YELLOW,
+    }
+}
+
+fn default_line3d_rim_tab() -> LineConfig {
+    LineConfig {
+        thick: 5.0,
+        color: Color::new(0.75, 0.75, 0.0, 1.0),
+    }
+}
+
+fn default_line3d_cut() -> LineConfig {
+    LineConfig {
+        thick: 3.0,
+        color: Color::WHITE,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MyColor(pub Color);
+
+impl MyColor {
+    pub fn to_rgba(&self) -> Rgba {
+        Rgba::new(self.0.r, self.0.g, self.0.b, self.0.a)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineConfig {
+    pub thick: f32,
+    pub color: Color,
+}
+
+impl LineConfig {
+    pub fn to_3dstatus(&self, def: &MLine3DStatus) -> MLine3DStatus {
+        MLine3DStatus {
+            thick: self.thick / 2.0,
+            color: Rgba::new(self.color.r, self.color.g, self.color.b, self.color.a),
+            ..*def
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -144,8 +218,19 @@ pub struct PaperOptions {
     pub fold_line_len: f32, //only for folds in & out
     #[serde(default, rename = "shadow_tab_alpha")]
     pub shadow_flap_alpha: f32, //0.0 - 1.0
+    // Do not use LineConfig for compatibility with older models
+    #[serde(default = "default_fold_line_color")]
+    pub fold_line_color: MyColor,
     #[serde(default = "default_fold_line_width")]
     pub fold_line_width: f32, //only for folds in & out
+    #[serde(default = "default_cut_line_color")]
+    pub cut_line_color: MyColor,
+    #[serde(default = "default_cut_line_width")]
+    pub cut_line_width: f32, //for cuts without tab
+    #[serde(default = "default_tab_line_color")]
+    pub tab_line_color: MyColor,
+    #[serde(default = "default_tab_line_width")]
+    pub tab_line_width: f32, //for cuts with tab
     #[serde(default)]
     pub hidden_line_angle: f32, //degrees
     #[serde(default = "my_true")]
@@ -158,6 +243,14 @@ pub struct PaperOptions {
     pub edge_id_position: EdgeIdPosition,
     #[serde(default)]
     pub island_name_only: bool,
+    #[serde(default = "default_line3d_normal")]
+    pub line3d_normal: LineConfig,
+    #[serde(default = "default_line3d_rim")]
+    pub line3d_rim: LineConfig,
+    #[serde(default = "default_line3d_rim_tab")]
+    pub line3d_rim_tab: LineConfig,
+    #[serde(default = "default_line3d_cut")]
+    pub line3d_cut: LineConfig,
 }
 
 impl Default for PaperOptions {
@@ -177,13 +270,22 @@ impl Default for PaperOptions {
             flap_angle: 45.0,
             fold_line_len: 4.0,
             shadow_flap_alpha: 0.0,
+            fold_line_color: default_fold_line_color(),
             fold_line_width: default_fold_line_width(),
+            cut_line_color: default_cut_line_color(),
+            cut_line_width: default_cut_line_width(),
+            tab_line_color: default_tab_line_color(),
+            tab_line_width: default_tab_line_width(),
             hidden_line_angle: 0.0,
             show_self_promotion: true,
             show_page_number: true,
             edge_id_font_size: default_edge_id_font_size(),
             edge_id_position: EdgeIdPosition::default(),
             island_name_only: false,
+            line3d_normal: default_line3d_normal(),
+            line3d_rim: default_line3d_rim(),
+            line3d_rim_tab: default_line3d_rim_tab(),
+            line3d_cut: default_line3d_cut(),
         }
     }
 }
@@ -1821,5 +1923,72 @@ impl<'de> Deserialize<'de> for Island {
         };
         island.recompute_matrix();
         Ok(island)
+    }
+}
+
+impl Serialize for LineConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_struct("line", 4)?;
+        map.serialize_field("thick", &self.thick)?;
+        map.serialize_field("r", &self.color.r)?;
+        map.serialize_field("g", &self.color.g)?;
+        map.serialize_field("b", &self.color.b)?;
+        map.serialize_field("a", &self.color.a)?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for LineConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Def {
+            thick: f32,
+            r: f32,
+            g: f32,
+            b: f32,
+            a: f32,
+        }
+        let d = Def::deserialize(deserializer)?;
+        Ok(LineConfig {
+            thick: d.thick,
+            color: Color::new(d.r, d.g, d.b, d.a),
+        })
+    }
+}
+
+impl Serialize for MyColor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_struct("color", 4)?;
+        map.serialize_field("r", &self.0.r)?;
+        map.serialize_field("g", &self.0.g)?;
+        map.serialize_field("b", &self.0.b)?;
+        map.serialize_field("a", &self.0.a)?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for MyColor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Def {
+            r: f32,
+            g: f32,
+            b: f32,
+            a: f32,
+        }
+        let d = Def::deserialize(deserializer)?;
+        Ok(MyColor(Color::new(d.r, d.g, d.b, d.a)))
     }
 }

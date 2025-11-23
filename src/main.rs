@@ -4,8 +4,8 @@ use cgmath::{Deg, Rad, Vector3, prelude::*};
 use easy_imgui_window::{
     EventLoopExt, LocalProxy,
     easy_imgui::{
-        self as imgui, Color, FontAndSize, MouseButton, TextureRef, TextureUniqueId, Vector2, id,
-        lbl, lbl_id, vec2,
+        self as imgui, Color, ColorEditFlags, FontAndSize, MouseButton, TextureRef,
+        TextureUniqueId, Vector2, id, lbl, lbl_id, vec2,
     },
     easy_imgui_renderer::{
         Renderer,
@@ -64,6 +64,8 @@ use util_3d::Matrix3;
 use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
 
 use clap::Parser;
+
+use crate::paper::LineConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -271,7 +273,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             window.main_window().window().set_title(new_title);
         }
         if let Some((options, push_undo)) = self.options_applied.take() {
-            self.data.set_papercraft_options(options, push_undo);
+            self.data.set_papercraft_options(*options, push_undo);
             self.add_rebuild(RebuildFlags::all());
         }
         let imgui = window.imgui();
@@ -528,7 +530,7 @@ struct GlobalContext {
     options_opened: Option<PaperOptions>,
     // the .1 is true if the Options was accepted,
     // false, when doing an "Undo".
-    options_applied: Option<(PaperOptions, bool)>,
+    options_applied: Option<(Box<PaperOptions>, bool)>,
     option_button_height: f32,
     about_visible: bool,
     current_version: Version,
@@ -1193,7 +1195,7 @@ impl GlobalContext {
                         if let Some(apply_options) = apply {
                             // Don't apply the options immediately because we are in the middle of a render,
                             // and that could cause inconsistencies
-                            self.options_applied = Some((apply_options, true));
+                            self.options_applied = Some((Box::new(apply_options), true));
                         }
                     } else {
                         self.build_read_only_options_inner_dialog(ui, &options);
@@ -1374,11 +1376,22 @@ impl GlobalContext {
                                     options.fold_line_len = options.fold_line_len.max(0.0);
                                 },
                             );
-                            ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
+                                let x0 = ui.get_cursor_screen_pos().x;
+                                ui.align_text_to_frame_padding();
+                                ui.text(&tr!("Line:"));
+                                same_line_align(ui, x0, font_sz * 4.0);
+                                ui.color_edit_4_config(
+                                    lbl_id("", "color"),
+                                    &mut options.fold_line_color.0,
+                                )
+                                .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
+                                .build();
+                                ui.same_line();
+                                ui.set_next_item_width(font_sz * 4.0);
                                 ui.input_float_config(
-                                    lbl_id(tr!("Line width"), "linewidth"),
+                                    lbl_id(tr!("mm"), "linewidth"),
                                     &mut options.fold_line_width,
                                 )
                                 .display_format(imgui::FloatFormat::G)
@@ -1394,6 +1407,46 @@ impl GlobalContext {
                             .display_format(imgui::FloatFormat::G)
                             .build();
                             options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
+                        });
+                        ui.tree_node_config(lbl_id(tr!("Cuts"), "cuts")).with(|| {
+                            let x0 = ui.get_cursor_screen_pos().x;
+                            ui.align_text_to_frame_padding();
+                            ui.text(&tr!("Rims:"));
+                            same_line_align(ui, x0, font_sz * 4.0);
+                            ui.color_edit_4_config(
+                                lbl_id("", "rim_color"),
+                                &mut options.cut_line_color.0,
+                            )
+                            .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
+                            .build();
+                            ui.same_line();
+                            ui.set_next_item_width(font_sz * 4.0);
+                            ui.input_float_config(
+                                lbl_id(tr!("mm"), "rim_width"),
+                                &mut options.cut_line_width,
+                            )
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                            options.cut_line_width = options.cut_line_width.max(0.0);
+
+                            ui.align_text_to_frame_padding();
+                            ui.text(&tr!("Tabs:"));
+                            same_line_align(ui, x0, font_sz * 4.0);
+                            ui.color_edit_4_config(
+                                lbl_id("", "tab_color"),
+                                &mut options.tab_line_color.0,
+                            )
+                            .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
+                            .build();
+                            ui.same_line();
+                            ui.set_next_item_width(font_sz * 4.0);
+                            ui.input_float_config(
+                                lbl_id(tr!("mm"), "tab_width"),
+                                &mut options.tab_line_width,
+                            )
+                            .display_format(imgui::FloatFormat::G)
+                            .build();
+                            options.tab_line_width = options.tab_line_width.max(0.0);
                         });
                         ui.tree_node_config(lbl_id(tr!("Information"), "info"))
                             .with(|| {
@@ -1592,6 +1645,45 @@ impl GlobalContext {
                         )
                         .display_format(imgui::FloatFormat::G)
                         .build();
+                    });
+                ui.tree_node_config(lbl_id(tr!("User interface"), "ui"))
+                    .flags(imgui::TreeNodeFlags::Framed)
+                    .with(|| {
+                        ui.tree_node_config(lbl_id(tr!("3D view"), "3d"))
+                            .flags(imgui::TreeNodeFlags::DefaultOpen)
+                            .with(|| {
+                                let build_line3d =
+                                    |line3d: &mut LineConfig, label: String, id: &str| {
+                                        let x0 = ui.get_cursor_screen_pos().x;
+                                        ui.align_text_to_frame_padding();
+                                        ui.text(&label);
+                                        same_line_align(ui, x0, font_sz * 6.0);
+                                        ui.color_edit_4_config(
+                                            lbl_id("", format!("{id}_c")),
+                                            &mut line3d.color,
+                                        )
+                                        .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
+                                        .build();
+                                        ui.same_line();
+                                        ui.set_next_item_width(font_sz * 3.0);
+                                        ui.input_float_config(
+                                            lbl_id(tr!("px"), format!("{id}_m")),
+                                            &mut line3d.thick,
+                                        )
+                                        .display_format(imgui::FloatFormat::G)
+                                        .build();
+                                        line3d.thick = line3d.thick.max(0.0);
+                                    };
+
+                                build_line3d(&mut options.line3d_normal, tr!("Folds"), "normal");
+                                build_line3d(&mut options.line3d_rim, tr!("Rims"), "rim");
+                                build_line3d(
+                                    &mut options.line3d_rim_tab,
+                                    tr!("Rims with tab"),
+                                    "rimtab",
+                                );
+                                build_line3d(&mut options.line3d_cut, tr!("Cuts"), "cut");
+                            });
                     });
             });
 
@@ -3808,4 +3900,10 @@ fn check_version() -> Result<(Version, String)> {
     let version = &location[slash + 1..];
     let version = version.strip_prefix("v").unwrap_or(version);
     Ok((Version::new(version), String::from(location)))
+}
+
+fn same_line_align(ui: &Ui, start: f32, x: f32) {
+    ui.same_line();
+    let p1 = ui.get_cursor_screen_pos();
+    ui.set_cursor_screen_pos(vec2(p1.x.max(start + x), p1.y));
 }

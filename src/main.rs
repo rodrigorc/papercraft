@@ -1929,7 +1929,7 @@ impl GlobalContext {
 
                     if ui
                         .menu_item_config(lbl(tr!("Face/Island")))
-                        .shortcut("F5")
+                        .shortcut("1, F5")
                         .selected(self.data.ui.mode == MouseMode::Face)
                         .build()
                     {
@@ -1937,7 +1937,7 @@ impl GlobalContext {
                     }
                     if ui
                         .menu_item_config(lbl(tr!("Split/Join edge")))
-                        .shortcut("F6")
+                        .shortcut("2, F6")
                         .selected(self.data.ui.mode == MouseMode::Edge)
                         .build()
                     {
@@ -1945,7 +1945,7 @@ impl GlobalContext {
                     }
                     if ui
                         .menu_item_config(lbl(tr!("Flaps")))
-                        .shortcut("F7")
+                        .shortcut("3, F7")
                         .selected(self.data.ui.mode == MouseMode::Flap)
                         .build()
                     {
@@ -2048,13 +2048,19 @@ impl GlobalContext {
         // Modal pop-ups should disable the shortcuts
         if !ui.is_blocking_modal() {
             if self.modifiable() {
-                if ui.shortcut_ex(imgui::Key::F5, imgui::InputFlags::RouteGlobal) {
+                if ui.shortcut_ex(imgui::Key::F5, imgui::InputFlags::RouteGlobal)
+                    || ui.shortcut_ex(imgui::Key::Num1, imgui::InputFlags::RouteGlobal)
+                {
                     self.set_mouse_mode(MouseMode::Face);
                 }
-                if ui.shortcut_ex(imgui::Key::F6, imgui::InputFlags::RouteGlobal) {
+                if ui.shortcut_ex(imgui::Key::F6, imgui::InputFlags::RouteGlobal)
+                    || ui.shortcut_ex(imgui::Key::Num2, imgui::InputFlags::RouteGlobal)
+                {
                     self.set_mouse_mode(MouseMode::Edge);
                 }
-                if ui.shortcut_ex(imgui::Key::F7, imgui::InputFlags::RouteGlobal) {
+                if ui.shortcut_ex(imgui::Key::F7, imgui::InputFlags::RouteGlobal)
+                    || ui.shortcut_ex(imgui::Key::Num3, imgui::InputFlags::RouteGlobal)
+                {
                     self.set_mouse_mode(MouseMode::Flap);
                 }
                 if ui.shortcut_ex(

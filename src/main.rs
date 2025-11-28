@@ -1525,29 +1525,38 @@ impl GlobalContext {
                 ui.tree_node_config(lbl_id(tr!("Paper size"), "papersize"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
-                        ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config(
-                            lbl_id(tr!("Width"), "width"),
+                        build_length(
+                            ui,
                             &mut options.page_size.0,
-                        )
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
+                            &tr!("Width"),
+                            &tr!("mm"),
+                            0.0,
+                            font_sz * 3.0,
+                            "width",
+                        );
                         options.page_size.0 = options.page_size.0.max(1.0);
                         ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
-                        ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config(
-                            lbl_id(tr!("Height"), "height"),
+                        build_length(
+                            ui,
                             &mut options.page_size.1,
-                        )
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
+                            &tr!("Height"),
+                            &tr!("mm"),
+                            0.0,
+                            font_sz * 3.0,
+                            "height",
+                        );
                         options.page_size.1 = options.page_size.1.max(1.0);
                         ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
-                        ui.set_next_item_width(font_sz * 5.5);
                         let mut resolution = options.resolution as f32;
-                        ui.input_float_config(lbl_id(tr!("DPI"), "dpi"), &mut resolution)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                        build_length(
+                            ui,
+                            &mut resolution,
+                            &tr!("Resolution"),
+                            &tr!("dpi"),
+                            0.0,
+                            font_sz * 3.0,
+                            "dpi",
+                        );
                         options.resolution = (resolution as u32).max(1);
 
                         struct PaperSize {
@@ -1620,70 +1629,153 @@ impl GlobalContext {
                             std::mem::swap(&mut options.page_size.0, &mut options.page_size.1);
                         }
                     });
-                ui.tree_node_config(lbl_id(tr!("Margins"), "margins"))
-                    .flags(imgui::TreeNodeFlags::Framed)
-                    .with(|| {
-                        ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(lbl_id(tr!("Top"), "top"), &mut options.margin.0)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
-                        ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(lbl_id(tr!("Left"), "left"), &mut options.margin.1)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
-                        ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(lbl_id(tr!("Right"), "right"), &mut options.margin.2)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                        ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
-                        ui.set_next_item_width(font_sz * 4.0);
-                        ui.input_float_config(
-                            lbl_id(tr!("Bottom"), "bottom"),
-                            &mut options.margin.3,
-                        )
-                        .display_format(imgui::FloatFormat::G)
-                        .build();
-                    });
+
                 ui.tree_node_config(lbl_id(tr!("User interface"), "ui"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
-                        ui.tree_node_config(lbl_id(tr!("3D view"), "3d"))
-                            .flags(imgui::TreeNodeFlags::DefaultOpen)
+                        ui.child_config(lbl_id("", "w3d"))
+                            .size(vec2(290.0, 0.0))
+                            .child_flags(imgui::ChildFlags::AutoResizeY)
+                            .window_flags(imgui::WindowFlags::NoScrollbar)
                             .with(|| {
-                                let build_line3d =
-                                    |line3d: &mut LineConfig, label: String, id: &str| {
-                                        let x0 = ui.get_cursor_screen_pos().x;
-                                        ui.align_text_to_frame_padding();
-                                        ui.text(&label);
-                                        same_line_align(ui, x0, font_sz * 6.0);
-                                        ui.color_edit_4_config(
-                                            lbl_id("", format!("{id}_c")),
-                                            &mut line3d.color,
-                                        )
-                                        .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
-                                        .build();
-                                        ui.same_line();
-                                        ui.set_next_item_width(font_sz * 3.0);
-                                        ui.input_float_config(
-                                            lbl_id(tr!("px"), format!("{id}_m")),
-                                            &mut line3d.thick,
-                                        )
-                                        .display_format(imgui::FloatFormat::G)
-                                        .build();
-                                        line3d.thick = line3d.thick.max(0.0);
-                                    };
-
-                                build_line3d(&mut options.line3d_normal, tr!("Folds"), "normal");
-                                build_line3d(&mut options.line3d_rim, tr!("Rims"), "rim");
-                                build_line3d(
-                                    &mut options.line3d_rim_tab,
-                                    tr!("Rims with tab"),
-                                    "rimtab",
-                                );
-                                build_line3d(&mut options.line3d_cut, tr!("Cuts"), "cut");
+                                ui.tree_node_config(lbl_id(tr!("3D view"), "3d"))
+                                    .flags(
+                                        imgui::TreeNodeFlags::SpanFullWidth
+                                            | imgui::TreeNodeFlags::DefaultOpen,
+                                    )
+                                    .with(|| {
+                                        build_color(
+                                            ui,
+                                            &mut options.scene_bg_color.0,
+                                            &tr!("Background"),
+                                            font_sz * 6.0,
+                                            "bg",
+                                            ColorEditFlags::NoAlpha,
+                                        );
+                                        build_line3d(
+                                            ui,
+                                            &mut options.line3d_normal,
+                                            &tr!("Folds"),
+                                            font_sz * 6.0,
+                                            font_sz * 3.0,
+                                            "normal",
+                                        );
+                                        build_line3d(
+                                            ui,
+                                            &mut options.line3d_rim,
+                                            &tr!("Rims"),
+                                            font_sz * 6.0,
+                                            font_sz * 3.0,
+                                            "rim",
+                                        );
+                                        build_line3d(
+                                            ui,
+                                            &mut options.line3d_rim_tab,
+                                            &tr!("Rims with tab"),
+                                            font_sz * 6.0,
+                                            font_sz * 3.0,
+                                            "rimtab",
+                                        );
+                                        build_line3d(
+                                            ui,
+                                            &mut options.line3d_cut,
+                                            &tr!("Cuts"),
+                                            font_sz * 6.0,
+                                            font_sz * 3.0,
+                                            "cut",
+                                        );
+                                    });
                             });
+
+                        ui.same_line();
+
+                        ui.child_config(lbl_id("", "wpaper"))
+                            .size(vec2(290.0, 0.0))
+                            .child_flags(imgui::ChildFlags::AutoResizeY)
+                            .window_flags(imgui::WindowFlags::NoScrollbar)
+                            .with(|| {
+                                ui.tree_node_config(lbl_id(tr!("Paper view"), "paper"))
+                                    .flags(
+                                        imgui::TreeNodeFlags::SpanFullWidth
+                                            | imgui::TreeNodeFlags::DefaultOpen,
+                                    )
+                                    .with(|| {
+                                        build_color(
+                                            ui,
+                                            &mut options.paper_bg_color.0,
+                                            &tr!("Background"),
+                                            font_sz * 6.0,
+                                            "bg",
+                                            ColorEditFlags::NoAlpha,
+                                        );
+                                        build_color(
+                                            ui,
+                                            &mut options.paper_color.0,
+                                            &tr!("Paper"),
+                                            font_sz * 6.0,
+                                            "paper",
+                                            ColorEditFlags::NoAlpha,
+                                        );
+                                        build_color(
+                                            ui,
+                                            &mut options.paper_highlight_color.0,
+                                            &tr!("Highlight"),
+                                            font_sz * 6.0,
+                                            "paper_hl",
+                                            ColorEditFlags::empty(),
+                                        );
+
+                                        ui.align_text_to_frame_padding();
+                                        ui.text("Margins");
+                                        ui.with_push(imgui::Indent(1.0 * font_sz), || {
+                                            build_length(
+                                                ui,
+                                                &mut options.margin.0,
+                                                &tr!("top"),
+                                                &tr!("mm"),
+                                                font_sz * 6.0,
+                                                font_sz * 3.0,
+                                                "top",
+                                            );
+                                            build_length(
+                                                ui,
+                                                &mut options.margin.1,
+                                                &tr!("left"),
+                                                &tr!("mm"),
+                                                font_sz * 6.0,
+                                                font_sz * 3.0,
+                                                "left",
+                                            );
+                                            build_length(
+                                                ui,
+                                                &mut options.margin.2,
+                                                &tr!("right"),
+                                                &tr!("mm"),
+                                                font_sz * 6.0,
+                                                font_sz * 3.0,
+                                                "right",
+                                            );
+                                            build_length(
+                                                ui,
+                                                &mut options.margin.3,
+                                                &tr!("bottom"),
+                                                &tr!("mm"),
+                                                font_sz * 6.0,
+                                                font_sz * 3.0,
+                                                "bottom",
+                                            );
+                                        });
+                                    });
+                            });
+
+                        if center_button(
+                            ui,
+                            tr!("UI defaults"),
+                            "default",
+                            ui.get_content_region_avail().x,
+                        ) {
+                            options.set_ui_defaults();
+                        }
                     });
             });
 
@@ -2643,12 +2735,14 @@ impl GlobalContext {
 
         unsafe {
             if self.data.ui.draw_paper {
-                self.gl.clear_color(0.7, 0.7, 0.7, 1.0);
+                let bg = self.data.papercraft().options().paper_bg_color.0;
+                self.gl.clear_color(bg.r, bg.g, bg.b, bg.a);
                 // Out-of-paper area counts as a big imaginary piece, for overlapping purposes.
                 // The stencil starts with 1 and is reduced to 0 when drawing the pages.
                 self.gl.clear_stencil(1);
             } else {
-                self.gl.clear_color(1.0, 1.0, 1.0, 1.0);
+                let bg = self.data.papercraft().options().paper_color.0;
+                self.gl.clear_color(bg.r, bg.g, bg.b, bg.a);
                 // If pages are not drawn, then out-of-paper doesn't count as an overlap.
                 // The stencil starts with 0 directly
                 self.gl.clear_stencil(0);
@@ -2774,7 +2868,12 @@ impl GlobalContext {
             if self.data.ui.highlight_overlaps {
                 // Draw the overlapped highlight if "1 < STENCIL"
                 let uq = UniformQuad {
-                    color: Rgba::new(1.0, 0.0, 1.0, 0.9),
+                    color: self
+                        .data
+                        .papercraft()
+                        .options()
+                        .paper_highlight_color
+                        .to_rgba(),
                 };
                 self.gl.stencil_func(glow::LESS, 1, 0xff);
                 gl_fixs
@@ -2790,10 +2889,15 @@ impl GlobalContext {
                     .prg_quad
                     .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
             } else {
-                // If highlight is disabled wraw the overlaps anyway, but dimmer, or else it would be invisible
-                let uq = UniformQuad {
-                    color: Rgba::new(1.0, 0.0, 1.0, 0.5),
-                };
+                // If highlight is disabled draw the overlaps anyway, but dimmer, or else it would be invisible
+                let mut color = self
+                    .data
+                    .papercraft()
+                    .options()
+                    .paper_highlight_color
+                    .to_rgba();
+                color.a /= 2.0;
+                let uq = UniformQuad { color };
                 self.gl.stencil_func(glow::LESS, 1, 0xff);
                 gl_fixs
                     .prg_quad
@@ -3292,6 +3396,72 @@ fn center_url(ui: &Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     });
 }
 
+fn same_line_align(ui: &Ui, start: f32, x: f32) {
+    ui.same_line();
+    let p1 = ui.get_cursor_screen_pos();
+    ui.set_cursor_screen_pos(vec2(p1.x.max(start + x), p1.y));
+}
+
+fn build_color(
+    ui: &Ui,
+    color: &mut Color,
+    label: &str,
+    label_len: f32,
+    id: &str,
+    extra_flags: ColorEditFlags,
+) {
+    let x0 = ui.get_cursor_screen_pos().x;
+    ui.align_text_to_frame_padding();
+    ui.text(label);
+    same_line_align(ui, x0, label_len);
+    ui.color_edit_4_config(lbl_id("", id), color)
+        .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel | extra_flags)
+        .build();
+}
+
+fn build_length(
+    ui: &Ui,
+    value: &mut f32,
+    label: &str,
+    units: &str,
+    label_len: f32,
+    value_len: f32,
+    id: &str,
+) {
+    let x0 = ui.get_cursor_screen_pos().x;
+    ui.align_text_to_frame_padding();
+    ui.text(label);
+    same_line_align(ui, x0, label_len);
+    ui.set_next_item_width(value_len);
+    ui.input_float_config(lbl_id(units, id), value)
+        .display_format(imgui::FloatFormat::G)
+        .build();
+}
+
+fn build_line3d(
+    ui: &Ui,
+    line3d: &mut LineConfig,
+    label: &str,
+    label_len: f32,
+    value_len: f32,
+    id: &str,
+) {
+    build_color(
+        ui,
+        &mut line3d.color,
+        label,
+        label_len,
+        &format!("{id}_c"),
+        ColorEditFlags::empty(),
+    );
+    ui.same_line();
+    ui.set_next_item_width(value_len);
+    ui.input_float_config(lbl_id(tr!("px"), format!("{id}_m")), &mut line3d.thick)
+        .display_format(imgui::FloatFormat::G)
+        .build();
+    line3d.thick = line3d.thick.max(0.0);
+}
+
 pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
     // Order the vertices in a closed loop
     let mut res = Vec::with_capacity(cuts.len());
@@ -3499,7 +3669,8 @@ impl imgui::UiBuilder for Box<GlobalContext> {
             let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
             vp.viewport(0, 0, self.sz_scene.x as i32, self.sz_scene.y as i32);
             unsafe {
-                self.gl.clear_color(0.2, 0.2, 0.4, 1.0);
+                let bg = self.data.papercraft().options().scene_bg_color.0;
+                self.gl.clear_color(bg.r, bg.g, bg.b, bg.a);
                 self.gl.clear_depth_f32(1.0);
                 self.gl
                     .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
@@ -3900,10 +4071,4 @@ fn check_version() -> Result<(Version, String)> {
     let version = &location[slash + 1..];
     let version = version.strip_prefix("v").unwrap_or(version);
     Ok((Version::new(version), String::from(location)))
-}
-
-fn same_line_align(ui: &Ui, start: f32, x: f32) {
-    ui.same_line();
-    let p1 = ui.get_cursor_screen_pos();
-    ui.set_cursor_screen_pos(vec2(p1.x.max(start + x), p1.y));
 }

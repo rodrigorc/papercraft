@@ -1265,7 +1265,7 @@ impl PapercraftContext {
     }
 
     fn pages_rebuild(&mut self) {
-        let color = Rgba::new(1.0, 1.0, 1.0, 1.0);
+        let color = self.papercraft.options().paper_color.to_rgba();
         let mat = MaterialIndex::from(0);
         let mut page_vertices = Vec::new();
         let mut margin_vertices = Vec::new();

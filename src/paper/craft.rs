@@ -142,6 +142,22 @@ fn default_edge_id_font_size() -> f32 {
     8.0
 }
 
+fn default_scene_bg_color() -> MyColor {
+    MyColor(Color::new(0.2, 0.2, 0.4, 1.0))
+}
+
+fn default_paper_color() -> MyColor {
+    MyColor(Color::WHITE)
+}
+
+fn default_paper_bg_color() -> MyColor {
+    MyColor(Color::new(0.7, 0.7, 0.7, 1.0))
+}
+
+fn default_paper_highlight_color() -> MyColor {
+    MyColor(Color::new(1.0, 0.0, 1.0, 0.9))
+}
+
 fn default_line3d_normal() -> LineConfig {
     LineConfig {
         thick: 1.0,
@@ -189,9 +205,12 @@ impl LineConfig {
     pub fn to_3dstatus(&self, def: &MLine3DStatus) -> MLine3DStatus {
         MLine3DStatus {
             thick: self.thick / 2.0,
-            color: Rgba::new(self.color.r, self.color.g, self.color.b, self.color.a),
+            color: self.rgba(),
             ..*def
         }
+    }
+    pub fn rgba(&self) -> Rgba {
+        Rgba::new(self.color.r, self.color.g, self.color.b, self.color.a)
     }
 }
 
@@ -251,6 +270,14 @@ pub struct PaperOptions {
     pub line3d_rim_tab: LineConfig,
     #[serde(default = "default_line3d_cut")]
     pub line3d_cut: LineConfig,
+    #[serde(default = "default_scene_bg_color")]
+    pub scene_bg_color: MyColor,
+    #[serde(default = "default_paper_bg_color")]
+    pub paper_bg_color: MyColor,
+    #[serde(default = "default_paper_color")]
+    pub paper_color: MyColor,
+    #[serde(default = "default_paper_highlight_color")]
+    pub paper_highlight_color: MyColor,
 }
 
 impl Default for PaperOptions {
@@ -286,6 +313,10 @@ impl Default for PaperOptions {
             line3d_rim: default_line3d_rim(),
             line3d_rim_tab: default_line3d_rim_tab(),
             line3d_cut: default_line3d_cut(),
+            scene_bg_color: default_scene_bg_color(),
+            paper_color: default_paper_color(),
+            paper_bg_color: default_paper_bg_color(),
+            paper_highlight_color: default_paper_highlight_color(),
         }
     }
 }
@@ -352,6 +383,18 @@ impl PaperOptions {
         } else {
             true
         }
+    }
+
+    pub fn set_ui_defaults(&mut self) {
+        self.scene_bg_color = default_scene_bg_color();
+        self.line3d_normal = default_line3d_normal();
+        self.line3d_rim = default_line3d_rim();
+        self.line3d_rim_tab = default_line3d_rim_tab();
+        self.line3d_cut = default_line3d_cut();
+        self.paper_bg_color = default_paper_bg_color();
+        self.paper_color = default_paper_color();
+        self.paper_highlight_color = default_paper_highlight_color();
+        self.margin = (10.0, 10.0, 10.0, 10.0);
     }
 }
 

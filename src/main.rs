@@ -1258,10 +1258,15 @@ impl GlobalContext {
                 ui.tree_node_config(lbl_id(tr!("Model"), "model"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
-                        ui.set_next_item_width(font_sz * 5.5);
-                        ui.input_float_config(lbl_id(tr!("Scale"), "scale"), &mut options.scale)
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                        build_length(
+                            ui,
+                            &mut options.scale,
+                            &tr!("Scale"),
+                            "",
+                            0.0,
+                            font_sz * 3.0,
+                            "scale",
+                        );
                         options.scale = options.scale.max(0.0);
                         ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 3.0));
                         ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
@@ -1309,25 +1314,30 @@ impl GlobalContext {
                             .display_format(imgui::FloatFormat::F(2))
                             .build();
 
-                            ui.set_next_item_width(font_sz * 8.0);
-                            ui.input_float_config(
-                                lbl_id(tr!("Width"), "width"),
+                            build_length(
+                                ui,
                                 &mut options.flap_width,
-                            )
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                                &tr!("Width"),
+                                &tr!("mm"),
+                                0.0,
+                                font_sz * 3.0,
+                                "width",
+                            );
                             options.flap_width = options.flap_width.max(0.0);
 
                             ui.same_line_ex(imgui::SameLine::OffsetFromStart(
                                 font_sz * (12.0 + 1.5),
                             ));
-                            ui.set_next_item_width(font_sz * 8.0);
-                            ui.input_float_config(
-                                lbl_id(tr!("Angle"), "angle"),
+
+                            build_length(
+                                ui,
                                 &mut options.flap_angle,
-                            )
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                                &tr!("Angle"),
+                                &tr!("deg"),
+                                0.0,
+                                font_sz * 3.0,
+                                "angle",
+                            );
                             options.flap_angle = options.flap_angle.clamp(0.0, 180.0);
                         });
                         ui.tree_node_config(lbl_id(tr!("Folds"), "folds")).with(|| {
@@ -1367,86 +1377,84 @@ impl GlobalContext {
                             ui.with_disabled(
                                 matches!(options.fold_style, FoldStyle::None | FoldStyle::Full),
                                 || {
-                                    ui.input_float_config(
-                                        lbl_id(tr!("Length"), "length"),
+                                    build_length(
+                                        ui,
                                         &mut options.fold_line_len,
-                                    )
-                                    .display_format(imgui::FloatFormat::G)
-                                    .build();
+                                        &tr!("Length"),
+                                        &tr!("mm"),
+                                        0.0,
+                                        font_sz * 3.0,
+                                        "length",
+                                    );
                                     options.fold_line_len = options.fold_line_len.max(0.0);
                                 },
                             );
                             ui.set_next_item_width(font_sz * 5.5);
                             ui.with_disabled(matches!(options.fold_style, FoldStyle::None), || {
-                                let x0 = ui.get_cursor_screen_pos().x;
-                                ui.align_text_to_frame_padding();
-                                ui.text(&tr!("Line:"));
-                                same_line_align(ui, x0, font_sz * 4.0);
-                                ui.color_edit_4_config(
-                                    lbl_id("", "color"),
-                                    &mut options.fold_line_color.0,
-                                )
-                                .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
-                                .build();
-                                ui.same_line();
-                                ui.set_next_item_width(font_sz * 4.0);
-                                ui.input_float_config(
-                                    lbl_id(tr!("mm"), "linewidth"),
-                                    &mut options.fold_line_width,
-                                )
-                                .display_format(imgui::FloatFormat::G)
-                                .build();
-                                options.fold_line_width = options.fold_line_width.max(0.0);
+                                // These don't use LineConfig in Options for historic reasons.
+                                let mut fold_line = LineConfig {
+                                    thick: options.fold_line_width,
+                                    color: options.fold_line_color.0,
+                                };
+                                build_line_config(
+                                    ui,
+                                    &mut fold_line,
+                                    &tr!("Line"),
+                                    &tr!("mm"),
+                                    font_sz * 4.0,
+                                    font_sz * 3.0,
+                                    "color",
+                                );
+                                options.fold_line_width = fold_line.thick.max(0.0);
+                                options.fold_line_color.0 = fold_line.color;
                             });
 
-                            ui.set_next_item_width(font_sz * 5.5);
-                            ui.input_float_config(
-                                lbl_id(tr!("Hidden fold angle"), "hiddenangle"),
+                            build_length(
+                                ui,
                                 &mut options.hidden_line_angle,
-                            )
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                                &tr!("Hidden fold angle"),
+                                &tr!("deg"),
+                                0.0,
+                                font_sz * 3.0,
+                                "hiddenangle",
+                            );
                             options.hidden_line_angle = options.hidden_line_angle.clamp(0.0, 180.0);
                         });
                         ui.tree_node_config(lbl_id(tr!("Cuts"), "cuts")).with(|| {
-                            let x0 = ui.get_cursor_screen_pos().x;
-                            ui.align_text_to_frame_padding();
-                            ui.text(&tr!("Rims:"));
-                            same_line_align(ui, x0, font_sz * 4.0);
-                            ui.color_edit_4_config(
-                                lbl_id("", "rim_color"),
-                                &mut options.cut_line_color.0,
-                            )
-                            .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
-                            .build();
-                            ui.same_line();
-                            ui.set_next_item_width(font_sz * 4.0);
-                            ui.input_float_config(
-                                lbl_id(tr!("mm"), "rim_width"),
-                                &mut options.cut_line_width,
-                            )
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                            options.cut_line_width = options.cut_line_width.max(0.0);
-
-                            ui.align_text_to_frame_padding();
-                            ui.text(&tr!("Tabs:"));
-                            same_line_align(ui, x0, font_sz * 4.0);
-                            ui.color_edit_4_config(
-                                lbl_id("", "tab_color"),
-                                &mut options.tab_line_color.0,
-                            )
-                            .flags(ColorEditFlags::NoInputs | ColorEditFlags::NoLabel)
-                            .build();
-                            ui.same_line();
-                            ui.set_next_item_width(font_sz * 4.0);
-                            ui.input_float_config(
-                                lbl_id(tr!("mm"), "tab_width"),
-                                &mut options.tab_line_width,
-                            )
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
-                            options.tab_line_width = options.tab_line_width.max(0.0);
+                            {
+                                let mut cut_line = LineConfig {
+                                    thick: options.cut_line_width,
+                                    color: options.cut_line_color.0,
+                                };
+                                build_line_config(
+                                    ui,
+                                    &mut cut_line,
+                                    &tr!("Rims"),
+                                    &tr!("mm"),
+                                    font_sz * 4.0,
+                                    font_sz * 3.0,
+                                    "rim_color",
+                                );
+                                options.cut_line_width = cut_line.thick.max(0.0);
+                                options.cut_line_color.0 = cut_line.color;
+                            }
+                            {
+                                let mut tab_line = LineConfig {
+                                    thick: options.tab_line_width,
+                                    color: options.tab_line_color.0,
+                                };
+                                build_line_config(
+                                    ui,
+                                    &mut tab_line,
+                                    &tr!("Tabs"),
+                                    &tr!("mm"),
+                                    font_sz * 4.0,
+                                    font_sz * 3.0,
+                                    "tab_color",
+                                );
+                                options.tab_line_width = tab_line.thick.max(0.0);
+                                options.tab_line_color.0 = tab_line.color;
+                            }
                         });
                         ui.tree_node_config(lbl_id(tr!("Information"), "info"))
                             .with(|| {
@@ -1506,14 +1514,16 @@ impl GlobalContext {
 
                         ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
 
-                        ui.set_next_item_width(font_sz * 3.0);
                         ui.with_disabled(options.edge_id_position == EdgeIdPosition::None, || {
-                            ui.input_float_config(
-                                lbl_id(tr!("Edge id font size (pt)"), "edgefont"),
+                            build_length(
+                                ui,
                                 &mut options.edge_id_font_size,
-                            )
-                            .display_format(imgui::FloatFormat::G)
-                            .build();
+                                &tr!("Edge id font size"),
+                                &tr!("pt"),
+                                0.0,
+                                font_sz * 3.0,
+                                "edgefont",
+                            );
                             options.edge_id_font_size = options.edge_id_font_size.clamp(1.0, 72.0);
                         });
 
@@ -1652,34 +1662,38 @@ impl GlobalContext {
                                             "bg",
                                             ColorEditFlags::NoAlpha,
                                         );
-                                        build_line3d(
+                                        build_line_config(
                                             ui,
                                             &mut options.line3d_normal,
                                             &tr!("Folds"),
+                                            &tr!("px"),
                                             font_sz * 6.0,
                                             font_sz * 3.0,
                                             "normal",
                                         );
-                                        build_line3d(
+                                        build_line_config(
                                             ui,
                                             &mut options.line3d_rim,
                                             &tr!("Rims"),
+                                            &tr!("px"),
                                             font_sz * 6.0,
                                             font_sz * 3.0,
                                             "rim",
                                         );
-                                        build_line3d(
+                                        build_line_config(
                                             ui,
                                             &mut options.line3d_rim_tab,
                                             &tr!("Rims with tab"),
+                                            &tr!("px"),
                                             font_sz * 6.0,
                                             font_sz * 3.0,
                                             "rimtab",
                                         );
-                                        build_line3d(
+                                        build_line_config(
                                             ui,
                                             &mut options.line3d_cut,
                                             &tr!("Cuts"),
+                                            &tr!("px"),
                                             font_sz * 6.0,
                                             font_sz * 3.0,
                                             "cut",
@@ -3438,17 +3452,18 @@ fn build_length(
         .build();
 }
 
-fn build_line3d(
+fn build_line_config(
     ui: &Ui,
-    line3d: &mut LineConfig,
+    line: &mut LineConfig,
     label: &str,
+    units: &str,
     label_len: f32,
     value_len: f32,
     id: &str,
 ) {
     build_color(
         ui,
-        &mut line3d.color,
+        &mut line.color,
         label,
         label_len,
         &format!("{id}_c"),
@@ -3456,10 +3471,10 @@ fn build_line3d(
     );
     ui.same_line();
     ui.set_next_item_width(value_len);
-    ui.input_float_config(lbl_id(tr!("px"), format!("{id}_m")), &mut line3d.thick)
+    ui.input_float_config(lbl_id(units, format!("{id}_m")), &mut line.thick)
         .display_format(imgui::FloatFormat::G)
         .build();
-    line3d.thick = line3d.thick.max(0.0);
+    line.thick = line.thick.max(0.0);
 }
 
 pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {

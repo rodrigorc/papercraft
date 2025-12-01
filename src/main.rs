@@ -1137,17 +1137,18 @@ impl GlobalContext {
                     .iter()
                     .find(|(s, _)| *s == config.locale)
                     .unwrap_or(&LANGUAGES[0]);
-                if ui.combo(
-                    lbl_id(tr!("Language"), "language"),
-                    LANGUAGES,
-                    |(_, n)| *n,
-                    &mut cur,
-                ) {
+                ui.align_text_to_frame_padding();
+                ui.text(&tr!("Language"));
+                ui.same_line();
+                if ui.combo(lbl_id("", "language"), LANGUAGES, |(_, n)| *n, &mut cur) {
                     config.locale = String::from(cur.0);
                     applied = true;
                 }
+                ui.align_text_to_frame_padding();
+                ui.text(&tr!("Theme"));
+                ui.same_line();
                 if ui.combo(
-                    lbl_id(tr!("Theme"), "theme"),
+                    lbl_id("", "theme"),
                     [false, true],
                     |b| {
                         if b {
@@ -1294,25 +1295,37 @@ impl GlobalContext {
                                 }
                             }
 
+                            ui.align_text_to_frame_padding();
+                            ui.text(&tr!("Style"));
+                            ui.same_line();
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.combo(
-                                lbl_id(tr!("Style"), "style"),
+                                lbl_id("", "style"),
                                 FLAP_STYLES.iter().copied(),
                                 fmt_flap_style,
                                 &mut options.flap_style,
                             );
 
-                            ui.same_line_ex(imgui::SameLine::OffsetFromStart(
-                                font_sz * (12.0 + 1.5),
-                            ));
-                            ui.set_next_item_width(font_sz * 8.0);
+                            ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 2.0));
+
+                            ui.align_text_to_frame_padding();
+                            ui.text(&tr!("Shadow"));
+                            ui.same_line();
+                            ui.set_next_item_width(font_sz * 4.0);
                             ui.slider_float_config(
-                                lbl_id(tr!("Shadow"), "shadow"),
+                                lbl_id("", "shadow"),
                                 &mut options.shadow_flap_alpha,
                             )
                             .range(0.0, 1.0)
                             .display_format(imgui::FloatFormat::F(2))
                             .build();
+
+                            ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 2.0));
+
+                            ui.checkbox(
+                                lbl_id(tr!("Double flap"), "doubleflap"),
+                                &mut options.flap_double,
+                            );
 
                             build_length(
                                 ui,
@@ -1362,9 +1375,12 @@ impl GlobalContext {
                                 }
                             }
 
+                            ui.align_text_to_frame_padding();
+                            ui.text(&tr!("Style"));
+                            ui.same_line();
                             ui.set_next_item_width(font_sz * 8.0);
                             ui.combo(
-                                lbl_id(tr!("Style"), "style"),
+                                lbl_id("", "style"),
                                 FOLD_STYLES.iter().copied(),
                                 fmt_fold_style,
                                 &mut options.fold_style,
@@ -1464,19 +1480,22 @@ impl GlobalContext {
                 ui.tree_node_config(lbl_id(tr!("Layout"), "layout"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
-                        ui.set_next_item_width(font_sz * 5.5);
-
                         let mut i = options.pages as _;
-                        ui.input_int_config(lbl_id(tr!("Pages"), "pages"), &mut i)
-                            .build();
+                        ui.align_text_to_frame_padding();
+                        ui.text(&tr!("Pages"));
+                        ui.same_line();
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.input_int_config(lbl_id("", "pages"), &mut i).build();
                         options.pages = i.clamp(1, 1000) as _;
 
                         ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 1.5));
-                        ui.set_next_item_width(font_sz * 5.5);
 
                         let mut i = options.page_cols as _;
-                        ui.input_int_config(lbl_id(tr!("Columns"), "cols"), &mut i)
-                            .build();
+                        ui.align_text_to_frame_padding();
+                        ui.text(&tr!("Columns"));
+                        ui.same_line();
+                        ui.set_next_item_width(font_sz * 5.5);
+                        ui.input_int_config(lbl_id("", "cols"), &mut i).build();
                         options.page_cols = i.clamp(1, 1000) as _;
 
                         ui.set_next_item_width(font_sz * 11.0);
@@ -1504,9 +1523,12 @@ impl GlobalContext {
                                 EdgeIdPosition::Inside => tr!("EdgeIdPos" => "Inside"),
                             }
                         }
+                        ui.align_text_to_frame_padding();
+                        ui.text(&tr!("Edge id position"));
+                        ui.same_line();
                         ui.set_next_item_width(font_sz * 6.0);
                         ui.combo(
-                            lbl_id(tr!("Edge id position"), "edge_id_pos"),
+                            lbl_id("", "edge_id_pos"),
                             EDGE_ID_POSITIONS.iter().copied(),
                             fmt_edge_id_position,
                             &mut options.edge_id_position,
@@ -1784,7 +1806,7 @@ impl GlobalContext {
 
                         if center_button(
                             ui,
-                            tr!("UI defaults"),
+                            tr!("Reset to UI defaults"),
                             "default",
                             ui.get_content_region_avail().x,
                         ) {

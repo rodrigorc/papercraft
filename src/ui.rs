@@ -684,6 +684,7 @@ impl PapercraftContext {
         let options = self.papercraft.options();
         let scale = options.scale;
         let flap_style = options.flap_style;
+        let flap_double = options.flap_double;
         let fold_line_width = options.fold_line_width;
 
         for (i, i_v) in face.index_vertices().into_iter().enumerate() {
@@ -737,8 +738,11 @@ impl PapercraftContext {
                     if flap_style == FlapStyle::None {
                         // User doesn't want flaps
                         DrawFlap::Invisible(maybe_i_face_b)
+                    } else if flap_double && maybe_i_face_b.is_some() {
+                        // Double flaps are visible in both sides, except for rims, that are unaffected
+                        DrawFlap::Visible(maybe_i_face_b)
                     } else if !c.flap_visible(edge.face_sign(i_face)) {
-                        // The flap is in the other face
+                        // The flap is in the other face, if any
                         DrawFlap::Invisible(maybe_i_face_b)
                     } else {
                         DrawFlap::Visible(maybe_i_face_b)

@@ -229,6 +229,8 @@ pub struct PaperOptions {
     #[serde(default, rename = "tab_style")]
     pub flap_style: FlapStyle,
     #[serde(default)]
+    pub flap_double: bool,
+    #[serde(default)]
     pub fold_style: FoldStyle,
     #[serde(rename = "tab_width")]
     pub flap_width: f32,
@@ -292,6 +294,7 @@ impl Default for PaperOptions {
             texture: true,
             tex_filter: true,
             flap_style: FlapStyle::default(),
+            flap_double: false,
             fold_style: FoldStyle::default(),
             flap_width: 5.0,
             flap_angle: 45.0,

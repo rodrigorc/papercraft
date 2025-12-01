@@ -1,85 +1,107 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-12-01 20:12+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
 
 #: src/printable.rs:42
 msgid "Don't know how to write the format of {}"
 msgstr ""
 
-#: src/printable.rs:47 src/main.rs:2937
+#: src/printable.rs:47 src/main.rs:3232
 msgid "Error exporting to {}"
 msgstr ""
 
-#: src/printable.rs:341 src/printable.rs:502 src/main.rs:2904
+#: src/printable.rs:332 src/printable.rs:703 src/main.rs:3199
 msgid "Error saving file {}"
 msgstr ""
 
-#: src/printable.rs:793 src/ui.rs:1223
+#: src/printable.rs:577
+msgid "Error saving page {}"
+msgstr ""
+
+#: src/printable.rs:1008 src/ui.rs:1229
 msgid "Page {}/{}"
 msgstr ""
 
-#: src/ui.rs:2660
+#: src/ui.rs:2685
 msgid "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 msgstr ""
 
-#: src/main.rs:77
+#: src/main.rs:80
 msgid "Prevents editing of the model, useful as reference to build a real model"
 msgstr ""
 
-#: src/main.rs:118 src/main.rs:814 src/main.rs:2691 src/main.rs:3500
+#: src/main.rs:120 src/main.rs:804 src/main.rs:2991 src/main.rs:3954
 msgid "Papercraft"
 msgstr ""
 
-#: src/main.rs:489
+#: src/main.rs:448
 msgid "Opening..."
 msgstr ""
 
-#: src/main.rs:490
+#: src/main.rs:449
 msgid "Saving..."
 msgstr ""
 
-#: src/main.rs:491
+#: src/main.rs:450
 msgid "Importing..."
 msgstr ""
 
-#: src/main.rs:492
+#: src/main.rs:451
 msgid "Updating..."
 msgstr ""
 
-#: src/main.rs:493
+#: src/main.rs:452
 msgid "Exporting..."
 msgstr ""
 
-#: src/main.rs:494
+#: src/main.rs:453
 msgid "Generating..."
 msgstr ""
 
-#: src/main.rs:766
+#: src/main.rs:757
 msgid "Error"
 msgstr ""
 
-#: src/main.rs:770 src/main.rs:1607 src/main.rs:2323
+#: src/main.rs:761 src/main.rs:1829 src/main.rs:2558
 msgid "OK"
 msgstr ""
 
-#: src/main.rs:784 src/main.rs:1615 src/main.rs:2316
+#: src/main.rs:775 src/main.rs:1837 src/main.rs:2551
 msgid "Cancel"
 msgstr ""
 
-#: src/main.rs:785 src/main.rs:2317
+#: src/main.rs:776 src/main.rs:2552
 msgid "Continue"
 msgstr ""
 
-#: src/main.rs:799 src/main.rs:1844
+#: src/main.rs:790 src/main.rs:2066
 msgid "About..."
 msgstr ""
 
-#: src/main.rs:821
+#: src/main.rs:811
 msgid "Version {}"
 msgstr ""
 
-#: src/main.rs:827
+#: src/main.rs:817
 msgid "Checking..."
 msgstr ""
 
-#: src/main.rs:831
+#: src/main.rs:823
 msgid "Check for new version"
 msgstr ""
 
@@ -87,441 +109,505 @@ msgstr ""
 msgid "Already using latest version"
 msgstr ""
 
-#: src/main.rs:853
+#: src/main.rs:855
 msgid "New version {} available!"
 msgstr ""
 
-#: src/main.rs:895
+#: src/main.rs:918
 msgid "Please, wait..."
 msgstr ""
 
-#: src/main.rs:1115
+#: src/main.rs:1101
 msgid "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it."
 msgstr ""
 
-#: src/main.rs:1116
+#: src/main.rs:1104
 msgid "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads."
 msgstr ""
 
-#: src/main.rs:1117
+#: src/main.rs:1107
 msgid "Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide a flap."
 msgstr ""
 
-#: src/main.rs:1118
+#: src/main.rs:1110
 msgid "View mode. Click to highlight a piece. Move the mouse over an edge to highlight the matching pair."
 msgstr ""
 
-#: src/main.rs:1139
+#: src/main.rs:1132
 msgid "Settings"
 msgstr ""
 
-#: src/main.rs:1148
+#: src/main.rs:1141
 msgid "Language"
 msgstr ""
 
-#: src/main.rs:1157
+#: src/main.rs:1153
 msgid "Theme"
 msgstr ""
 
-#: src/main.rs:1161
+#: src/main.rs:1160
 msgctxt "Theme"
 msgid "Light"
 msgstr ""
 
-#: src/main.rs:1163
+#: src/main.rs:1162
 msgctxt "Theme"
 msgid "Dark"
 msgstr ""
 
-#: src/main.rs:1193 src/main.rs:1721
+#: src/main.rs:1192 src/main.rs:1943
 msgid "Document properties"
 msgstr ""
 
-#: src/main.rs:1247
+#: src/main.rs:1246
 msgid "Number of pieces: {0}\n"
 "Number of flaps: {1}\n"
 "Real size (mm): {2}"
 msgstr ""
 
-#: src/main.rs:1265
+#: src/main.rs:1264
 msgid "Model"
 msgstr ""
 
-#: src/main.rs:1269
+#: src/main.rs:1270
 msgid "Scale"
 msgstr ""
 
-#: src/main.rs:1275
+#: src/main.rs:1279
 msgid "Textured"
 msgstr ""
 
-#: src/main.rs:1278
+#: src/main.rs:1282
 msgid "Texture filter"
 msgstr ""
 
-#: src/main.rs:1283 src/main.rs:1752 src/main.rs:1790
+#: src/main.rs:1287 src/main.rs:1974 src/main.rs:2012
 msgid "Flaps"
 msgstr ""
 
-#: src/main.rs:1292
+#: src/main.rs:1296
 msgctxt "FlapStyle"
 msgid "Textured"
 msgstr ""
 
-#: src/main.rs:1293
+#: src/main.rs:1297
 msgctxt "FlapStyle"
 msgid "Half textured"
 msgstr ""
 
-#: src/main.rs:1294
+#: src/main.rs:1298
 msgctxt "FlapStyle"
 msgid "White"
 msgstr ""
 
-#: src/main.rs:1295
+#: src/main.rs:1299
 msgctxt "FlapStyle"
 msgid "None"
 msgstr ""
 
-#: src/main.rs:1301 src/main.rs:1360
+#: src/main.rs:1304 src/main.rs:1382
 msgid "Style"
 msgstr ""
 
-#: src/main.rs:1310
+#: src/main.rs:1318
 msgid "Shadow"
 msgstr ""
 
-#: src/main.rs:1319 src/main.rs:1480
+#: src/main.rs:1331
+msgid "Double flap"
+msgstr ""
+
+#: src/main.rs:1336 src/main.rs:1568
 msgid "Width"
 msgstr ""
 
-#: src/main.rs:1329
+#: src/main.rs:1337 src/main.rs:1403 src/main.rs:1422 src/main.rs:1452 src/main.rs:1469 src/main.rs:1569 src/main.rs:1580 src/main.rs:1776 src/main.rs:1785 src/main.rs:1794 src/main.rs:1803
+msgid "mm"
+msgstr ""
+
+#: src/main.rs:1351
 msgid "Angle"
 msgstr ""
 
-#: src/main.rs:1336
+#: src/main.rs:1352 src/main.rs:1435
+msgid "deg"
+msgstr ""
+
+#: src/main.rs:1359 src/main.rs:1695
 msgid "Folds"
 msgstr ""
 
-#: src/main.rs:1347
+#: src/main.rs:1370
 msgctxt "FoldStyle"
 msgid "Full line"
 msgstr ""
 
-#: src/main.rs:1349
+#: src/main.rs:1372
 msgctxt "FoldStyle"
 msgid "Full & out segment"
 msgstr ""
 
-#: src/main.rs:1351
+#: src/main.rs:1374
 msgctxt "FoldStyle"
 msgid "Out segment"
 msgstr ""
 
-#: src/main.rs:1352
+#: src/main.rs:1375
 msgctxt "FoldStyle"
 msgid "In segment"
 msgstr ""
 
-#: src/main.rs:1353
+#: src/main.rs:1376
 msgctxt "FoldStyle"
 msgid "Out & in segment"
 msgstr ""
 
-#: src/main.rs:1354
+#: src/main.rs:1377
 msgctxt "FoldStyle"
 msgid "None"
 msgstr ""
 
-#: src/main.rs:1372
+#: src/main.rs:1402
 msgid "Length"
 msgstr ""
 
-#: src/main.rs:1384
-msgid "Line width"
+#: src/main.rs:1421
+msgid "Line"
 msgstr ""
 
-#: src/main.rs:1394
+#: src/main.rs:1434
 msgid "Hidden fold angle"
 msgstr ""
 
-#: src/main.rs:1401
+#: src/main.rs:1442 src/main.rs:1722
+msgid "Cuts"
+msgstr ""
+
+#: src/main.rs:1451 src/main.rs:1704
+msgid "Rims"
+msgstr ""
+
+#: src/main.rs:1468
+msgid "Tabs"
+msgstr ""
+
+#: src/main.rs:1478
 msgid "Information"
 msgstr ""
 
-#: src/main.rs:1406
+#: src/main.rs:1483
 msgid "Layout"
 msgstr ""
 
-#: src/main.rs:1412
+#: src/main.rs:1488
 msgid "Pages"
 msgstr ""
 
-#: src/main.rs:1420
+#: src/main.rs:1499
 msgid "Columns"
 msgstr ""
 
-#: src/main.rs:1426
+#: src/main.rs:1508
 msgid "Print Papercraft signature"
 msgstr ""
 
-#: src/main.rs:1433
+#: src/main.rs:1515
 msgid "Print page number"
 msgstr ""
 
-#: src/main.rs:1444
+#: src/main.rs:1526
 msgctxt "EdgeIdPos"
 msgid "None"
 msgstr ""
 
-#: src/main.rs:1445
+#: src/main.rs:1527
 msgctxt "EdgeIdPos"
 msgid "Outside"
 msgstr ""
 
-#: src/main.rs:1446
+#: src/main.rs:1528
 msgctxt "EdgeIdPos"
 msgid "Inside"
 msgstr ""
 
-#: src/main.rs:1451
+#: src/main.rs:1532
 msgid "Edge id position"
 msgstr ""
 
-#: src/main.rs:1462
-msgid "Edge id font size (pt)"
+#: src/main.rs:1548
+msgid "Edge id font size"
 msgstr ""
 
-#: src/main.rs:1471
-msgid "Piece names only"
-msgstr ""
-
-#: src/main.rs:1475
-msgid "Paper size"
-msgstr ""
-
-#: src/main.rs:1489
-msgid "Height"
-msgstr ""
-
-#: src/main.rs:1498
-msgid "DPI"
+#: src/main.rs:1549
+msgid "pt"
 msgstr ""
 
 #: src/main.rs:1558
+msgid "Piece names only"
+msgstr ""
+
+#: src/main.rs:1562
+msgid "Paper size"
+msgstr ""
+
+#: src/main.rs:1579
+msgid "Height"
+msgstr ""
+
+#: src/main.rs:1591
+msgid "Resolution"
+msgstr ""
+
+#: src/main.rs:1592
+msgid "dpi"
+msgstr ""
+
+#: src/main.rs:1654
 msgid "Portrait"
 msgstr ""
 
-#: src/main.rs:1564
+#: src/main.rs:1660
 msgid "Landscape"
 msgstr ""
 
-#: src/main.rs:1573
-msgid "Margins"
+#: src/main.rs:1670
+msgid "User interface"
 msgstr ""
 
-#: src/main.rs:1577
-msgid "Top"
+#: src/main.rs:1678
+msgid "3D view"
 msgstr ""
 
-#: src/main.rs:1582
-msgid "Left"
+#: src/main.rs:1687 src/main.rs:1747
+msgid "Background"
 msgstr ""
 
-#: src/main.rs:1587
-msgid "Right"
+#: src/main.rs:1696 src/main.rs:1705 src/main.rs:1714 src/main.rs:1723
+msgid "px"
 msgstr ""
 
-#: src/main.rs:1593
-msgid "Bottom"
+#: src/main.rs:1713
+msgid "Rims with tab"
 msgstr ""
 
-#: src/main.rs:1623
-msgid "Apply"
+#: src/main.rs:1738
+msgid "Paper view"
 msgstr ""
 
-#: src/main.rs:1647
-msgid "File"
-msgstr ""
-
-#: src/main.rs:1649 src/main.rs:2117
-msgid "Open..."
-msgstr ""
-
-#: src/main.rs:1657
-msgid "Save"
-msgstr ""
-
-#: src/main.rs:1663 src/main.rs:2140
-msgid "Save as..."
-msgstr ""
-
-#: src/main.rs:1668 src/main.rs:2165
-msgid "Import model..."
-msgstr ""
-
-#: src/main.rs:1672 src/main.rs:2191
-msgid "Update with new model..."
-msgstr ""
-
-#: src/main.rs:1678 src/main.rs:2205
-msgid "Export model..."
-msgstr ""
-
-#: src/main.rs:1682 src/main.rs:2229
-msgid "Generate Printable..."
-msgstr ""
-
-#: src/main.rs:1689
-msgid "Settings..."
-msgstr ""
-
-#: src/main.rs:1700
-msgid "Quit"
-msgstr ""
-
-#: src/main.rs:1707
-msgid "Edit"
-msgstr ""
-
-#: src/main.rs:1710
-msgid "Undo"
-msgstr ""
-
-#: src/main.rs:1736
-msgid "Face/Island"
-msgstr ""
-
-#: src/main.rs:1744
-msgid "Split/Join edge"
-msgstr ""
-
-#: src/main.rs:1762
-msgid "Repack pieces"
-msgstr ""
-
-#: src/main.rs:1769
-msgid "View"
-msgstr ""
-
-#: src/main.rs:1771
-msgid "Textures"
-msgstr ""
-
-#: src/main.rs:1781
-msgid "3D lines"
-msgstr ""
-
-#: src/main.rs:1799
-msgid "X-ray selection"
-msgstr ""
-
-#: src/main.rs:1808
-msgid "Texts"
-msgstr ""
-
-#: src/main.rs:1820
+#: src/main.rs:1755 src/main.rs:2042
 msgid "Paper"
 msgstr ""
 
-#: src/main.rs:1829
+#: src/main.rs:1763
+msgid "Highlight"
+msgstr ""
+
+#: src/main.rs:1775
+msgid "top"
+msgstr ""
+
+#: src/main.rs:1784
+msgid "left"
+msgstr ""
+
+#: src/main.rs:1793
+msgid "right"
+msgstr ""
+
+#: src/main.rs:1802
+msgid "bottom"
+msgstr ""
+
+#: src/main.rs:1814
+msgid "Reset to UI defaults"
+msgstr ""
+
+#: src/main.rs:1845
+msgid "Apply"
+msgstr ""
+
+#: src/main.rs:1869
+msgid "File"
+msgstr ""
+
+#: src/main.rs:1871 src/main.rs:2345
+msgid "Open..."
+msgstr ""
+
+#: src/main.rs:1879
+msgid "Save"
+msgstr ""
+
+#: src/main.rs:1885 src/main.rs:2367
+msgid "Save as..."
+msgstr ""
+
+#: src/main.rs:1890 src/main.rs:2392
+msgid "Import model..."
+msgstr ""
+
+#: src/main.rs:1894 src/main.rs:2418
+msgid "Update with new model..."
+msgstr ""
+
+#: src/main.rs:1900 src/main.rs:2432
+msgid "Export model..."
+msgstr ""
+
+#: src/main.rs:1904 src/main.rs:2460
+msgid "Generate Printable..."
+msgstr ""
+
+#: src/main.rs:1911
+msgid "Settings..."
+msgstr ""
+
+#: src/main.rs:1922
+msgid "Quit"
+msgstr ""
+
+#: src/main.rs:1929
+msgid "Edit"
+msgstr ""
+
+#: src/main.rs:1932
+msgid "Undo"
+msgstr ""
+
+#: src/main.rs:1958
+msgid "Face/Island"
+msgstr ""
+
+#: src/main.rs:1966
+msgid "Split/Join edge"
+msgstr ""
+
+#: src/main.rs:1984
+msgid "Repack pieces"
+msgstr ""
+
+#: src/main.rs:1991
+msgid "View"
+msgstr ""
+
+#: src/main.rs:1993
+msgid "Textures"
+msgstr ""
+
+#: src/main.rs:2003
+msgid "3D lines"
+msgstr ""
+
+#: src/main.rs:2021
+msgid "X-ray selection"
+msgstr ""
+
+#: src/main.rs:2030
+msgid "Texts"
+msgstr ""
+
+#: src/main.rs:2051
 msgid "Highlight overlaps"
 msgstr ""
 
-#: src/main.rs:1837
+#: src/main.rs:2059
 msgid "Reset views"
 msgstr ""
 
-#: src/main.rs:1842
+#: src/main.rs:2064
 msgid "Help"
 msgstr ""
 
-#: src/main.rs:2104
+#: src/main.rs:2332
 msgid "Load model"
 msgstr ""
 
-#: src/main.rs:2105 src/main.rs:2150 src/main.rs:3312
+#: src/main.rs:2333 src/main.rs:2377 src/main.rs:3657
 msgid "The model has not been save, continue anyway?"
 msgstr ""
 
-#: src/main.rs:2149
+#: src/main.rs:2376
 msgid "Import model"
 msgstr ""
 
-#: src/main.rs:2175
+#: src/main.rs:2402
 msgid "Update model"
 msgstr ""
 
-#: src/main.rs:2176
+#: src/main.rs:2403
 msgid "This model is not saved and this operation cannot be undone.\n"
 "Continue anyway?"
 msgstr ""
 
-#: src/main.rs:2314
+#: src/main.rs:2549
 msgid "Overwrite?"
 msgstr ""
 
-#: src/main.rs:2315
+#: src/main.rs:2550
 msgid "The file '{}' already exists!\n"
 "Would you like to overwrite it?"
 msgstr ""
 
-#: src/main.rs:2321
+#: src/main.rs:2556
 msgid "Error!"
 msgstr ""
 
-#: src/main.rs:2322
+#: src/main.rs:2557
 msgid "The file '{}' doesn't exist!"
 msgstr ""
 
-#: src/main.rs:2767
+#: src/main.rs:3062
 msgid "Error opening file {}"
 msgstr ""
 
-#: src/main.rs:2770
+#: src/main.rs:3065
 msgid "Error loading file {}"
 msgstr ""
 
-#: src/main.rs:2899
+#: src/main.rs:3194
 msgid "Error creating file {}"
 msgstr ""
 
-#: src/main.rs:3311
+#: src/main.rs:3656
 msgid "Quit?"
 msgstr ""
 
-#: src/main.rs:3508
+#: src/main.rs:3962
 msgid "All models"
 msgstr ""
 
-#: src/main.rs:3522
+#: src/main.rs:3976
 msgid "Wavefront"
 msgstr ""
 
-#: src/main.rs:3530
+#: src/main.rs:3984
 msgid "Pepakura"
 msgstr ""
 
-#: src/main.rs:3538
+#: src/main.rs:3992
 msgid "Stl"
 msgstr ""
 
-#: src/main.rs:3546
+#: src/main.rs:4000
 msgid "glTF"
 msgstr ""
 
-#: src/main.rs:3557
+#: src/main.rs:4011
 msgid "PDF documents"
 msgstr ""
 
-#: src/main.rs:3565
+#: src/main.rs:4019
 msgid "SVG images"
 msgstr ""
 
-#: src/main.rs:3573
+#: src/main.rs:4027
+msgid "Inkscape SVG multipage"
+msgstr ""
+
+#: src/main.rs:4035
 msgid "PNG images"
 msgstr ""
 
-#: src/main.rs:3581
+#: src/main.rs:4043
 msgid "All files"
 msgstr ""

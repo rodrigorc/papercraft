@@ -34,13 +34,25 @@ If you create any nice paper model, I'd appreciate if you open an [issue][ISSUE]
 
 ## Installation
 
-If you use Windows, this program does not use any installation, you just copy it into a local folder and run it. Just download the latest package from [here][TAG] and uncompress it to your destination folder.
+If you use **Windows**, this program does not use any installation, you just copy it into a local folder and run it. Just download the latest package from [here][TAG] and uncompress it to your destination folder.
 
 Select the Win32 or Win64 version depending on your particular Windows and preferences. If you do not know which one you need, try both and see what happens. It requires a somewhat modern OpenGL implementation. If your graphics driver doesn't have one you'll get a blank screen, then you can try a software OpenGL driver, such as Mesa from [here][MESA_BIN]: uncompress the proper one to the same directory as Papercraft and it should just work.
 
 Then run the program directly by double-clicking or create a shortcut to your desktop.
 
-If you use Linux you can compile it from source (quite easy, really) or use the precompiled AppImage from the [releases][TAG] page. Remember to set the downloaded file to _executable_, then just run it.
+If you use **Linux** you can compile it from source (quite easy, really) or use the precompiled AppImage from the [releases][TAG] page.
+
+There are two architecture there: `x86-64` and `aarch64`, the first one for Intel/AMD computers, the second one for ARM64. If in doubt use the first one.  Remember to set the downloaded file to _executable_ once before running it:
+```bash
+$ chmod a+x Papercraft_XXX.AppImage
+$ ./Papercraft_XXX.AppImage
+```
+If it fails because of the OpenGL version, maybe your graphics card is not supported. If that is the case you can try using Mesa in software mode, setting these environment variables:
+```bash
+$ __GLX_VENDOR_LIBRARY_NAME=mesa GALLIUM_DRIVER=llvmpipe  ./Papercraft_XXX.AppImage
+```
+
+If you use **OSX** try the DMG file from the  [releases][TAG] page.
 
 If you use any other OS you can try compiling from source, but I don't know if you will succeed. Let me now either way.
 

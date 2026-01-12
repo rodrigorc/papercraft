@@ -28,9 +28,14 @@ jobs:
     uses: ./.github/workflows/build_macos.yml
     with:
       name: ${{ inputs.tag_name }}
+  build_linux_arm:
+    name: BuildLinuxArm
+    uses: ./.github/workflows/build_linux_arm.yml
+    with:
+      name: ${{ inputs.tag_name }}
   release:
     name: Release
-    needs: [build_linux, build_win32, build_win64, build_macos]
+    needs: [build_linux, build_win32, build_win64, build_macos, build_linux_arm]
     runs-on: ubuntu-latest
     steps:
       - name: Download Linux
@@ -49,6 +54,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: Papercraft-${{ inputs.tag_name }}-MacOS.dmg
+      - name: Download LinuxArm
+        uses: actions/download-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.tag_name }}-aarch64.AppImage
       - name: Upload all to release
         uses: svenstaro/upload-release-action@2.9.0
         with:

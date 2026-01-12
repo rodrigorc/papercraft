@@ -15,7 +15,7 @@ jobs:
       - name: Install pre-requisites
         run: |
           rustup target add i686-pc-windows-gnu
-          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 libz-mingw-w64-dev
+          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 libz-mingw-w64-dev nasm
           sudo ln -s /usr/lib/gcc/i686-w64-mingw32/10-win32/include/c++ /usr/i686-w64-mingw32/include/c++
       - name: Checkout
         uses: actions/checkout@v4

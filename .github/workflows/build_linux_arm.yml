@@ -1,0 +1,53 @@
+name: BuildLinuxArm
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+
+jobs:
+  papercraft:
+    name: ${{ inputs.name }}
+    # Oldest LTS ubuntu still with support
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - name: Bin dir
+        run: |
+          mkdir bin
+          echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
+      - name: LinuxDeploy
+        run: |
+          ( cd bin ; wget -nv https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage )
+          chmod a+x bin/linuxdeploy-aarch64.AppImage
+      - name: Build
+        run: |
+          cargo build --release
+      - name: Pack AppImage
+        run: |
+          export LINUXDEPLOY_OUTPUT_VERSION="${{ inputs.name }}"
+          export ARCH=aarch64
+          # Create the directory tree
+          linuxdeploy-aarch64.AppImage --appdir=AppDir
+          mkdir -p AppDir/usr/share/metainfo/
+          cp distro/papercraft.desktop AppDir/usr/share/applications/
+          cp distro/com.rodrigorc.papercraft.appdata.xml AppDir/usr/share/metainfo/
+          cp target/release/papercraft AppDir/usr/bin/
+          cp src/papercraft.png AppDir/usr/share/icons/hicolor/128x128/apps/
+          linuxdeploy-aarch64.AppImage \
+              --appdir=AppDir \
+              --desktop-file=AppDir/usr/share/applications/papercraft.desktop \
+              --output appimage \
+              --exclude-library="libglib-2.0.*" \
+              --custom-apprun=distro/docker/apprun
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Papercraft-${{ inputs.name }}-aarch64.AppImage
+          path: Papercraft-${{ inputs.name }}-aarch64.AppImage
+          if-no-files-found: error

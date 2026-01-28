@@ -1921,6 +1921,7 @@ impl<'de> Deserialize<'de> for EdgeIdPosition {
     {
         let d = i32::deserialize(deserializer)?;
         let res = match d {
+            0 => EdgeIdPosition::None,
             1 => EdgeIdPosition::Outside,
             -1 => EdgeIdPosition::Inside,
             _ => {

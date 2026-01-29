@@ -1802,135 +1802,84 @@ impl Island {
     }
 }
 
-impl Serialize for EdgeStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let is = match self {
-            EdgeStatus::Hidden => 0,
-            EdgeStatus::Joined => 1,
-            EdgeStatus::Cut(FlapSide::False) => 2,
-            EdgeStatus::Cut(FlapSide::True) => 3,
-            EdgeStatus::Cut(FlapSide::Hidden) => 4,
-        };
-        serializer.serialize_i32(is)
-    }
-}
-impl<'de> Deserialize<'de> for EdgeStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let d = u32::deserialize(deserializer)?;
-        let res = match d {
-            0 => EdgeStatus::Hidden,
-            1 => EdgeStatus::Joined,
-            2 => EdgeStatus::Cut(FlapSide::False),
-            3 => EdgeStatus::Cut(FlapSide::True),
-            4 => EdgeStatus::Cut(FlapSide::Hidden),
-            _ => return Err(serde::de::Error::missing_field("invalid edge status")),
-        };
-        Ok(res)
-    }
-}
-
-impl Serialize for FlapStyle {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let is = match self {
-            FlapStyle::Textured => 0,
-            FlapStyle::HalfTextured => 1,
-            FlapStyle::White => 2,
-            FlapStyle::None => 3,
-        };
-        serializer.serialize_i32(is)
-    }
-}
-impl<'de> Deserialize<'de> for FlapStyle {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let d = u32::deserialize(deserializer)?;
-        let res = match d {
-            0 => FlapStyle::Textured,
-            1 => FlapStyle::HalfTextured,
-            2 => FlapStyle::White,
-            3 => FlapStyle::None,
-            _ => return Err(serde::de::Error::missing_field("invalid tab_style value")),
-        };
-        Ok(res)
-    }
-}
-
-impl Serialize for FoldStyle {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let is = match self {
-            FoldStyle::Full => 0,
-            FoldStyle::FullAndOut => 1,
-            FoldStyle::Out => 2,
-            FoldStyle::In => 3,
-            FoldStyle::InAndOut => 4,
-            FoldStyle::None => 5,
-        };
-        serializer.serialize_i32(is)
-    }
-}
-impl<'de> Deserialize<'de> for FoldStyle {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let d = u32::deserialize(deserializer)?;
-        let res = match d {
-            0 => FoldStyle::Full,
-            1 => FoldStyle::FullAndOut,
-            2 => FoldStyle::Out,
-            3 => FoldStyle::In,
-            4 => FoldStyle::InAndOut,
-            5 => FoldStyle::None,
-            _ => return Err(serde::de::Error::missing_field("invalid fold_style value")),
-        };
-        Ok(res)
-    }
-}
-
-impl Serialize for EdgeIdPosition {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let is = match self {
-            EdgeIdPosition::None => 0,
-            EdgeIdPosition::Outside => 1,
-            EdgeIdPosition::Inside => -1,
-        };
-        serializer.serialize_i32(is)
-    }
-}
-impl<'de> Deserialize<'de> for EdgeIdPosition {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let d = i32::deserialize(deserializer)?;
-        let res = match d {
-            0 => EdgeIdPosition::None,
-            1 => EdgeIdPosition::Outside,
-            -1 => EdgeIdPosition::Inside,
-            _ => {
-                return Err(serde::de::Error::missing_field(
-                    "invalid edge_id_position value",
-                ));
+/// This macro implements Serialize and Deserialize for an enum as integers,
+/// eensuring that all the same values are used for both.
+macro_rules! ser_de_for_enum_as_i32 {
+    ($name:ident $error:literal { $($vals:tt)* } ) => {
+        impl Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let is = ser_de_for_enum_as_i32! { @SER self, $($vals)* };
+                serializer.serialize_i32(is)
             }
-        };
-        Ok(res)
+        }
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let d = i32::deserialize(deserializer)?;
+                let res = ser_de_for_enum_as_i32! { @DE d, $error, $($vals)* };
+                Ok(res)
+            }
+        }
+    };
+    // We need two nested expansions because the same tokens are to be interpretd as patterns or as values, depending on the function.
+    ( @SER $x:expr , $( $key:pat => $val:expr , )* ) => {
+        match $x {
+            $(
+                $key => $val,
+            )*
+        }
+    };
+    // Note that for DE key and val are switched
+    ( @DE $x:expr , $err:expr , $( $key:expr => $val:pat , )* ) => {
+        match $x {
+            $(
+                $val => $key,
+            )*
+            _ => return Err(serde::de::Error::missing_field($err)),
+        }
+    };
+}
+
+ser_de_for_enum_as_i32! {
+    EdgeStatus "invalid edge status" {
+        EdgeStatus::Hidden => 0,
+        EdgeStatus::Joined => 1,
+        EdgeStatus::Cut(FlapSide::False) => 2,
+        EdgeStatus::Cut(FlapSide::True) => 3,
+        EdgeStatus::Cut(FlapSide::Hidden) => 4,
+    }
+}
+
+ser_de_for_enum_as_i32! {
+    FlapStyle "invalid tab_style value" {
+        FlapStyle::Textured => 0,
+        FlapStyle::HalfTextured => 1,
+        FlapStyle::White => 2,
+        FlapStyle::None => 3,
+    }
+}
+
+ser_de_for_enum_as_i32! {
+    FoldStyle "invalid fold_style value" {
+        FoldStyle::Full => 0,
+        FoldStyle::FullAndOut => 1,
+        FoldStyle::Out => 2,
+        FoldStyle::In => 3,
+        FoldStyle::InAndOut => 4,
+        FoldStyle::None => 5,
+    }
+}
+
+ser_de_for_enum_as_i32! {
+    EdgeIdPosition "invalid edge_id_position value" {
+        EdgeIdPosition::None => 0,
+        EdgeIdPosition::Outside => 1,
+        EdgeIdPosition::Inside => -1,
     }
 }
 

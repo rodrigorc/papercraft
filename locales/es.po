@@ -537,7 +537,7 @@ msgid "Load model"
 msgstr "Cargar modelo"
 
 #: src/main.rs:2333 src/main.rs:2377 src/main.rs:3657
-msgid "The model has not been save, continue anyway?"
+msgid "The model has not been saved, continue anyway?"
 msgstr "El modelo no está guardado, ¿continuar igualmente?"
 
 #: src/main.rs:2376

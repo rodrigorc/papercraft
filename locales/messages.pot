@@ -523,7 +523,7 @@ msgid "Load model"
 msgstr ""
 
 #: src/main.rs:2333 src/main.rs:2377 src/main.rs:3657
-msgid "The model has not been save, continue anyway?"
+msgid "The model has not been saved, continue anyway?"
 msgstr ""
 
 #: src/main.rs:2376

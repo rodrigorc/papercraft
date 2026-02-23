@@ -2325,7 +2325,7 @@ impl GlobalContext {
                 self.open_confirmation_dialog(
                     ui,
                     &tr!("Load model"),
-                    &tr!("The model has not been save, continue anyway?"),
+                    &tr!("The model has not been saved, continue anyway?"),
                     |a| a.open = BoolWithConfirm::Confirmed,
                 );
             }
@@ -2369,7 +2369,7 @@ impl GlobalContext {
                 self.open_confirmation_dialog(
                     ui,
                     &tr!("Import model"),
-                    &tr!("The model has not been save, continue anyway?"),
+                    &tr!("The model has not been saved, continue anyway?"),
                     |a| a.import_model = BoolWithConfirm::Confirmed,
                 );
             }
@@ -3649,7 +3649,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                         self.open_confirmation_dialog(
                             ui,
                             &tr!("Quit?"),
-                            &tr!("The model has not been save, continue anyway?"),
+                            &tr!("The model has not been saved, continue anyway?"),
                             |a| a.quit = BoolWithConfirm::Confirmed,
                         );
                     }

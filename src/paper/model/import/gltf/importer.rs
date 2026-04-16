@@ -56,7 +56,7 @@ impl GltfImporter {
 
 impl Importer for GltfImporter {
     type VertexId = [u32; 3];
-
+    // The VertexId is just the bits of the coordinates of the location, a kind cheap hash.
     fn vertex_map(&self, i_v: VertexIndex) -> Self::VertexId {
         let i_v = usize::from(i_v);
         let v: [f32; 3] = self.vertices[i_v].pos.into();

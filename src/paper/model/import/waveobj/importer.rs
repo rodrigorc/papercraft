@@ -145,4 +145,12 @@ impl Importer for WaveObjImporter {
         }
         textures
     }
+
+    fn compute_edge_status(
+        &self,
+        _edge_id: (Self::VertexId, Self::VertexId),
+    ) -> Option<EdgeStatus> {
+        // Edges from the same face are already joined by the face id, so if we get here they are always cut.
+        Some(EdgeStatus::Cut(FlapSide::False))
+    }
 }

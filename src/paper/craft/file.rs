@@ -237,9 +237,14 @@ impl Papercraft {
                         }
                     }
                     // Normal edge
-                    _ => importer
-                        .compute_edge_status(*edge_id)
-                        .unwrap_or(EdgeStatus::Cut(FlapSide::False)),
+                    _ => importer.compute_edge_status(*edge_id).unwrap_or_else(|| {
+                        // If the importer doesn't compute the edge_status, try the heuristics, a small angle is Hidden, a big angle is Cut.
+                        if edge.angle().0.abs() < Rad::from(Deg(1.0)).0 {
+                            EdgeStatus::Hidden
+                        } else {
+                            EdgeStatus::Cut(FlapSide::False)
+                        }
+                    }),
                 }
             })
             .collect();

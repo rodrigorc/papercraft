@@ -555,7 +555,7 @@ struct GlobalContext {
 
 struct FileDialog {
     chooser: filechooser::FileChooser,
-    preview_file: PathBuf,
+    preview_file: Option<PathBuf>,
     thumbnail_cancellation_guard: Option<CancellationGuard>,
     tex: Option<(glr::Texture, Vector2)>,
     title: String,
@@ -567,7 +567,7 @@ impl FileDialog {
     fn new(chooser: filechooser::FileChooser, title: String, action: FileAction) -> FileDialog {
         FileDialog {
             chooser,
-            preview_file: PathBuf::new(),
+            preview_file: None,
             thumbnail_cancellation_guard: None,
             tex: None,
             title,
@@ -2332,7 +2332,8 @@ impl GlobalContext {
             BoolWithConfirm::Confirmed => {
                 let mut chooser = filechooser::FileChooser::new();
                 let _ = chooser.set_path(&self.last_path);
-                chooser.add_flags(filechooser::Flags::SHOW_READ_ONLY);
+                chooser
+                    .add_flags(filechooser::Flags::SHOW_READ_ONLY | filechooser::Flags::MUST_EXIST);
                 chooser.add_filter(filters::craft());
                 chooser.add_filter(filters::all_files());
                 self.file_dialog = Some(FileDialog::new(
@@ -2376,6 +2377,7 @@ impl GlobalContext {
             BoolWithConfirm::Confirmed => {
                 let mut chooser = filechooser::FileChooser::new();
                 let _ = chooser.set_path(&self.last_path);
+                chooser.add_flags(filechooser::Flags::MUST_EXIST);
                 chooser.add_filter(filters::all_models());
                 chooser.add_filter(filters::wavefront());
                 chooser.add_filter(filters::pepakura());
@@ -2402,6 +2404,7 @@ impl GlobalContext {
             BoolWithConfirm::Confirmed => {
                 let mut chooser = filechooser::FileChooser::new();
                 let _ = chooser.set_path(&self.last_path);
+                chooser.add_flags(filechooser::Flags::MUST_EXIST);
                 chooser.add_filter(filters::all_models());
                 chooser.add_filter(filters::wavefront());
                 chooser.add_filter(filters::pepakura());
@@ -2473,7 +2476,7 @@ impl GlobalContext {
                 .close_button(true)
                 .with(|| {
                     let mut finish_file_dialog = false;
-                    let full_path = fd.chooser.full_path(None);
+                    let full_path = fd.chooser.selected_entry().map(|e| fd.chooser.path().join(&e.name));
                     // The selected file has changed: cancel any previous thumbnail and start a new one
                     if fd.preview_file != full_path {
                         // Cancel the previous load, if any
@@ -2484,16 +2487,16 @@ impl GlobalContext {
                         fd.preview_file = full_path;
 
                         // Skip directories
-                        if !fd.chooser.file_name().is_empty() {
+                        if let Some(preview_file) = &fd.preview_file {
                             let ct = CancellationToken::default();
                             fd.thumbnail_cancellation_guard = Some(CancellationGuard(ct.clone()));
                             std::thread::spawn({
-                                let full_path = fd.preview_file.clone();
+                                let preview_file = preview_file.clone();
                                 let proxy = self.proxy.event_proxy().clone();
                                 move || {
-                                    let image = load_thumbnail(&full_path, &ct).ok();
+                                    let image = load_thumbnail(&preview_file, &ct).ok();
                                     let _ = proxy.run_idle(move |this, args| {
-                                        if this.thumbnail_loaded(full_path, ct, image) {
+                                        if this.thumbnail_loaded(preview_file, ct, image) {
                                             args.window.ping_user_input();
                                         }
                                     });

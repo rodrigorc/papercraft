@@ -50,9 +50,13 @@ impl Plane {
 }
 
 // Each returned tuple is a triangle of indices into the original vector
-pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
+pub fn tessellate(ps: &[Vector3]) -> Vec<[usize; 3]> {
     if ps.len() < 3 {
-        return (Vec::new(), Plane::default());
+        return Vec::new();
+    }
+
+    if ps.len() == 3 {
+        return vec![[0, 1, 2]];
     }
 
     // Compute the face plane
@@ -73,10 +77,6 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
         base_x: plane_x,
         base_y: plane_y,
     };
-
-    if ps.len() == 3 {
-        return (vec![[0, 1, 2]], plane);
-    }
 
     let mut res = Vec::with_capacity(ps.len() - 2);
 
@@ -123,7 +123,7 @@ pub fn tessellate(ps: &[Vector3]) -> (Vec<[usize; 3]>, Plane) {
         ps.remove(tri.1);
     }
 
-    (res, plane)
+    res
 }
 
 pub fn point_in_triangle(p: Vector2, tri: [Vector2; 3]) -> bool {

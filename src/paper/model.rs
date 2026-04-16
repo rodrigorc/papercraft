@@ -249,7 +249,7 @@ impl Model {
                 .iter()
                 .map(|v| vertices[usize::from(*v)].pos)
                 .collect();
-            let (tris, _) = util_3d::tessellate(&to_tess);
+            let tris = util_3d::tessellate(&to_tess);
             for tri in tris {
                 let i_face = FaceIndex::from(faces.len());
 
@@ -282,12 +282,12 @@ impl Model {
                     if let Some(i_edge) = i_edge_candidate {
                         if edges[i_edge].f1.is_some() {
                             // Maximum 2 faces per edge, additional faces will clone the edge and be disconnected
-                            println!("Warning: three-faced edge #{i_edge}");
+                            log::warn!("Warning: three-faced edge #{i_edge}");
                             i_edge_candidate = None;
                         } else if edge_map[i_edge] != (v1, v0) {
                             // The found edge should be inverted: (v1,v0), unless you are doing a Moebius strip or something weird.
                             // This is mostly harmless, though.
-                            println!("Warning: inverted edge #{i_edge}: {v0:?}-{v1:?}");
+                            log::warn!("Warning: inverted edge #{i_edge}: {v0:?}-{v1:?}");
                         }
                     }
 

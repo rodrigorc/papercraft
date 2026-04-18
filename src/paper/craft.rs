@@ -432,11 +432,16 @@ impl std::fmt::Display for EdgeId {
     }
 }
 
+/// Describes a Flap shape.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct FlapGeom {
+    /// The tangent of the angle at the left side of the flap
     pub tan_0: f32,
+    /// Ditto to the right side
     pub tan_1: f32,
+    /// The width (or length, depending on you point of view) of the flap body.
     pub width: f32,
+    /// Whether the flap is trapezoidal or triangular.
     pub triangular: bool,
 }
 
@@ -819,6 +824,18 @@ impl Papercraft {
         );
         self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
         renames
+    }
+
+    pub fn edge_undo_join(&mut self, join_result: &JoinResult) {
+        self.edge_cut(join_result.i_edge, None);
+        let i_prev_island = self.island_by_face(join_result.prev_root);
+        let island = self.island_by_key_mut(i_prev_island).unwrap();
+
+        island.reset_transformation(
+            join_result.prev_root,
+            join_result.prev_rot,
+            join_result.prev_loc,
+        );
     }
 
     fn compare_islands(&self, a: &Island, b: &Island, priority_face: Option<FaceIndex>) -> bool {

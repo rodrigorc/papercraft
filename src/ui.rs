@@ -2337,52 +2337,58 @@ impl PapercraftContext {
         let mut res = UndoResult::Model;
 
         for action in action_pack.into_iter().rev() {
-            match action {
-                UndoAction::IslandMove {
-                    i_root,
-                    prev_rot,
-                    prev_loc,
-                } => {
-                    let i_island = self.papercraft.island_by_face(i_root);
-                    let island = self.papercraft.island_by_key_mut(i_island).unwrap();
-                    island.reset_transformation(i_root, prev_rot, prev_loc);
-                }
-                UndoAction::FlapToggle { i_edge, flap_side } => {
-                    self.papercraft
-                        .edge_toggle_flap(i_edge, EdgeToggleFlapAction::Set(flap_side));
-                }
-                UndoAction::EdgeCut { i_edge } => {
-                    self.papercraft.edge_join(i_edge, None);
-                }
-                UndoAction::EdgeJoin { join_result } => {
-                    self.papercraft.edge_cut(join_result.i_edge, None);
-                    let i_prev_island = self.papercraft.island_by_face(join_result.prev_root);
-                    let island = self.papercraft.island_by_key_mut(i_prev_island).unwrap();
-
-                    island.reset_transformation(
-                        join_result.prev_root,
-                        join_result.prev_rot,
-                        join_result.prev_loc,
-                    );
-                }
-                UndoAction::DocConfig {
-                    options,
-                    island_pos,
-                } => {
-                    for (i_root_face, (rot, loc)) in island_pos {
-                        let i_island = self.papercraft.island_by_face(i_root_face);
-                        let island = self.papercraft.island_by_key_mut(i_island).unwrap();
-                        island.reset_transformation(i_root_face, rot, loc);
-                    }
-                    res = UndoResult::ModelAndOptions(options);
-                }
-                UndoAction::Modified => {
-                    self.modified = false;
-                }
+            match self.undo_single_action(action) {
+                None => (),
+                // Currently the latest UndoResult is the right one
+                Some(new_res) => res = new_res,
             }
         }
         res
     }
+
+    fn undo_single_action(&mut self, action: UndoAction) -> Option<UndoResult> {
+        match action {
+            UndoAction::IslandMove {
+                i_root,
+                prev_rot,
+                prev_loc,
+            } => {
+                let i_island = self.papercraft.island_by_face(i_root);
+                let island = self.papercraft.island_by_key_mut(i_island).unwrap();
+                island.reset_transformation(i_root, prev_rot, prev_loc);
+                None
+            }
+            UndoAction::FlapToggle { i_edge, flap_side } => {
+                self.papercraft
+                    .edge_toggle_flap(i_edge, EdgeToggleFlapAction::Set(flap_side));
+                None
+            }
+            UndoAction::EdgeCut { i_edge } => {
+                self.papercraft.edge_join(i_edge, None);
+                None
+            }
+            UndoAction::EdgeJoin { join_result } => {
+                self.papercraft.edge_undo_join(&join_result);
+                None
+            }
+            UndoAction::DocConfig {
+                options,
+                island_pos,
+            } => {
+                for (i_root_face, (rot, loc)) in island_pos {
+                    let i_island = self.papercraft.island_by_face(i_root_face);
+                    let island = self.papercraft.island_by_key_mut(i_island).unwrap();
+                    island.reset_transformation(i_root_face, rot, loc);
+                }
+                Some(UndoResult::ModelAndOptions(options))
+            }
+            UndoAction::Modified => {
+                self.modified = false;
+                None
+            }
+        }
+    }
+
     pub fn push_undo_action(&mut self, mut action: Vec<UndoAction>) {
         if action.is_empty() {
             return;

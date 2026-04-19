@@ -806,26 +806,25 @@ impl Papercraft {
         &mut self,
         i_edge: EdgeIndex,
         priority_face: Option<FaceIndex>,
-    ) -> FxHashMap<IslandKey, JoinResult> {
-        let mut join_res = FxHashMap::default();
+    ) -> Option<JoinResult> {
         match self.edges[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => {}
             _ => {
-                return join_res;
+                return None;
             }
         }
         let edge = &self.model[i_edge];
         let (i_face_a, i_face_b) = match edge.faces() {
             (fa, Some(fb)) => (fa, fb),
             _ => {
-                return join_res;
+                return None;
             }
         };
 
         let i_island_b = self.island_by_face(i_face_b);
         if self.contains_face(&self.islands[i_island_b], i_face_a) {
             // Same island on both sides, nothing to do
-            return join_res;
+            return None;
         }
 
         // Join both islands
@@ -837,17 +836,13 @@ impl Papercraft {
         if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
             std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
         }
-        join_res.insert(
-            i_island_b,
-            JoinResult {
-                i_edge,
-                prev_root: island_b.root_face(),
-                prev_rot: island_b.rotation(),
-                prev_loc: island_b.location(),
-            },
-        );
         self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
-        join_res
+        Some(JoinResult {
+            i_edge,
+            prev_root: island_b.root_face(),
+            prev_rot: island_b.rotation(),
+            prev_loc: island_b.location(),
+        })
     }
 
     pub fn edge_undo_join(&mut self, join_result: &JoinResult) {
@@ -1298,8 +1293,8 @@ impl Papercraft {
             |i, _, ()| visit_face(i),
         )
     }
-    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> FxHashMap<IslandKey, JoinResult> {
-        let mut join_res = FxHashMap::default();
+    pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> Vec<JoinResult> {
+        let mut join_res = Vec::default();
         let mut i_edges = vec![i_edge];
         while let Some(i_edge) = i_edges.pop() {
             // First try to join the edge, if it fails skip.
@@ -1325,10 +1320,8 @@ impl Papercraft {
 
             let r = self.edge_join(i_edge, None);
             // Join failed?
-            if r.is_empty() {
-                continue;
-            }
-            join_res.extend(r);
+            let Some(r) = r else { continue };
+            join_res.push(r);
 
             // Move to the opposite edge of both faces
             for (i_face, n_faces) in [(i_face_a, n_faces_a), (i_face_b, n_faces_b)] {

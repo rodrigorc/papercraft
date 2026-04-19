@@ -1738,30 +1738,16 @@ impl PapercraftContext {
                 let is_sel = self.is_selected_island(i_island);
 
                 let offset = self.papercraft.options().flap_width * 2.0;
-                let islands = self.papercraft.edge_cut(i_edge, Some(offset));
-
-                if let Some((i_a, i_b)) = islands {
-                    if is_sel {
-                        self.select_island(i_a);
-                        self.select_island(i_b);
-                    }
-                    Some(vec![UndoAction::EdgeCut { i_edge }])
-                } else {
-                    // Should not happen, just in case
-                    None
+                let islands = self.papercraft.edge_cut(i_edge, Some(offset))?;
+                if is_sel {
+                    self.select_island(islands.0);
+                    self.select_island(islands.1);
                 }
+                Some(vec![UndoAction::EdgeCut { i_edge }])
             }
             EdgeStatus::Cut(_) => {
-                let join_res = self.papercraft.edge_join(i_edge, priority_face);
-                if join_res.is_empty() {
-                    return None;
-                }
-                let undo_actions = join_res
-                    .values()
-                    .map(|join_result| UndoAction::EdgeJoin {
-                        join_result: *join_result,
-                    })
-                    .collect();
+                let join_result = self.papercraft.edge_join(i_edge, priority_face)?;
+                let undo_actions = vec![UndoAction::EdgeJoin { join_result }];
                 Some(undo_actions)
             }
         }
@@ -1775,10 +1761,8 @@ impl PapercraftContext {
         }
 
         let undo_actions = join_res
-            .values()
-            .map(|join_result| UndoAction::EdgeJoin {
-                join_result: *join_result,
-            })
+            .into_iter()
+            .map(|join_result| UndoAction::EdgeJoin { join_result })
             .collect();
         Some(undo_actions)
     }

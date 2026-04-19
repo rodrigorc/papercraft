@@ -1747,6 +1747,7 @@ impl PapercraftContext {
             }
             EdgeStatus::Cut(_) => {
                 let join_result = self.papercraft.edge_join(i_edge, priority_face)?;
+                self.check_selection();
                 let undo_actions = vec![UndoAction::EdgeJoin { join_result }];
                 Some(undo_actions)
             }
@@ -1759,7 +1760,7 @@ impl PapercraftContext {
         if join_res.is_empty() {
             return None;
         }
-
+        self.check_selection();
         let undo_actions = join_res
             .into_iter()
             .map(|join_result| UndoAction::EdgeJoin { join_result })
@@ -2397,6 +2398,7 @@ impl PapercraftContext {
             }
             UndoAction::EdgeCut { i_edge } => {
                 self.papercraft.edge_join(i_edge, None);
+                self.check_selection();
                 None
             }
             UndoAction::EdgeJoin { join_result } => {
@@ -2433,6 +2435,14 @@ impl PapercraftContext {
     }
     pub fn has_selected_edge(&self) -> bool {
         self.selected_edges.is_some()
+    }
+
+    /// Check for duplicates in selected_islands: must call this after every possible join.
+    fn check_selection(&mut self) {
+        self.selected_islands
+            .sort_by_key(|i| self.papercraft.island_key_by_face_key(*i));
+        self.selected_islands
+            .dedup_by_key(|i| self.papercraft.island_key_by_face_key(*i));
     }
 
     pub fn lines_by_island(&self) -> (Vec<(IslandKey, PaperDrawFaceArgs)>, PaperDrawFaceArgsExtra) {

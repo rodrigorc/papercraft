@@ -2066,7 +2066,11 @@ impl PapercraftContext {
                 self.do_flap_action(i_edge, mods.contains(KeyMod::Shift))
             }
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
-                self.set_selection(ClickResult::Face(f), flags)
+                let mut rebuild = self.set_selection(ClickResult::Face(f), flags);
+                if mods.contains(KeyMod::Alt) {
+                    rebuild |= self.auto_join_edges(f);
+                }
+                rebuild
             }
             (_, ClickResult::None) => self.set_selection(ClickResult::None, flags),
             _ => RebuildFlags::empty(),
@@ -2272,6 +2276,7 @@ impl PapercraftContext {
                         .get_or_insert_with(Vec::new)
                         .extend(undo_action);
                 }
+                //RRC
                 flags
             }
             (_, ClickResult::None) => {
@@ -2298,7 +2303,11 @@ impl PapercraftContext {
         let flags = flags | SetSelectionFlags::CLICKED | SetSelectionFlags::RELEASED;
         match (self.ui.mode, selection) {
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
-                self.set_selection(ClickResult::Face(f), flags)
+                let mut rebuild = self.set_selection(ClickResult::Face(f), flags);
+                if mods.contains(KeyMod::Alt) {
+                    rebuild |= self.auto_join_edges(f);
+                }
+                rebuild
             }
             _ => RebuildFlags::empty(),
         }
@@ -2330,6 +2339,22 @@ impl PapercraftContext {
             SetSelectionFlags::empty()
         };
         self.set_selection(selection, flags)
+    }
+
+    #[must_use]
+    pub fn auto_join_edges(&mut self, i_face: FaceIndex) -> RebuildFlags {
+        let i_island = self.papercraft.island_by_face(i_face);
+        let join_res = self.papercraft.auto_join_edges(i_island);
+        self.check_selection();
+        let undo_actions = join_res
+            .into_iter()
+            .map(|join_result| UndoAction::EdgeJoin { join_result })
+            .collect();
+        self.push_undo_action(undo_actions);
+        RebuildFlags::PAPER
+            | RebuildFlags::SCENE_EDGE
+            | RebuildFlags::SELECTION
+            | RebuildFlags::ISLANDS
     }
 
     pub fn pre_selection_rectangle(&self) -> Option<Rectangle> {

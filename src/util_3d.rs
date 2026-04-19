@@ -310,6 +310,80 @@ pub fn line_line_intersection(
     ((line_1.0 + s * s1), s, t)
 }
 
+pub fn lines_intersect(line_i: (Vector2, Vector2), line_j: (Vector2, Vector2)) -> bool {
+    let (_, di, dj) = line_line_intersection(line_i, line_j);
+
+    // beware no epsilon!
+    (0.0..=1.0).contains(&di) && (0.0..=1.0).contains(&dj)
+}
+
+pub fn self_instersect_polygon(edges: &mut [(Vector2, Vector2)]) -> bool {
+    use std::cmp::Ordering;
+    use std::collections::BinaryHeap;
+
+    if edges.len() <= 3 {
+        return false;
+    }
+
+    struct Event(f32, bool, usize);
+    impl PartialEq for Event {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+    impl Eq for Event {}
+    impl PartialOrd for Event {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.0.total_cmp(&other.0))
+        }
+    }
+    impl Ord for Event {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.0.total_cmp(&other.0)
+        }
+    }
+
+    // Events are (x, start_or_end, index)
+    let mut events = BinaryHeap::new();
+
+    for (i, (p0, p1)) in edges.iter_mut().enumerate() {
+        // Ensure that p0 is to the left of p1
+        if p0.x > p1.x || (p0.x == p1.x && p0.y > p1.y) {
+            std::mem::swap(p0, p1);
+        }
+        events.push(Event(p0.x, false, i));
+        events.push(Event(p1.x, true, i));
+    }
+    let events = events.into_sorted_vec();
+
+    let mut active_edges = Vec::<usize>::new();
+
+    for Event(_, etype, idx) in events {
+        let edge = edges[idx];
+        if !etype {
+            // Left endpoint (Insert)
+            for &p in &active_edges {
+                let d = p.abs_diff(idx);
+                if d == 1 || d == edges.len() - 1 {
+                    // adjacent edges, skip
+                    continue;
+                }
+                if lines_intersect(edges[p], edge) {
+                    return true;
+                }
+            }
+            active_edges.push(idx);
+        } else {
+            // Right endpoint (Remove)
+            let Some(pos) = active_edges.iter().position(|i| *i == idx) else {
+                continue;
+            };
+            active_edges.swap_remove(pos);
+        }
+    }
+    false
+}
+
 pub fn ortho2d(width: f32, height: f32) -> Matrix3 {
     let right = width / 2.0;
     let left = -right;

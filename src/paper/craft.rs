@@ -639,6 +639,7 @@ impl Papercraft {
         }
         memo[usize::from(i_face)]
     }
+
     pub fn island_key_by_face_key(&self, i_island_face: IslandFaceKey) -> IslandKey {
         self.island_by_face(i_island_face.0)
     }
@@ -654,6 +655,14 @@ impl Papercraft {
         let island = self.island_by_key(i_island)?;
         Some(IslandFaceKey(island.root))
     }
+
+    pub fn island_is_self_intersecting(&self, island_key: IslandKey) -> bool {
+        let perimeter = self.island_perimeter(island_key);
+        let mut edges: Vec<_> = perimeter.into_iter().map(|p| (p.p0, p.p1)).collect();
+        let res = util_3d::self_instersect_polygon(&mut edges);
+        res
+    }
+
     fn rebuild_island_by_face(&self, memo: &mut Vec<IslandKey>) {
         // This could be optimized and updated every time an island is split/joined,
         // instead of creating it from scratch every time, but is it worth it?
@@ -837,6 +846,7 @@ impl Papercraft {
             std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
         }
         self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
+
         Some(JoinResult {
             i_edge,
             prev_root: island_b.root_face(),
@@ -1359,6 +1369,79 @@ impl Papercraft {
             }
         }
         join_res
+    }
+
+    pub fn auto_join_edges(&mut self, mut i_island: IslandKey) -> Vec<JoinResult> {
+        let mut res = Vec::new();
+
+        let Some(island) = self.island_by_key(i_island) else {
+            return res;
+        };
+
+        // Get all the island edges and sort from best to worst.
+        // And edge is best when it links to a small island, because we don't like small islands.
+        let mut edges = self
+            .island_edges(island)
+            .into_iter()
+            .filter_map(|i_edge| {
+                let edge = &self.model[i_edge];
+                let (fa, fb) = edge.faces();
+                // Discard rims
+                let fb = fb?;
+                Some((i_edge, fa, fb))
+            })
+            .collect::<Vec<_>>();
+        edges.sort_by_cached_key(|(_, fa, fb)| {
+            let ia = self.island_by_face(*fa);
+            let ib = self.island_by_face(*fb);
+            let i_other_island = if i_island == ia {
+                ib
+            } else if i_island == ib {
+                ia
+            } else {
+                return u32::MAX;
+            };
+            let island = self.island_by_key(i_other_island).unwrap();
+            self.island_face_count(island)
+        });
+
+        // Islands come and go, use the key to identify
+        // We must recompute `i_island`` for every cut/join
+        let i_face_root = island.root;
+
+        for (i_edge, fa, fb) in edges {
+            // Check the own side of the edge, to keep the transformation of the island.
+            let this_face = if self.island_by_face(fa) == i_island {
+                Some(fa)
+            } else if self.island_by_face(fb) == i_island {
+                Some(fb)
+            } else {
+                // Should not happend
+                continue;
+            };
+
+            // Try to join the edge
+            let join_res = self.edge_join(i_edge, this_face);
+            // If the join failed, skip
+            let Some(join_res) = join_res else { continue };
+
+            //Recompute `i_island`
+            i_island = self.island_by_face(i_face_root);
+
+            // If the resulting island is self-intersecting, rollback
+            if self.island_is_self_intersecting(i_island) {
+                self.edge_undo_join(&join_res);
+
+                //Recompute `i_island` again
+                i_island = self.island_by_face(i_face_root);
+                continue;
+            }
+
+            // Success!
+            res.push(join_res);
+        }
+
+        res
     }
 
     pub fn pack_islands(&mut self) -> u32 {

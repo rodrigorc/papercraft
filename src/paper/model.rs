@@ -440,6 +440,11 @@ impl Model {
         let (v0, v1) = self[e.f0].vertices_of_edge(i_edge).unwrap();
         (self[v0].pos, self[v1].pos)
     }
+    #[allow(dead_code)]
+    pub fn edge_len(&self, e: &Edge) -> f32 {
+        let (p0, p1) = self.edge_pos(e);
+        (p1 - p0).magnitude()
+    }
     pub fn num_vertices(&self) -> usize {
         self.vertices.len()
     }

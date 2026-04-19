@@ -14,9 +14,6 @@ use easy_imgui_window::{
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
-use crate::util_3d::{
-    self, Matrix2, Matrix3, Matrix4, Point2, Point3, Quaternion, Vector2, Vector3,
-};
 use crate::util_gl::{
     MLINE3D_CUT, MLINE3D_HIDDEN, MLINE3D_NORMAL, MLINE3D_RIM, MLINE3D_RIM_TAB, MLine3DStatus,
     MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL, MStatus, MVertex2D, MVertex2DColor, MVertex2DLine,
@@ -26,6 +23,10 @@ use crate::{FONT_SIZE, TextBuilder};
 use crate::{
     PrintableText, TextAlign,
     glr::{self, Rgba},
+};
+use crate::{
+    paper::IslandFaceKey,
+    util_3d::{self, Matrix2, Matrix3, Matrix4, Point2, Point3, Quaternion, Vector2, Vector3},
 };
 use crate::{
     paper::{
@@ -155,7 +156,7 @@ pub struct PapercraftContext {
     // State
     selected_face: Option<FaceIndex>,
     selected_edges: Option<FxHashSet<EdgeIndex>>,
-    selected_islands: Vec<IslandKey>,
+    selected_islands: Vec<IslandFaceKey>,
     // Contains the UndoActions if these islands are to be moved, the actual grabbed islands are selected_islands
     grabbed_island: Option<Vec<UndoAction>>,
     // This in view coordinates
@@ -164,9 +165,9 @@ pub struct PapercraftContext {
     rotation_center: Option<Vector2>,
     // The selection rectangle, while dragging it, plus the pre-selected islands.
     // The boolean says if the selection is to be added or removed
-    pre_selection: Option<(Vector2, Vector2, FxHashSet<IslandKey>, bool)>,
+    pre_selection: Option<(Vector2, Vector2, Vec<IslandFaceKey>, bool)>,
     // The island that has just been selected
-    just_selected: Option<IslandKey>,
+    just_selected: Option<IslandFaceKey>,
 
     pub ui: UiSettings,
 }
@@ -1429,17 +1430,20 @@ impl PapercraftContext {
 
     fn selection_rebuild(&mut self) {
         // Pre-selected islands are drawn as if selected
-        let empty = FxHashSet::default();
+        let empty = Vec::default();
         let (pre_add, pre_remove) = match self.pre_selection.as_ref() {
             None => (&empty, &empty),
             Some((_, _, sel, true)) => (sel, &empty),
             Some((_, _, sel, false)) => (&empty, sel),
         };
-        let selection: Vec<IslandKey> = self
+        let selection: Vec<IslandFaceKey> = self
             .selected_islands
             .iter()
             .chain(pre_add)
-            .filter(|s| !pre_remove.contains(s))
+            .filter(|s| {
+                let i = self.papercraft.island_key_by_face_key(**s);
+                self.island_slice_position(&pre_remove, i).is_none()
+            })
             .copied()
             .collect();
 
@@ -1475,9 +1479,7 @@ impl PapercraftContext {
 
         let top = if self.ui.xray_selection { 1 } else { 0 };
         for sel_island in selection {
-            let Some(island) = self.papercraft.island_by_key(sel_island) else {
-                continue;
-            };
+            let island = self.papercraft.island_by_face_key(sel_island);
             let body_to_top =
                 vertices_sel_top_by_face(&self.gl_objs.vertices_sel, island.root_face()) == -1;
 
@@ -1592,6 +1594,43 @@ impl PapercraftContext {
         }
     }
 
+    fn island_slice_position(
+        &self,
+        islands: &[IslandFaceKey],
+        i_island: IslandKey,
+    ) -> Option<usize> {
+        islands
+            .iter()
+            .position(|&i_sel| self.papercraft.island_key_by_face_key(i_sel) == i_island)
+    }
+
+    fn is_selected_island(&mut self, i_island: IslandKey) -> bool {
+        self.island_slice_position(&self.selected_islands, i_island)
+            .is_some()
+    }
+
+    fn select_island(&mut self, i_island: IslandKey) -> bool {
+        if self.is_selected_island(i_island) {
+            false
+        } else {
+            let Some(i) = self.papercraft.island_face_key_by_key(i_island) else {
+                return false;
+            };
+            self.selected_islands.push(i);
+            true
+        }
+    }
+
+    fn unselect_island(&mut self, i_island: IslandKey) -> bool {
+        match self.island_slice_position(&self.selected_islands, i_island) {
+            None => false,
+            Some(idx) => {
+                self.selected_islands.swap_remove(idx);
+                true
+            }
+        }
+    }
+
     #[must_use]
     pub fn set_selection(
         &mut self,
@@ -1614,34 +1653,42 @@ impl PapercraftContext {
             }
             ClickResult::Face(i_face) => {
                 let i_island = self.papercraft.island_by_face(i_face);
+                let i_island_fk = self.papercraft.island_face_key_by_key(i_island).unwrap();
+
                 if flags.contains(SetSelectionFlags::CLICKED) {
                     if flags.contains(SetSelectionFlags::ADD_TO_SEL) {
-                        if let Some(n) = self.selected_islands.iter().position(|i| *i == i_island) {
+                        if self.select_island(i_island) {
+                            self.just_selected = Some(i_island_fk);
+                            island_changed = true;
+                        } else {
                             if flags.contains(SetSelectionFlags::RELEASED)
-                                && just_selected != Some(i_island)
+                                && just_selected
+                                    .map(|js| {
+                                        self.papercraft.island_key_by_face_key(js) != i_island
+                                    })
+                                    .unwrap_or(true)
                             {
-                                self.selected_islands.swap_remove(n);
+                                self.unselect_island(i_island);
                                 island_changed = true;
                             }
-                        } else {
-                            self.selected_islands.push(i_island);
-                            self.just_selected = Some(i_island);
-                            island_changed = true;
                         }
                     } else {
-                        // If the clicked island is already selected do nothing on click, but select on release.
+                        // If the clicked island is already selected do nothing on click, but select just that one on release.
                         // This makes it easier to move several islands, because the user doesn't need to hold Ctrl to move them.
-                        if !self.selected_islands.contains(&i_island)
+                        if !self.is_selected_island(i_island)
                             || flags.contains(SetSelectionFlags::RELEASED)
                         {
-                            self.selected_islands = vec![i_island];
-                            self.just_selected = Some(i_island);
+                            let sel = i_island_fk;
+                            self.selected_islands = vec![sel];
+                            self.just_selected = Some(sel);
                             island_changed = true;
                         }
                     }
                 }
-                let edges = if flags.contains(SetSelectionFlags::ALT_PRESSED) {
-                    let island = self.papercraft.island_by_key(i_island).unwrap();
+                let edges = if flags.contains(SetSelectionFlags::ALT_PRESSED)
+                    // Should not fail
+                    && let Some(island) = self.papercraft.island_by_key(i_island)
+                {
                     Some(self.papercraft.island_edges(island))
                 } else {
                     None
@@ -1685,22 +1732,36 @@ impl PapercraftContext {
         match self.papercraft.edge_status(i_edge) {
             EdgeStatus::Hidden => None,
             EdgeStatus::Joined => {
+                // Compute the island of this edge, to check if it is selected and select the new pieces
+                let i_face = self.papercraft.model()[i_edge].faces().0;
+                let i_island = self.papercraft.island_by_face(i_face);
+                let is_sel = self.is_selected_island(i_island);
+
                 let offset = self.papercraft.options().flap_width * 2.0;
-                self.papercraft.edge_cut(i_edge, Some(offset));
-                Some(vec![UndoAction::EdgeCut { i_edge }])
+                let islands = self.papercraft.edge_cut(i_edge, Some(offset));
+
+                if let Some((i_a, i_b)) = islands {
+                    if is_sel {
+                        self.select_island(i_a);
+                        self.select_island(i_b);
+                    }
+                    Some(vec![UndoAction::EdgeCut { i_edge }])
+                } else {
+                    // Should not happen, just in case
+                    None
+                }
             }
             EdgeStatus::Cut(_) => {
-                let renames = self.papercraft.edge_join(i_edge, priority_face);
-                if renames.is_empty() {
+                let join_res = self.papercraft.edge_join(i_edge, priority_face);
+                if join_res.is_empty() {
                     return None;
                 }
-                let undo_actions = renames
+                let undo_actions = join_res
                     .values()
                     .map(|join_result| UndoAction::EdgeJoin {
                         join_result: *join_result,
                     })
                     .collect();
-                self.islands_renamed(&renames);
                 Some(undo_actions)
             }
         }
@@ -1708,27 +1769,18 @@ impl PapercraftContext {
 
     #[must_use]
     pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> Option<Vec<UndoAction>> {
-        let renames = self.papercraft.try_join_strip(i_edge);
-        if renames.is_empty() {
+        let join_res = self.papercraft.try_join_strip(i_edge);
+        if join_res.is_empty() {
             return None;
         }
 
-        let undo_actions = renames
+        let undo_actions = join_res
             .values()
             .map(|join_result| UndoAction::EdgeJoin {
                 join_result: *join_result,
             })
             .collect();
-        self.islands_renamed(&renames);
         Some(undo_actions)
-    }
-
-    fn islands_renamed(&mut self, renames: &FxHashMap<IslandKey, JoinResult>) {
-        for x in &mut self.selected_islands {
-            while let Some(jr) = renames.get(x) {
-                *x = jr.i_island;
-            }
-        }
     }
 
     pub fn scene_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
@@ -2077,14 +2129,14 @@ impl PapercraftContext {
                 let (next, flags) = match self.pre_selection.take() {
                     // First pre-selection click, just save it
                     None => (
-                        (click, click, FxHashSet::default(), adding),
+                        (click, click, Vec::default(), adding),
                         RebuildFlags::empty(),
                     ),
                     // If not dragging yet keep a zero size rectangle
                     Some(p) if !dragging => (p, RebuildFlags::empty()),
                     // If dragging do the full pre-selection stuff
-                    Some((orig, _, pre_sel, pre_adding)) => {
-                        let mut next_sel = FxHashSet::default();
+                    Some((orig, _, _pre_sel, _pre_adding)) => {
+                        let mut next_sel = Vec::default();
                         let rect = Rectangle::new(orig, click);
 
                         // An island is in the selection box if any of its vertices is inside the
@@ -2095,19 +2147,18 @@ impl PapercraftContext {
                                 for i in idx..idx + 3 {
                                     let pos = self.gl_objs.paper_vertices[i].pos_2d;
                                     if rect.contains(pos) {
-                                        next_sel.insert(island_key);
+                                        let sel = self
+                                            .papercraft
+                                            .island_face_key_by_key(island_key)
+                                            .unwrap();
+                                        next_sel.push(sel);
                                         return ControlFlow::Break(());
                                     }
                                 }
                                 ControlFlow::Continue(())
                             });
                         }
-                        let flags = if pre_sel != next_sel || pre_adding != adding {
-                            RebuildFlags::SELECTION
-                        } else {
-                            RebuildFlags::empty()
-                        };
-                        ((orig, click, next_sel, adding), flags)
+                        ((orig, click, next_sel, adding), RebuildFlags::SELECTION)
                     }
                 };
                 self.pre_selection = Some(next);
@@ -2125,9 +2176,8 @@ impl PapercraftContext {
                 let ppos_prev = self.ui.trans_paper.paper_click(size, pos - delta);
                 let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
                 for &i_island in &self.selected_islands {
-                    if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
-                        island.rotate(angle, pcenter);
-                    }
+                    let island = self.papercraft.island_by_face_key_mut(i_island);
+                    island.rotate(angle, pcenter);
                 }
             }
         } else {
@@ -2140,12 +2190,9 @@ impl PapercraftContext {
 
             let mut going_outside = false;
             for &i_island in &self.selected_islands {
-                let location = if let Some(island) = self.papercraft.island_by_key_mut(i_island) {
-                    island.translate(delta_scaled);
-                    island.location()
-                } else {
-                    continue;
-                };
+                let island = self.papercraft.island_by_face_key_mut(i_island);
+                island.translate(delta_scaled);
+                let location = island.location();
                 going_outside |= !self.papercraft.options().is_inside_canvas(location);
             }
 
@@ -2180,15 +2227,16 @@ impl PapercraftContext {
 
     #[must_use]
     pub fn paper_button1_drag_complete_event(&mut self) -> RebuildFlags {
-        if let Some((_, _, mut sel, adding)) = self.pre_selection.take() {
+        if let Some((_, _, sel, adding)) = self.pre_selection.take() {
             if adding {
-                // Use the sel hash-map to remove duplicates
-                sel.extend(self.selected_islands.iter().copied());
-                self.selected_islands = Vec::from_iter(sel);
+                for s in sel {
+                    self.select_island(self.papercraft.island_key_by_face_key(s));
+                }
             } else {
                 // Remove the pre-selected islands
-                let prev: FxHashSet<_> = self.selected_islands.iter().copied().collect();
-                self.selected_islands = Vec::from_iter(prev.difference(&sel).copied());
+                for s in sel {
+                    self.unselect_island(self.papercraft.island_key_by_face_key(s));
+                }
             }
             RebuildFlags::SELECTION
         } else {
@@ -2227,7 +2275,7 @@ impl PapercraftContext {
                         .selected_islands
                         .iter()
                         .map(|&i_island| {
-                            let island = self.papercraft.island_by_key(i_island).unwrap();
+                            let island = self.papercraft.island_by_face_key(i_island);
                             UndoAction::IslandMove {
                                 i_root: island.root_face(),
                                 prev_rot: island.rotation(),
@@ -2459,7 +2507,7 @@ pub struct ThumbnailData {
     ui_settings: UiSettings,
     selected_face: Option<FaceIndex>,
     selected_edges: Option<FxHashSet<EdgeIndex>>,
-    selected_islands: Vec<IslandKey>,
+    selected_islands: Vec<IslandFaceKey>,
 }
 
 impl GLObjects {

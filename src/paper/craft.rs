@@ -105,10 +105,15 @@ new_key_type! {
     pub struct IslandKey;
 }
 
+// If we need an IslandKey, but we need to survive joins/cuts.
+// It doesn't implement PartialEq,Eq because two different `IslandFaceKey` values may refer
+// to the same island. The proper way to compare is to convert to `IslandKey` and compare that.
+#[derive(Copy, Clone, Debug)]
+pub struct IslandFaceKey(pub FaceIndex);
+
 #[derive(Debug, Copy, Clone)]
 pub struct JoinResult {
     pub i_edge: EdgeIndex,
-    pub i_island: IslandKey,
     pub prev_root: FaceIndex,
     pub prev_rot: Rad<f32>,
     pub prev_loc: Vector2,
@@ -634,6 +639,21 @@ impl Papercraft {
         }
         memo[usize::from(i_face)]
     }
+    pub fn island_key_by_face_key(&self, i_island_face: IslandFaceKey) -> IslandKey {
+        self.island_by_face(i_island_face.0)
+    }
+    pub fn island_by_face_key(&self, i_island_face: IslandFaceKey) -> &Island {
+        self.island_by_key(self.island_by_face(i_island_face.0))
+            .unwrap()
+    }
+    pub fn island_by_face_key_mut(&mut self, i_island_face: IslandFaceKey) -> &mut Island {
+        self.island_by_key_mut(self.island_by_face(i_island_face.0))
+            .unwrap()
+    }
+    pub fn island_face_key_by_key(&self, i_island: IslandKey) -> Option<IslandFaceKey> {
+        let island = self.island_by_key(i_island)?;
+        Some(IslandFaceKey(island.root))
+    }
     fn rebuild_island_by_face(&self, memo: &mut Vec<IslandKey>) {
         // This could be optimized and updated every time an island is split/joined,
         // instead of creating it from scratch every time, but is it worth it?
@@ -708,18 +728,22 @@ impl Papercraft {
         }
     }
 
-    pub fn edge_cut(&mut self, i_edge: EdgeIndex, offset: Option<f32>) {
+    pub fn edge_cut(
+        &mut self,
+        i_edge: EdgeIndex,
+        offset: Option<f32>,
+    ) -> Option<(IslandKey, IslandKey)> {
         match self.edges[usize::from(i_edge)] {
             EdgeStatus::Joined => {}
             _ => {
-                return;
+                return None;
             }
         }
         let edge = &self.model[i_edge];
         let (i_face_a, i_face_b) = match edge.faces() {
             (fa, Some(fb)) => (fa, fb),
             _ => {
-                return;
+                return None;
             }
         };
 
@@ -774,6 +798,7 @@ impl Papercraft {
         }
         let i_new_island = self.islands.insert(new_island);
         self.memo.invalidate_islands(&[i_island, i_new_island]);
+        Some((i_island, i_new_island))
     }
 
     //Retuns a map from the island that disappears into the extra join data.
@@ -782,25 +807,25 @@ impl Papercraft {
         i_edge: EdgeIndex,
         priority_face: Option<FaceIndex>,
     ) -> FxHashMap<IslandKey, JoinResult> {
-        let mut renames = FxHashMap::default();
+        let mut join_res = FxHashMap::default();
         match self.edges[usize::from(i_edge)] {
             EdgeStatus::Cut(_) => {}
             _ => {
-                return renames;
+                return join_res;
             }
         }
         let edge = &self.model[i_edge];
         let (i_face_a, i_face_b) = match edge.faces() {
             (fa, Some(fb)) => (fa, fb),
             _ => {
-                return renames;
+                return join_res;
             }
         };
 
         let i_island_b = self.island_by_face(i_face_b);
         if self.contains_face(&self.islands[i_island_b], i_face_a) {
             // Same island on both sides, nothing to do
-            return renames;
+            return join_res;
         }
 
         // Join both islands
@@ -812,18 +837,17 @@ impl Papercraft {
         if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
             std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
         }
-        renames.insert(
+        join_res.insert(
             i_island_b,
             JoinResult {
                 i_edge,
-                i_island: i_island_a,
                 prev_root: island_b.root_face(),
                 prev_rot: island_b.rotation(),
                 prev_loc: island_b.location(),
             },
         );
         self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
-        renames
+        join_res
     }
 
     pub fn edge_undo_join(&mut self, join_result: &JoinResult) {
@@ -1275,7 +1299,7 @@ impl Papercraft {
         )
     }
     pub fn try_join_strip(&mut self, i_edge: EdgeIndex) -> FxHashMap<IslandKey, JoinResult> {
-        let mut renames = FxHashMap::default();
+        let mut join_res = FxHashMap::default();
         let mut i_edges = vec![i_edge];
         while let Some(i_edge) = i_edges.pop() {
             // First try to join the edge, if it fails skip.
@@ -1304,7 +1328,7 @@ impl Papercraft {
             if r.is_empty() {
                 continue;
             }
-            renames.extend(r);
+            join_res.extend(r);
 
             // Move to the opposite edge of both faces
             for (i_face, n_faces) in [(i_face_a, n_faces_a), (i_face_b, n_faces_b)] {
@@ -1341,7 +1365,7 @@ impl Papercraft {
                 i_edges.push(opposite);
             }
         }
-        renames
+        join_res
     }
 
     pub fn pack_islands(&mut self) -> u32 {

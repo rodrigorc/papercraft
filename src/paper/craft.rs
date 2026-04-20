@@ -658,9 +658,8 @@ impl Papercraft {
 
     pub fn island_is_self_intersecting(&self, island_key: IslandKey) -> bool {
         let perimeter = self.island_perimeter(island_key);
-        let mut edges: Vec<_> = perimeter.into_iter().map(|p| (p.p0, p.p1)).collect();
-        let res = util_3d::self_instersect_polygon(&mut edges);
-        res
+        let mut edges: Vec<_> = perimeter.iter().map(|p| (p.p0, p.p1)).collect();
+        util_3d::self_instersect_polygon(&mut edges)
     }
 
     fn rebuild_island_by_face(&self, memo: &mut Vec<IslandKey>) {

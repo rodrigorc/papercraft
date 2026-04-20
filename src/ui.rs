@@ -1448,7 +1448,7 @@ impl PapercraftContext {
             .chain(pre_add)
             .filter(|s| {
                 let i = self.papercraft.island_key_by_face_key(**s);
-                self.island_slice_position(&pre_remove, i).is_none()
+                self.island_slice_position(pre_remove, i).is_none()
             })
             .copied()
             .collect();

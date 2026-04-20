@@ -3370,11 +3370,10 @@ fn demultiply_image(img: &mut image::RgbaImage) {
     for p in img.pixels_mut() {
         let a = p.0[3] as u32;
         for i in &mut p.0[0..3] {
-            *i = if a == 0 {
-                0
-            } else {
-                (*i as u32 * 255 / a).clamp(0, 255) as u8
-            };
+            *i = (*i as u32 * 255)
+                .checked_div(a)
+                .map(|d| d.clamp(0, 255) as u8)
+                .unwrap_or(0);
         }
     }
 }

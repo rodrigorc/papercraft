@@ -565,6 +565,12 @@ impl Rectangle {
     }
 }
 
+enum EdgeAction {
+    Normal,
+    JoinStrip,
+    Reverse,
+}
+
 impl PapercraftContext {
     pub fn papercraft(&self) -> &Papercraft {
         &self.papercraft
@@ -2011,12 +2017,20 @@ impl PapercraftContext {
         &mut self,
         i_edge: EdgeIndex,
         i_face: Option<FaceIndex>,
-        shift_action: bool,
+        edge_action: EdgeAction,
     ) -> RebuildFlags {
-        let undo = if shift_action {
-            self.try_join_strip(i_edge)
-        } else {
-            self.edge_toggle_cut(i_edge, i_face)
+        let undo = match edge_action {
+            EdgeAction::Normal => self.edge_toggle_cut(i_edge, i_face),
+            EdgeAction::JoinStrip => self.try_join_strip(i_edge),
+            EdgeAction::Reverse => {
+                let edge = &self.papercraft.model()[i_edge];
+                let i_face = match (i_face, edge.faces()) {
+                    (Some(f), (fa, Some(fb))) if f == fa => Some(fb),
+                    (Some(f), (fa, Some(fb))) if f == fb => Some(fa),
+                    _ => i_face,
+                };
+                self.edge_toggle_cut(i_edge, i_face)
+            }
         };
         if let Some(undo) = undo {
             self.push_undo_action(undo);
@@ -2026,6 +2040,7 @@ impl PapercraftContext {
             | RebuildFlags::SELECTION
             | RebuildFlags::ISLANDS
     }
+
     #[must_use]
     fn do_flap_action(&mut self, i_edge: EdgeIndex, shift_action: bool) -> RebuildFlags {
         let action = if shift_action {
@@ -2060,7 +2075,14 @@ impl PapercraftContext {
         let flags = flags | SetSelectionFlags::CLICKED | SetSelectionFlags::RELEASED;
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
-                self.do_edge_action(i_edge, i_face, mods.contains(KeyMod::Shift))
+                let edge_action = if mods.contains(KeyMod::Shift) {
+                    EdgeAction::JoinStrip
+                } else if mods.contains(KeyMod::Ctrl) {
+                    EdgeAction::Reverse
+                } else {
+                    EdgeAction::Normal
+                };
+                self.do_edge_action(i_edge, i_face, edge_action)
             }
             (MouseMode::Flap, ClickResult::Edge(i_edge, _)) => {
                 self.do_flap_action(i_edge, mods.contains(KeyMod::Shift))
@@ -2252,7 +2274,14 @@ impl PapercraftContext {
         match (self.ui.mode, selection) {
             (MouseMode::Edge, ClickResult::Edge(i_edge, i_face)) => {
                 self.grabbed_island = None;
-                self.do_edge_action(i_edge, i_face, mods.contains(KeyMod::Shift))
+                let edge_action = if mods.contains(KeyMod::Shift) {
+                    EdgeAction::JoinStrip
+                } else if mods.contains(KeyMod::Ctrl) {
+                    EdgeAction::Reverse
+                } else {
+                    EdgeAction::Normal
+                };
+                self.do_edge_action(i_edge, i_face, edge_action)
             }
             (MouseMode::Flap, ClickResult::Edge(i_edge, _)) => {
                 self.do_flap_action(i_edge, mods.contains(KeyMod::Shift))

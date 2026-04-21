@@ -1402,8 +1402,7 @@ impl Papercraft {
             return res;
         };
 
-        // Get all the island edges and sort from best to worst.
-        // And edge is best when it links to a small island, because we don't like small islands.
+        // Get all the island edges that can be joined.
         let mut edges = self
             .island_edges(island)
             .into_iter()
@@ -1412,28 +1411,36 @@ impl Papercraft {
                 let (fa, fb) = edge.faces();
                 // Discard rims
                 let fb = fb?;
-                Some((i_edge, fa, fb))
+                let soft_hidden = Self::should_be_soft_hidden(&self.options, &self.model[i_edge]);
+                Some((i_edge, fa, fb, soft_hidden))
             })
             .collect::<Vec<_>>();
-        edges.sort_by_cached_key(|(_, fa, fb)| {
-            let ia = self.island_by_face(*fa);
-            let ib = self.island_by_face(*fb);
+
+        // Sort from best to worst.
+        // And edge is best when it links to a small island, because we don't like small islands.
+        // Even better if the edge has a small angle.
+        edges.sort_by_cached_key(|&(_, fa, fb, soft_hidden)| {
+            let ia = self.island_by_face(fa);
+            let ib = self.island_by_face(fb);
             let i_other_island = if i_island == ia {
                 ib
             } else if i_island == ib {
                 ia
             } else {
-                return u32::MAX;
+                return (true, u32::MAX);
             };
             let island = self.island_by_key(i_other_island).unwrap();
-            self.island_face_count(island)
+            let face_count = self.island_face_count(island);
+            (!soft_hidden, face_count)
         });
 
         // Islands come and go, use the key to identify
         // We must recompute `i_island`` for every cut/join
         let i_face_root = island.root;
 
-        for (i_edge, fa, fb) in edges {
+        let mut some_soft_hidden_joined = false;
+
+        for (i_edge, fa, fb, soft_hidden) in edges {
             // Check the own side of the edge, to keep the transformation of the island.
             let this_face = if self.island_by_face(fa) == i_island {
                 Some(fa)
@@ -1443,6 +1450,12 @@ impl Papercraft {
                 // Should not happend
                 continue;
             };
+
+            if !soft_hidden && some_soft_hidden_joined {
+                // If any soft-hidden edge has been joined, do not join any non soft-hidden.
+                // The use can click again if they wish.
+                break;
+            }
 
             // Try to join the edge
             let join_res = self.edge_join(i_edge, this_face);

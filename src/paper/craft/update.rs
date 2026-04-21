@@ -103,9 +103,9 @@ impl Papercraft {
             }
             real_edge_map.insert(i, o);
 
-            let o_status = old_obj.edge_status(o);
-            let i_status = self.edge_status(i);
-            if i_status != EdgeStatus::Hidden && o_status != EdgeStatus::Hidden {
+            let o_status = old_obj.edges[usize::from(o)];
+            let i_status = self.edges[usize::from(i)];
+            if i_status != RealEdgeStatus::Hidden && o_status != RealEdgeStatus::Hidden {
                 edge_status_map.insert(i_edge, (o_status, o_cross));
             }
         }
@@ -116,21 +116,22 @@ impl Papercraft {
             if self.model[i_edge].faces().1.is_none() {
                 // Rims can't be crossed, so ignore that
                 self.edges[usize::from(i_edge)] = match status {
-                    EdgeStatus::Cut(FlapSide::Hidden) | EdgeStatus::Cut(FlapSide::False) => status,
-                    _ => EdgeStatus::Cut(FlapSide::Hidden),
+                    RealEdgeStatus::Cut(FlapSide::Hidden)
+                    | RealEdgeStatus::Cut(FlapSide::False) => status,
+                    _ => RealEdgeStatus::Cut(FlapSide::Hidden),
                 };
             } else {
                 match status {
-                    EdgeStatus::Hidden => { /* should not happen, because they are filtered above */
+                    RealEdgeStatus::Hidden => { /* should not happen, because they are filtered above */
                     }
-                    EdgeStatus::Joined => {
+                    RealEdgeStatus::Joined => {
                         self.edge_join(i_edge, None);
                     }
-                    EdgeStatus::Cut(c) => {
+                    RealEdgeStatus::Cut(c) => {
                         self.edge_cut(i_edge, None);
                         if let EdgeStatus::Cut(_) = self.edge_status(i_edge) {
                             let c = if crossed { c.opposite() } else { c };
-                            self.edges[usize::from(i_edge)] = EdgeStatus::Cut(c);
+                            self.edges[usize::from(i_edge)] = RealEdgeStatus::Cut(c);
                         }
                     }
                 }
@@ -287,6 +288,6 @@ impl Papercraft {
         self.memo = Memoization::default();
 
         // Mixing two sane things may create something insane, fix it now
-        self.sanitize();
+        self.post_create();
     }
 }

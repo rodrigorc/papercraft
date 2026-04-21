@@ -67,10 +67,19 @@ impl FlapSide {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum RealEdgeStatus {
+    Hidden,
+    Joined,
+    Cut(FlapSide),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EdgeStatus {
     Hidden,
     Joined,
     Cut(FlapSide),
+    /// Is joined, but actually hidden because of hidden_line_angle
+    SoftHidden,
 }
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
@@ -411,7 +420,7 @@ pub struct Papercraft {
     model: Model,
     #[serde(default)] //TODO: default not actually needed
     options: PaperOptions,
-    edges: Vec<EdgeStatus>, //parallel to EdgeIndex
+    edges: Vec<RealEdgeStatus>, //parallel to EdgeIndex
     #[serde(with = "super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
 
@@ -564,9 +573,14 @@ impl Papercraft {
                 }
             }
         }
-
         options
     }
+
+    pub fn should_be_soft_hidden(options: &PaperOptions, edge: &Edge) -> bool {
+        let angle_3d = edge.angle();
+        Rad(angle_3d.0.abs()) < Rad::from(Deg(options.hidden_line_angle))
+    }
+
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
         self.islands.iter()
     }
@@ -711,8 +725,18 @@ impl Papercraft {
         }
     }
 
-    pub fn edge_status(&self, edge: EdgeIndex) -> EdgeStatus {
-        self.edges[usize::from(edge)]
+    pub fn edge_status(&self, i_edge: EdgeIndex) -> EdgeStatus {
+        match self.edges[usize::from(i_edge)] {
+            RealEdgeStatus::Hidden => EdgeStatus::Hidden,
+            RealEdgeStatus::Cut(flap_side) => EdgeStatus::Cut(flap_side),
+            RealEdgeStatus::Joined => {
+                if Self::should_be_soft_hidden(&self.options, &self.model[i_edge]) {
+                    EdgeStatus::SoftHidden
+                } else {
+                    EdgeStatus::Joined
+                }
+            }
+        }
     }
     pub fn edge_id(&self, edge: EdgeIndex) -> Option<EdgeId> {
         if self.options.edge_id_font_size <= 0.0
@@ -729,7 +753,7 @@ impl Papercraft {
         action: EdgeToggleFlapAction,
     ) -> Option<FlapSide> {
         let rim = matches!(self.model()[i_edge].faces(), (_, None));
-        if let EdgeStatus::Cut(ref mut x) = self.edges[usize::from(i_edge)] {
+        if let RealEdgeStatus::Cut(ref mut x) = self.edges[usize::from(i_edge)] {
             Some(std::mem::replace(x, x.apply(action, rim)))
         } else {
             None
@@ -741,8 +765,9 @@ impl Papercraft {
         i_edge: EdgeIndex,
         offset: Option<f32>,
     ) -> Option<(IslandKey, IslandKey)> {
+        // SoftHidden is allowed to be cut, mainly for the undo action
         match self.edges[usize::from(i_edge)] {
-            EdgeStatus::Joined => {}
+            RealEdgeStatus::Joined => {}
             _ => {
                 return None;
             }
@@ -758,7 +783,7 @@ impl Papercraft {
         //one of the edge faces will be the root of the new island, but we do not know which one, yet
         let i_island = self.island_by_face(i_face_a);
 
-        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(FlapSide::False);
+        self.edges[usize::from(i_edge)] = RealEdgeStatus::Cut(FlapSide::False);
 
         let mut data_found = None;
         let _ = self.traverse_faces(&self.islands[i_island], |i_face, _, fmx| {
@@ -816,7 +841,7 @@ impl Papercraft {
         priority_face: Option<FaceIndex>,
     ) -> Option<JoinResult> {
         match self.edges[usize::from(i_edge)] {
-            EdgeStatus::Cut(_) => {}
+            RealEdgeStatus::Cut(_) => {}
             _ => {
                 return None;
             }
@@ -844,7 +869,7 @@ impl Papercraft {
         if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
             std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
         }
-        self.edges[usize::from(i_edge)] = EdgeStatus::Joined;
+        self.edges[usize::from(i_edge)] = RealEdgeStatus::Joined;
 
         Some(JoinResult {
             i_edge,
@@ -1789,8 +1814,8 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edges[usize::from(i_edge)] {
-            EdgeStatus::Cut(_) => false,
-            EdgeStatus::Joined | EdgeStatus::Hidden => true,
+            RealEdgeStatus::Cut(_) => false,
+            RealEdgeStatus::Joined | RealEdgeStatus::Hidden => true,
         }
     }
     fn next_state(
@@ -1806,15 +1831,15 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
     }
 }
 
-struct NoMatrixTraverseFace<'a>(&'a [EdgeStatus]);
+struct NoMatrixTraverseFace<'a>(&'a [RealEdgeStatus]);
 
 impl TraverseFacePolicy for NoMatrixTraverseFace<'_> {
     type State = ();
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0[usize::from(i_edge)] {
-            EdgeStatus::Cut(_) => false,
-            EdgeStatus::Joined | EdgeStatus::Hidden => true,
+            RealEdgeStatus::Cut(_) => false,
+            RealEdgeStatus::Joined | RealEdgeStatus::Hidden => true,
         }
     }
 }
@@ -1827,7 +1852,7 @@ impl TraverseFacePolicy for FlatTraverseFace<'_> {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edge_status(i_edge) {
             EdgeStatus::Joined | EdgeStatus::Cut(_) => false,
-            EdgeStatus::Hidden => true,
+            EdgeStatus::Hidden | EdgeStatus::SoftHidden => true,
         }
     }
 }
@@ -1840,7 +1865,7 @@ impl TraverseFacePolicy for FlatTraverseFaceWithMatrix<'_> {
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0.edge_status(i_edge) {
             EdgeStatus::Joined | EdgeStatus::Cut(_) => false,
-            EdgeStatus::Hidden => true,
+            EdgeStatus::Hidden | EdgeStatus::SoftHidden => true,
         }
     }
 
@@ -1962,12 +1987,12 @@ macro_rules! ser_de_for_enum_as_i32 {
 }
 
 ser_de_for_enum_as_i32! {
-    EdgeStatus "invalid edge status" {
-        EdgeStatus::Hidden => 0,
-        EdgeStatus::Joined => 1,
-        EdgeStatus::Cut(FlapSide::False) => 2,
-        EdgeStatus::Cut(FlapSide::True) => 3,
-        EdgeStatus::Cut(FlapSide::Hidden) => 4,
+    RealEdgeStatus "invalid edge status" {
+        RealEdgeStatus::Hidden => 0,
+        RealEdgeStatus::Joined => 1,
+        RealEdgeStatus::Cut(FlapSide::False) => 2,
+        RealEdgeStatus::Cut(FlapSide::True) => 3,
+        RealEdgeStatus::Cut(FlapSide::Hidden) => 4,
     }
 }
 

@@ -62,7 +62,7 @@ impl Papercraft {
         papercraft.post_create();
         Ok(papercraft)
     }
-    fn post_create(&mut self) {
+    pub fn post_create(&mut self) {
         self.sanitize();
         self.recompute_edge_ids();
     }
@@ -73,9 +73,9 @@ impl Papercraft {
         impl TraverseFacePolicy for SanitizeTraverse<'_, '_> {
             type State = ();
             fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
-                match self.0.edge_status(i_edge) {
-                    EdgeStatus::Cut(_) => false,
-                    EdgeStatus::Joined | EdgeStatus::Hidden => true,
+                match self.0.edges[usize::from(i_edge)] {
+                    RealEdgeStatus::Cut(_) => false,
+                    RealEdgeStatus::Joined | RealEdgeStatus::Hidden => true,
                 }
             }
             fn duplicated_face(
@@ -102,7 +102,7 @@ impl Papercraft {
                 if !faults.is_empty() {
                     for i_edge in faults {
                         log::warn!("Splitting looping edge {i_edge:?}");
-                        self.edges[usize::from(i_edge)] = EdgeStatus::Cut(FlapSide::False);
+                        self.edges[usize::from(i_edge)] = RealEdgeStatus::Cut(FlapSide::False);
                     }
                     changed = true;
                 }
@@ -162,10 +162,11 @@ impl Papercraft {
             // Rim edges can't have any status
             if f1.is_none() {
                 match &mut self.edges[usize::from(i_edge)] {
-                    EdgeStatus::Cut(FlapSide::Hidden) | EdgeStatus::Cut(FlapSide::False) => (), // ok
+                    RealEdgeStatus::Cut(FlapSide::Hidden)
+                    | RealEdgeStatus::Cut(FlapSide::False) => (), // ok
                     x => {
                         log::warn!("Fix rim edge {i_edge:?}");
-                        *x = EdgeStatus::Cut(FlapSide::Hidden);
+                        *x = RealEdgeStatus::Cut(FlapSide::Hidden);
                     }
                 }
             }
@@ -197,7 +198,7 @@ impl Papercraft {
         for (_, edge, edge_status, edge_id) in edge_collection {
             match (edge.faces(), edge_status) {
                 // edges from tessellations or rims don't have ids
-                (_, EdgeStatus::Hidden) | ((_, None), _) => {}
+                (_, RealEdgeStatus::Hidden) | ((_, None), _) => {}
                 _ => {
                     next_edge_id += 1;
                     *edge_id = Some(EdgeId::new(next_edge_id));
@@ -223,26 +224,26 @@ impl Papercraft {
                 match edge.faces() {
                     // Edge from tessellation of a n-gon
                     (fa, Some(fb)) if face_map[usize::from(fa)] == face_map[usize::from(fb)] => {
-                        EdgeStatus::Hidden
+                        RealEdgeStatus::Hidden
                     }
                     // Rim
                     (_, None) => {
                         // edges in the rim (without adjacent face) usually do not have a flap, but if it does,
                         // the FlapSide is false, no matter what the loader says
                         match importer.compute_edge_status(*edge_id) {
-                            Some(EdgeStatus::Cut(FlapSide::False | FlapSide::True)) => {
-                                EdgeStatus::Cut(FlapSide::False)
+                            Some(RealEdgeStatus::Cut(FlapSide::False | FlapSide::True)) => {
+                                RealEdgeStatus::Cut(FlapSide::False)
                             }
-                            _ => EdgeStatus::Cut(FlapSide::Hidden),
+                            _ => RealEdgeStatus::Cut(FlapSide::Hidden),
                         }
                     }
                     // Normal edge
                     _ => importer.compute_edge_status(*edge_id).unwrap_or_else(|| {
                         // If the importer doesn't compute the edge_status, try the heuristics, a small angle is Hidden, a big angle is Cut.
                         if edge.angle().0.abs() < Rad::from(Deg(1.0)).0 {
-                            EdgeStatus::Hidden
+                            RealEdgeStatus::Hidden
                         } else {
-                            EdgeStatus::Cut(FlapSide::False)
+                            RealEdgeStatus::Cut(FlapSide::False)
                         }
                     }),
                 }

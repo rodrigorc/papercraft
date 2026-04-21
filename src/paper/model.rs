@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use crate::paper::import::Importer;
 use crate::util_3d::{self, Vector2, Vector3};
 
-use super::{BodyTraverse, EdgeStatus, Island, PaperOptions, traverse_faces_ex};
+use super::{BodyTraverse, Island, PaperOptions, traverse_faces_ex};
 
 pub mod import;
 

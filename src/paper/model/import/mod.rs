@@ -3,8 +3,8 @@ use std::io::{BufRead, Read};
 use std::panic::catch_unwind;
 use std::path::Path;
 
-use super::{EdgeStatus, Island, MaterialIndex, Model, PaperOptions, Texture, Vertex, VertexIndex};
-use crate::paper::{FlapSide, PageOffset, Papercraft};
+use super::{Island, MaterialIndex, Model, PaperOptions, Texture, Vertex, VertexIndex};
+use crate::paper::{FlapSide, PageOffset, Papercraft, RealEdgeStatus};
 use crate::util_3d::{Vector2, Vector3};
 
 pub mod gltf;
@@ -86,7 +86,7 @@ pub trait Importer: Sized {
     fn compute_edge_status(
         &self,
         _edge_id: (Self::VertexId, Self::VertexId),
-    ) -> Option<EdgeStatus> {
+    ) -> Option<RealEdgeStatus> {
         None
     }
     fn relocate_islands<'a>(

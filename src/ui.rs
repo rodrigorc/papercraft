@@ -728,7 +728,7 @@ impl PapercraftContext {
                 }
             }
             let draw_flap = match edge_status {
-                EdgeStatus::Hidden => {
+                EdgeStatus::Hidden | EdgeStatus::SoftHidden => {
                     // hidden edges are never drawn
                     continue;
                 }
@@ -1397,7 +1397,7 @@ impl PapercraftContext {
                 }
             } else {
                 match status {
-                    EdgeStatus::Hidden => MLINE3D_HIDDEN,
+                    EdgeStatus::Hidden | EdgeStatus::SoftHidden => MLINE3D_HIDDEN,
                     EdgeStatus::Joined => {
                         let angle_3d = edge.angle();
                         if Rad(angle_3d.0.abs())
@@ -1737,7 +1737,7 @@ impl PapercraftContext {
     ) -> Option<Vec<UndoAction>> {
         match self.papercraft.edge_status(i_edge) {
             EdgeStatus::Hidden => None,
-            EdgeStatus::Joined => {
+            EdgeStatus::Joined | EdgeStatus::SoftHidden => {
                 // Compute the island of this edge, to check if it is selected and select the new pieces
                 let i_face = self.papercraft.model()[i_edge].faces().0;
                 let i_island = self.papercraft.island_by_face(i_face);
@@ -1774,7 +1774,13 @@ impl PapercraftContext {
         Some(undo_actions)
     }
 
-    pub fn scene_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
+    pub fn scene_analyze_click(
+        &self,
+        mode: MouseMode,
+        size: Vector2,
+        pos: Vector2,
+        allow_soft_hidden: bool,
+    ) -> ClickResult {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
         let click = Point3::new(x, y, 1.0);
@@ -1816,7 +1822,8 @@ impl PapercraftContext {
         let mut hit_edge = None;
         for (i_edge, edge) in self.papercraft.model().edges() {
             match (self.papercraft.edge_status(i_edge), mode) {
-                (EdgeStatus::Hidden, _) => continue,
+                (EdgeStatus::SoftHidden, MouseMode::Edge) if allow_soft_hidden => (),
+                (EdgeStatus::Hidden | EdgeStatus::SoftHidden, _) => continue,
                 (EdgeStatus::Joined, MouseMode::Flap) => continue,
                 _ => (),
             }
@@ -1864,7 +1871,13 @@ impl PapercraftContext {
         }
     }
 
-    pub fn paper_analyze_click(&self, mode: MouseMode, size: Vector2, pos: Vector2) -> ClickResult {
+    pub fn paper_analyze_click(
+        &self,
+        mode: MouseMode,
+        size: Vector2,
+        pos: Vector2,
+        allow_soft_hidden: bool,
+    ) -> ClickResult {
         let click = self.ui.trans_paper.paper_click(size, pos);
         let mx = self.ui.trans_paper.ortho * self.ui.trans_paper.mx;
         let scale = self.papercraft.options().scale;
@@ -1896,7 +1909,10 @@ impl PapercraftContext {
                     MouseMode::Edge | MouseMode::Flap | MouseMode::ReadOnly => {
                         for i_edge in face.index_edges() {
                             match (self.papercraft.edge_status(i_edge), mode) {
-                                (EdgeStatus::Hidden, _) => continue,
+                                (EdgeStatus::SoftHidden, MouseMode::Edge) if allow_soft_hidden => {
+                                    ()
+                                }
+                                (EdgeStatus::Hidden | EdgeStatus::SoftHidden, _) => continue,
                                 (EdgeStatus::Joined, MouseMode::Flap) => continue,
                                 _ => (),
                             }
@@ -1953,7 +1969,12 @@ impl PapercraftContext {
         if mods.contains(KeyMod::Super) {
             return RebuildFlags::empty();
         }
-        let selection = self.scene_analyze_click(self.ui.mode, size, pos);
+        let selection = self.scene_analyze_click(
+            self.ui.mode,
+            size,
+            pos,
+            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+        );
         let flags = if mods.contains(KeyMod::Alt) {
             SetSelectionFlags::ALT_PRESSED
         } else {
@@ -1989,8 +2010,18 @@ impl PapercraftContext {
         RebuildFlags::SCENE_REDRAW
     }
     #[must_use]
-    pub fn scene_button1_dblclick_event(&mut self, size: Vector2, pos: Vector2) -> RebuildFlags {
-        let selection = self.scene_analyze_click(MouseMode::Face, size, pos);
+    pub fn scene_button1_dblclick_event(
+        &mut self,
+        size: Vector2,
+        pos: Vector2,
+        mods: KeyMod,
+    ) -> RebuildFlags {
+        let selection = self.scene_analyze_click(
+            MouseMode::Face,
+            size,
+            pos,
+            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+        );
         let ClickResult::Face(i_face) = selection else {
             return RebuildFlags::empty();
         };
@@ -2066,7 +2097,12 @@ impl PapercraftContext {
         if mods.contains(KeyMod::Super) {
             return RebuildFlags::empty();
         }
-        let selection = self.scene_analyze_click(self.ui.mode, size, pos);
+        let selection = self.scene_analyze_click(
+            self.ui.mode,
+            size,
+            pos,
+            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+        );
         let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
         } else {
@@ -2263,7 +2299,12 @@ impl PapercraftContext {
         mods: KeyMod,
         modifiable: bool,
     ) -> RebuildFlags {
-        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
+        let selection = self.paper_analyze_click(
+            self.ui.mode,
+            size,
+            pos,
+            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+        );
         let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
         } else {
@@ -2323,7 +2364,12 @@ impl PapercraftContext {
         mods: KeyMod,
     ) -> RebuildFlags {
         self.pre_selection = None;
-        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
+        let selection = self.paper_analyze_click(
+            self.ui.mode,
+            size,
+            pos,
+            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+        );
         let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
         } else {
@@ -2361,7 +2407,12 @@ impl PapercraftContext {
         if mods.contains(KeyMod::Super) {
             return RebuildFlags::empty();
         }
-        let selection = self.paper_analyze_click(self.ui.mode, size, pos);
+        let selection = self.paper_analyze_click(
+            self.ui.mode,
+            size,
+            pos,
+            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+        );
         let flags = if mods.contains(KeyMod::Alt) {
             SetSelectionFlags::ALT_PRESSED
         } else {

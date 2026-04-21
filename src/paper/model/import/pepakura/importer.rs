@@ -126,7 +126,10 @@ impl Importer for PepakuraImporter {
         textures.push(Texture::default());
         textures
     }
-    fn compute_edge_status(&self, edge_id: (Self::VertexId, Self::VertexId)) -> Option<EdgeStatus> {
+    fn compute_edge_status(
+        &self,
+        edge_id: (Self::VertexId, Self::VertexId),
+    ) -> Option<RealEdgeStatus> {
         let ((obj_id, v0_id), (_, v1_id)) = edge_id;
         let vv = (v0_id, v1_id);
         let obj = &self.pdo.objects()[obj_id as usize];
@@ -135,7 +138,7 @@ impl Importer for PepakuraImporter {
             .iter()
             .find(|&e| vv == (e.i_v1, e.i_v2) || vv == (e.i_v2, e.i_v1))?;
         if edge.connected {
-            Some(EdgeStatus::Joined)
+            Some(RealEdgeStatus::Joined)
         } else {
             let v_f = obj.faces[edge.i_f1 as usize]
                 .verts
@@ -143,7 +146,7 @@ impl Importer for PepakuraImporter {
                 .find(|v_f| v_f.i_v == edge.i_v1)
                 .unwrap();
             if v_f.flap.is_some() {
-                Some(EdgeStatus::Cut(FlapSide::True))
+                Some(RealEdgeStatus::Cut(FlapSide::True))
             } else {
                 None
             }

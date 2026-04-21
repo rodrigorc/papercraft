@@ -2657,7 +2657,7 @@ impl GlobalContext {
                 .scene_button2_click_event(self.sz_scene, mouse_pos),
             Canvas3dAction::DoubleClicked(MouseButton::Left) => self
                 .data
-                .scene_button1_dblclick_event(self.sz_scene, mouse_pos),
+                .scene_button1_dblclick_event(self.sz_scene, mouse_pos, mods),
             Canvas3dAction::Released(MouseButton::Left) => {
                 self.data
                     .scene_button1_release_event(self.sz_scene, mouse_pos, mods)

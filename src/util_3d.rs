@@ -317,31 +317,27 @@ pub fn lines_intersect(line_i: (Vector2, Vector2), line_j: (Vector2, Vector2)) -
     (0.0..=1.0).contains(&di) && (0.0..=1.0).contains(&dj)
 }
 
+/// Newtype for f32 that implements a total ordering.
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+pub struct TotalF32(pub f32);
+
+impl Eq for TotalF32 {}
+impl Ord for TotalF32 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
 pub fn self_instersect_polygon(edges: &mut [(Vector2, Vector2)]) -> bool {
-    use std::cmp::Ordering;
     use std::collections::BinaryHeap;
 
     if edges.len() <= 3 {
         return false;
     }
 
-    struct Event(f32, bool, usize);
-    impl PartialEq for Event {
-        fn eq(&self, other: &Self) -> bool {
-            self.0 == other.0
-        }
-    }
-    impl Eq for Event {}
-    impl PartialOrd for Event {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-    impl Ord for Event {
-        fn cmp(&self, other: &Self) -> Ordering {
-            self.0.total_cmp(&other.0)
-        }
-    }
+    // The ordering of the events needs to use only the X coordinate (.0)
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    struct Event(TotalF32, bool, usize);
 
     // Events are (x, start_or_end, index)
     let mut events = BinaryHeap::new();
@@ -351,9 +347,10 @@ pub fn self_instersect_polygon(edges: &mut [(Vector2, Vector2)]) -> bool {
         if p0.x > p1.x || (p0.x == p1.x && p0.y > p1.y) {
             std::mem::swap(p0, p1);
         }
-        events.push(Event(p0.x, false, i));
-        events.push(Event(p1.x, true, i));
+        events.push(Event(TotalF32(p0.x), false, i));
+        events.push(Event(TotalF32(p1.x), true, i));
     }
+
     let events = events.into_sorted_vec();
 
     let mut active_edges = Vec::<usize>::new();

@@ -189,11 +189,7 @@ impl Papercraft {
             })
             .collect();
 
-        edge_collection.sort_by(|(ca, _, _, _), (cb, _, _, _)| {
-            ca.y.total_cmp(&cb.y)
-                .then_with(|| ca.z.total_cmp(&cb.z))
-                .then_with(|| ca.x.total_cmp(&cb.x))
-        });
+        edge_collection.sort_by_key(|(c, _, _, _)| (TotalF32(c.y), TotalF32(c.z), TotalF32(c.x)));
 
         for (_, edge, edge_status, edge_id) in edge_collection {
             match (edge.faces(), edge_status) {

@@ -24,12 +24,10 @@ fn compute_edge_map(new: &Papercraft, old: &Papercraft) -> FxHashMap<EdgeIndex, 
             };
 
             // f32 is not Eq so min_by_key cannot be used directly
-            let best = omodel.edges().min_by(|&(_, e_old_1), &(_, e_old_2)| {
-                let (da1, db1) = distance(e_old_1);
-                let (da2, db2) = distance(e_old_2);
-                let d1 = da1.min(db1);
-                let d2 = da2.min(db2);
-                d1.total_cmp(&d2)
+            let best = omodel.edges().min_by_key(|&(_, e_old)| {
+                let (da, db) = distance(e_old);
+                let d = da.min(db);
+                TotalF32(d)
             });
 
             let (i_old, e_old) = best?;

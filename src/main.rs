@@ -65,7 +65,7 @@ use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
 
 use clap::Parser;
 
-use crate::paper::LineConfig;
+use crate::{paper::LineConfig, util_3d::TotalF32};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -3516,7 +3516,7 @@ pub fn cut_to_contour(mut cuts: Vec<(Vector2, Vector2)>) -> Vec<Vector2> {
             .iter()
             .enumerate()
             .map(|(idx, (v0, _))| (idx, v0.distance2(p.1)))
-            .min_by(|(_, a), (_, b)| f32::total_cmp(a, b))
+            .min_by_key(|(_, a)| TotalF32(*a))
         {
             p = cuts.swap_remove(next);
             res.push(p.0);

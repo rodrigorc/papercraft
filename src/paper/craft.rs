@@ -696,13 +696,13 @@ impl Papercraft {
     }
     pub fn rebuild_island_names(&mut self) {
         // To get somewhat predictable names try to sort the islands before naming them.
-        // For now, sort them by number of faces.
+        // For now, sort them by area.
         let mut islands: Vec<_> = self
             .islands
             .iter()
             .map(|(i_island, island)| (i_island, self.island_area(island)))
             .collect();
-        islands.sort_by(|(_, n1), (_, n2)| n2.total_cmp(n1));
+        islands.sort_by_key(|(_, n)| TotalF32(*n));
 
         // A, B, ... Z, AA, ... AZ, BA, .... ZZ, AAA, AAB, ...
         fn next_name(name: &mut Vec<u8>) {
@@ -1463,6 +1463,9 @@ impl Papercraft {
 
             // Success!
             res.push(join_res);
+            if soft_hidden {
+                some_soft_hidden_joined = true;
+            }
         }
 
         res

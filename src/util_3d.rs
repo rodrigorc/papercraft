@@ -318,10 +318,15 @@ pub fn lines_intersect(line_i: (Vector2, Vector2), line_j: (Vector2, Vector2)) -
 }
 
 /// Newtype for f32 that implements a total ordering.
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct TotalF32(pub f32);
 
 impl Eq for TotalF32 {}
+impl PartialOrd for TotalF32 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 impl Ord for TotalF32 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.total_cmp(&other.0)

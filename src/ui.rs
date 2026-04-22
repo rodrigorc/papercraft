@@ -778,11 +778,6 @@ impl PapercraftContext {
             //cut with a flap
             let crease_kind = if edge_status == EdgeStatus::Joined || draw_flap.is_visible() {
                 let angle_3d = edge.angle();
-                if edge_status == EdgeStatus::Joined
-                    && Rad(angle_3d.0.abs()) < Rad::from(Deg(options.hidden_line_angle))
-                {
-                    continue;
-                }
                 let kind = if angle_3d.0.is_sign_negative() {
                     EdgeDrawKind::Valley
                 } else {
@@ -1398,19 +1393,11 @@ impl PapercraftContext {
             } else {
                 match status {
                     EdgeStatus::Hidden | EdgeStatus::SoftHidden => MLINE3D_HIDDEN,
-                    EdgeStatus::Joined => {
-                        let angle_3d = edge.angle();
-                        if Rad(angle_3d.0.abs())
-                            < Rad::from(Deg(self.papercraft.options().hidden_line_angle))
-                        {
-                            MLINE3D_HIDDEN
-                        } else {
-                            self.papercraft
-                                .options()
-                                .line3d_normal
-                                .to_3dstatus(&MLINE3D_NORMAL)
-                        }
-                    }
+                    EdgeStatus::Joined => self
+                        .papercraft
+                        .options()
+                        .line3d_normal
+                        .to_3dstatus(&MLINE3D_NORMAL),
                     EdgeStatus::Cut(_) => self
                         .papercraft
                         .options()

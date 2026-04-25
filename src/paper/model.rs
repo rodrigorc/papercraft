@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::marker::PhantomData;
 
-use crate::paper::import::Importer;
+use crate::paper::formats::Importer;
 use crate::util_3d::{self, Vector2, Vector3};
 
 use super::{BodyTraverse, Island, PaperOptions, traverse_faces_ex};
 
-pub mod import;
+pub mod formats;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Texture {

@@ -2,7 +2,7 @@ use std::io::{Read, Seek, Write};
 
 use super::*;
 use anyhow::Result;
-use model::import::Importer;
+use formats::Importer;
 
 impl Papercraft {
     pub fn save<W: Write + Seek>(&self, w: W, thumbnail: Option<image::RgbaImage>) -> Result<()> {

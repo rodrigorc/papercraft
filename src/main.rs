@@ -58,7 +58,7 @@ const FONT_SIZE: f32 = 3.0;
 
 use paper::{
     EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions, Papercraft,
-    import::{export_model_file, import_model_file},
+    formats::{export_model_file, import_model_file},
 };
 use util_3d::Matrix3;
 use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};

@@ -191,7 +191,7 @@ pub fn export_model_file(papercraft: &Papercraft, file_name: &Path) -> Result<()
     match ext.as_str() {
         // "obj" is the default
         _ => {
-            papercraft.export_waveobj(file_name)?;
+            waveobj::export(papercraft, file_name)?;
         }
     }
 

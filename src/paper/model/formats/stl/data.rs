@@ -1,4 +1,4 @@
-use crate::paper::import::*;
+use crate::paper::formats::*;
 use anyhow::bail;
 use cgmath::Zero;
 

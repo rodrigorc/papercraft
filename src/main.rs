@@ -58,7 +58,7 @@ const FONT_SIZE: f32 = 3.0;
 
 use paper::{
     EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions, Papercraft,
-    import::import_model_file,
+    import::{export_model_file, import_model_file},
 };
 use util_3d::Matrix3;
 use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
@@ -3223,10 +3223,9 @@ impl GlobalContext {
         self.data.modified = true;
         Ok(())
     }
+
     fn export_obj(&self, file_name: &Path) -> Result<()> {
-        self.data
-            .papercraft()
-            .export_waveobj(file_name.as_ref())
+        export_model_file(self.data.papercraft(), file_name)
             .with_context(|| tr!("Error exporting to {}", file_name.display()))?;
         Ok(())
     }

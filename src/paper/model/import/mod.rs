@@ -68,7 +68,7 @@ fn read_vector3_f32(rdr: &mut impl Read) -> Result<Vector3> {
     Ok(Vector3::new(x, y, z))
 }
 
-pub trait Importer: Sized {
+pub trait Importer {
     type VertexId: Copy + Eq + std::fmt::Debug;
 
     fn vertex_map(&self, i_v: VertexIndex) -> Self::VertexId;
@@ -119,7 +119,8 @@ pub fn import_model_file(file_name: &Path) -> Result<(Papercraft, bool)> {
         }
     }
 }
-pub fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
+
+fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
     let ext = match file_name.extension() {
         None => String::new(),
         Some(ext) => {
@@ -168,4 +169,31 @@ pub fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
         }
     };
     Ok((papercraft, is_native))
+}
+
+// Returns (model, is_native_format)
+pub fn export_model_file(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
+    let ext = match file_name.extension() {
+        None => String::new(),
+        Some(ext) => {
+            let mut ext = ext.to_string_lossy().into_owned();
+            ext.make_ascii_lowercase();
+            ext
+        }
+    };
+
+    /*
+    let f = std::fs::File::open(file_name)
+        .with_context(|| format!("Error opening file {}", file_name.display()))?;
+    let f = std::io::BufReader::new(f);
+    */
+
+    match ext.as_str() {
+        // "obj" is the default
+        _ => {
+            papercraft.export_waveobj(file_name)?;
+        }
+    }
+
+    Ok(())
 }

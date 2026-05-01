@@ -259,9 +259,6 @@ impl Papercraft {
                             _ => ControlFlow::Continue(()),
                         }
                     });
-                    if res.is_none() {
-                        println!("ffff");
-                    }
                     res.unwrap_or((island.root_face(), oisland.rotation(), oisland.location()))
                 }
             };

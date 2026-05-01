@@ -72,7 +72,7 @@ impl<'a> Gltf<'a> {
                     bin_buffer = Some(bs);
                 }
                 _ => {
-                    println!("unknown tag {}", String::from_utf8_lossy(ty));
+                    log::warn!("unknown tag {}", String::from_utf8_lossy(ty));
                 }
             }
         }
@@ -99,7 +99,7 @@ impl<'a> Gltf<'a> {
         if let Some(generator) = header.asset.generator {
             log::info!("glTF generator: {generator}");
         }
-        //dbg!(&header);
+        //log::debug!("{header:?}");
         let mut gltf = Gltf {
             dir,
             header,

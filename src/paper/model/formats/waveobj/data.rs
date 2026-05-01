@@ -126,7 +126,7 @@ impl Model {
                 "s" => { /* smoothing is ignored */ }
                 _p => {
                     // Unknown attribute
-                    //println!("{_p}??");
+                    log::debug!("unknown attrib {_p}");
                 }
             }
         }
@@ -264,7 +264,7 @@ impl Material {
                 }
                 _p => {
                     // Unknown attribute
-                    //println!("{_p}??");
+                    log::debug!("unknown attrib {_p}");
                 }
             }
         }

@@ -1896,9 +1896,8 @@ impl PapercraftContext {
                     MouseMode::Edge | MouseMode::Flap | MouseMode::ReadOnly => {
                         for i_edge in face.index_edges() {
                             match (self.papercraft.edge_status(i_edge), mode) {
-                                (EdgeStatus::SoftHidden, MouseMode::Edge) if allow_soft_hidden => {
-                                    ()
-                                }
+                                #[rustfmt::skip]
+                                (EdgeStatus::SoftHidden, MouseMode::Edge) if allow_soft_hidden => (),
                                 (EdgeStatus::Hidden | EdgeStatus::SoftHidden, _) => continue,
                                 (EdgeStatus::Joined, MouseMode::Flap) => continue,
                                 _ => (),

@@ -1,7 +1,10 @@
-use crate::paper::{Matrix4, Vector2, Vector3};
+use crate::{
+    paper::{Matrix4, Vector2, Vector3},
+    util_3d::{Matrix3, Point3},
+};
 
 use anyhow::{Result, anyhow, bail};
-use cgmath::{EuclideanSpace, SquareMatrix};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix, SquareMatrix};
 use easy_imgui_window::easy_imgui_renderer::glow;
 use image::{DynamicImage, ImageReader};
 use std::{
@@ -179,8 +182,8 @@ impl<'a> Gltf<'a> {
         Ok(images)
     }
 
-    fn access<T: AccessorType>(&self, idx: u32) -> Option<Access<'_, T>> {
-        let accessor = self.header.accessors.get(idx as usize)?;
+    fn access<T: AccessorType>(&self, idx: usize) -> Option<Access<'_, T>> {
+        let accessor = self.header.accessors.get(idx)?;
         if accessor.ty != T::TYPE {
             return None;
         }
@@ -195,9 +198,9 @@ impl<'a> Gltf<'a> {
         })
     }
 
-    fn buffer_view(&self, idx: u32) -> Option<(&[u8], Option<usize>)> {
-        let buffer_view = self.header.buffer_views.get(idx as usize)?;
-        let buffer = self.buffers.get(buffer_view.buffer as usize)?;
+    fn buffer_view(&self, idx: usize) -> Option<(&[u8], Option<usize>)> {
+        let buffer_view = self.header.buffer_views.get(idx)?;
+        let buffer = self.buffers.get(buffer_view.buffer)?;
         let stride = buffer_view.byte_stride;
         let bs = buffer
             .get(buffer_view.byte_offset..buffer_view.byte_offset + buffer_view.byte_length)?;
@@ -206,12 +209,12 @@ impl<'a> Gltf<'a> {
 
     pub fn process_scene<F>(&self, mut f_emit_face: F) -> Result<()>
     where
-        F: FnMut(Option<u32>, [Vector3; 3], Option<[Vector3; 3]>, [Vector2; 3]),
+        F: FnMut(Option<usize>, [Vector3; 3], Option<[Vector3; 3]>, [Vector2; 3]),
     {
         let scene = self
             .header
             .scenes
-            .get(self.header.scene as usize)
+            .get(self.header.scene)
             .ok_or(anyhow!("missing scene {}", self.header.scene))?;
         self.process_nodes(&scene.nodes, Matrix4::identity(), &mut f_emit_face)?;
         Ok(())
@@ -219,30 +222,34 @@ impl<'a> Gltf<'a> {
 
     fn process_nodes<F>(
         &self,
-        i_nodes: &[u32],
+        i_nodes: &[usize],
         mx_parent: Matrix4,
         f_emit_face: &mut F,
     ) -> Result<()>
     where
-        F: FnMut(Option<u32>, [Vector3; 3], Option<[Vector3; 3]>, [Vector2; 3]),
+        F: FnMut(Option<usize>, [Vector3; 3], Option<[Vector3; 3]>, [Vector2; 3]),
     {
         for &i_node in i_nodes {
             let node = self
                 .header
                 .nodes
-                .get(i_node as usize)
+                .get(i_node)
                 .ok_or(anyhow!("missing node {}", i_node))?;
 
             let mx = mx_parent * node.transform.matrix();
-            let mut mx_normal = mx.invert().unwrap_or_else(Matrix4::identity);
-            mx_normal.transpose_self();
+            let mx_normal = mx.invert().unwrap_or_else(Matrix4::identity).transpose();
+            let mx_normal = crate::util_3d::Matrix3::from_cols(
+                mx_normal.x.truncate(),
+                mx_normal.y.truncate(),
+                mx_normal.z.truncate(),
+            );
 
             //let _rot = node.rotation;
             if let Some(i_mesh) = node.mesh {
                 let mesh = self
                     .header
                     .meshes
-                    .get(i_mesh as usize)
+                    .get(i_mesh)
                     .ok_or(anyhow!("missing mesh {}", i_mesh))?;
                 for pri in &mesh.primitives {
                     let Some(a_pos) = pri.attributes.position else {
@@ -266,14 +273,14 @@ impl<'a> Gltf<'a> {
                         .and_then(|a_texcoord| self.access::<Vector2>(a_texcoord));
 
                     let tex = pri.material.and_then(|i_material| {
-                        let mat = self.header.materials.get(i_material as usize)?;
+                        let mat = self.header.materials.get(i_material)?;
                         let i_tex = mat
                             .pbr_metallic_roughness
                             .as_ref()?
                             .base_color_texture
                             .as_ref()?
                             .index;
-                        let i_tex = self.header.textures.get(i_tex as usize)?.source;
+                        let i_tex = self.header.textures.get(i_tex)?.source;
                         Some(i_tex)
                     });
 
@@ -291,7 +298,8 @@ impl<'a> Gltf<'a> {
                                 let n = norm
                                     .get(index)
                                     .unwrap_or_else(|| Vector3::new(0.0, 0.0, 0.0));
-                                mx_normal.transform_vector(n)
+                                <Matrix3 as Transform<Point3>>::transform_vector(&mx_normal, n)
+                                    .normalize()
                             })
                         });
                         let uv = texcoord
@@ -340,7 +348,7 @@ struct Header<'a> {
     #[serde(borrow)]
     asset: Asset<'a>,
     #[serde(default)]
-    scene: u32,
+    scene: usize,
     scenes: Vec<Scene>,
     nodes: Vec<Node>,
     meshes: Vec<Mesh>,
@@ -368,16 +376,16 @@ struct Asset<'a> {
 #[serde(rename_all = "camelCase")]
 struct Scene {
     #[serde(default)]
-    nodes: Vec<u32>,
+    nodes: Vec<usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Node {
     #[serde(default)]
-    mesh: Option<u32>,
+    mesh: Option<usize>,
     #[serde(default)]
-    children: Vec<u32>,
+    children: Vec<usize>,
     #[serde(flatten)]
     transform: Transform,
 }
@@ -431,21 +439,24 @@ struct Mesh {
     primitives: Vec<Primitive>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Primitive {
-    attributes: Attributes,
-    indices: Option<u32>,
-    material: Option<u32>,
-    mode: Option<u32>,
+pub struct Primitive {
+    pub attributes: Attributes,
+    pub indices: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<u32>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "UPPERCASE")]
-struct Attributes {
-    position: Option<u32>,
-    normal: Option<u32>,
-    texcoord_0: Option<u32>,
+pub struct Attributes {
+    pub position: Option<usize>,
+    pub normal: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texcoord_0: Option<usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -455,50 +466,64 @@ struct Buffer<'a> {
     uri: Option<&'a str>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct BufferView {
-    buffer: u32,
-    byte_length: usize,
+pub struct BufferView {
+    pub buffer: usize,
+    pub byte_length: usize,
     #[serde(default)]
-    byte_offset: usize,
-    byte_stride: Option<usize>,
+    pub byte_offset: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byte_stride: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<u32>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Accessor<'a> {
+pub struct Accessor<'a> {
     #[serde(rename = "type")]
-    ty: &'a str,
-    buffer_view: u32,
+    pub ty: &'a str,
+    pub buffer_view: usize,
     #[serde(default)]
-    byte_offset: usize,
-    component_type: u32,
-    count: usize,
+    pub byte_offset: usize,
+    pub component_type: u32,
+    pub count: usize,
+
+    #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<BoundingBox>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct BoundingBox {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Image<'a> {
-    #[serde(default)]
-    name: Option<&'a str>,
-    #[serde(default)]
-    mime_type: Option<&'a str>,
+pub struct Image<'a> {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<&'a str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<&'a str>,
     #[serde(flatten)]
-    binary: Binary<'a>,
+    pub binary: Binary<'a>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-enum Binary<'a> {
-    BufferView(u32),
+pub enum Binary<'a> {
+    BufferView(usize),
     Uri(&'a str),
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Texture {
-    source: u32,
+pub struct Texture {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampler: Option<usize>,
+    pub source: usize,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -516,7 +541,7 @@ struct MetallicRoughness {
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TextureRef {
-    index: u32,
+    index: usize,
 }
 
 trait Scalar: Default + Copy {

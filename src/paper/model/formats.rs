@@ -182,14 +182,11 @@ pub fn export_model_file(papercraft: &Papercraft, file_name: &Path) -> Result<()
         }
     };
 
-    /*
-    let f = std::fs::File::open(file_name)
-        .with_context(|| format!("Error opening file {}", file_name.display()))?;
-    let f = std::io::BufReader::new(f);
-    */
-
     match ext.as_str() {
         // "obj" is the default
+        "glb" => {
+            gltf::export(papercraft, file_name)?;
+        }
         _ => {
             waveobj::export(papercraft, file_name)?;
         }

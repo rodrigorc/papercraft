@@ -2423,6 +2423,7 @@ impl GlobalContext {
         if menu_actions.export_obj {
             let mut chooser = filechooser::FileChooser::new();
             let _ = chooser.set_path(&self.last_path);
+            chooser.add_filter(filters::gltf());
             chooser.add_filter(filters::wavefront());
             chooser.add_filter(filters::all_files());
             self.file_dialog = Some(FileDialog::new(
@@ -3939,6 +3940,7 @@ mod filters {
             PDF => "pdf",
             SVG | SVG_MULTIPAGE => "svg",
             PNG => "png",
+            GLTF => "glb",
             _ => return None,
         };
         Some(ext)
@@ -3993,10 +3995,10 @@ mod filters {
     pub fn gltf() -> Filter {
         Filter {
             id: GLTF,
-            text: tr!("glTF") + " (*.gltf *.glb)",
+            text: tr!("glTF") + " (*.glb *.gltf)",
             globs: vec![
-                Pattern::new("*.gltf").unwrap(),
                 Pattern::new("*.glb").unwrap(),
+                Pattern::new("*.gltf").unwrap(),
             ],
         }
     }

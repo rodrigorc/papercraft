@@ -1,10 +1,11 @@
 use anyhow::Result;
 use image::DynamicImage;
-use std::cell::Cell;
 use std::io::BufRead;
+use std::{cell::Cell, path::Path};
 
-use super::super::*;
-use super::data::*;
+use crate::paper::Vertex;
+
+use super::{super::*, GLTF_SCALE, data::Gltf};
 
 pub struct GltfImporter {
     // Cell to avoid cloning
@@ -33,7 +34,7 @@ impl GltfImporter {
         gltf.process_scene(|tex, vs, ns, uv| {
             for i in 0..3 {
                 vertices.push(Vertex {
-                    pos: vs[i],
+                    pos: vs[i] * GLTF_SCALE,
                     normal: ns.map(|n| n[i]).unwrap_or_else(|| {
                         has_normals = false;
                         Vector3::new(0.0, 0.0, 0.0)
@@ -42,7 +43,7 @@ impl GltfImporter {
                 });
             }
             // texture 0 is the no-tex
-            textures.push(tex.map(|t| t + 1).unwrap_or(0))
+            textures.push(tex.map(|t| (t + 1) as u32).unwrap_or(0))
         })?;
 
         Ok(GltfImporter {

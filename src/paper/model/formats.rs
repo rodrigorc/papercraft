@@ -171,7 +171,6 @@ fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
     Ok((papercraft, is_native))
 }
 
-// Returns (model, is_native_format)
 pub fn export_model_file(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
     let ext = match file_name.extension() {
         None => String::new(),
@@ -183,10 +182,13 @@ pub fn export_model_file(papercraft: &Papercraft, file_name: &Path) -> Result<()
     };
 
     match ext.as_str() {
-        // "obj" is the default
         "glb" => {
-            gltf::export(papercraft, file_name)?;
+            gltf::export(papercraft, file_name, gltf::GltfFormat::Binary)?;
         }
+        "gltf" => {
+            gltf::export(papercraft, file_name, gltf::GltfFormat::Text)?;
+        }
+        // "obj" is still the default, should be changed to "glb"?
         _ => {
             waveobj::export(papercraft, file_name)?;
         }

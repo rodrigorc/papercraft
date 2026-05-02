@@ -1,11 +1,15 @@
 use anyhow::Result;
 use easy_imgui_window::easy_imgui_renderer::glow;
 use serde_json::json;
-use std::{borrow::Cow, io::Write, path::Path};
+use std::{
+    borrow::Cow,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use super::{
     GLTF_SCALE,
-    data::{Accessor, Attributes, Binary, BufferView, Image, Primitive, Texture},
+    data::{Accessor, Attributes, Binary, Buffer, BufferView, Image, Primitive, Texture},
 };
 use crate::{
     paper::{Papercraft, VertexIndex, formats::gltf::data::BoundingBox},
@@ -37,12 +41,24 @@ fn write_u32(mut w: impl Write, x: u32) -> std::io::Result<()> {
     w.write_all(&x.to_le_bytes())
 }
 
-pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
+struct Pieces {
+    header: serde_json::Value,
+    buffer: PiecesBuffer,
+}
+
+enum PiecesBuffer {
+    Embedded(Vec<u8>),
+    External(Vec<(PathBuf, Vec<u8>)>),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum GltfFormat {
+    Binary,
+    Text,
+}
+
+fn export_pieces(papercraft: &Papercraft, name: &str, gltf_format: GltfFormat) -> Pieces {
     let model = papercraft.model();
-    let name = file_name
-        .file_stem()
-        .map(|s| Cow::Owned(s.display().to_string()))
-        .unwrap_or(Cow::Borrowed("model"));
 
     let (min_filter, mag_filter) = if papercraft.options().tex_filter {
         (glow::LINEAR_MIPMAP_LINEAR, glow::LINEAR)
@@ -56,11 +72,14 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
     let mut textures = Vec::with_capacity(model.num_textures());
     let mut images = Vec::with_capacity(model.num_textures());
 
+    let mut extra_buffers = Vec::new();
+
     // Accessors for vertices, normals and uvs are shared between primitives.
     // Primitives only have indices in exclusivity.
     let mut accessors = Vec::with_capacity(3 + model.num_textures());
 
     let mut buffer_views = Vec::new();
+    let mut buffers = Vec::new();
 
     let mut faces_by_mat = Vec::new();
     faces_by_mat.resize_with(model.num_textures(), Vec::new);
@@ -182,28 +201,54 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
         let material;
 
         if let Some(pixbuf) = tex.pixbuf.as_ref() {
-            let mut bv_image = BufferView {
-                buffer: 0,
-                byte_length: 0, // computed later
-                byte_offset: buffer.len(),
-                byte_stride: None,
-                target: None,
-            };
-
-            let mut w = std::io::Cursor::new(&mut buffer);
-            w.set_position(w.get_ref().len() as u64);
             let format =
                 image::ImageFormat::from_path(&tex.file_name).unwrap_or(image::ImageFormat::Png);
-            pixbuf.write_to(&mut w, format)?;
 
-            bv_image.byte_length = buffer.len() - bv_image.byte_offset;
+            let binary = match gltf_format {
+                GltfFormat::Binary => {
+                    let mut bv_image = BufferView {
+                        buffer: 0,
+                        byte_length: 0, // computed later
+                        byte_offset: buffer.len(),
+                        byte_stride: None,
+                        target: None,
+                    };
 
-            buffer_views.push(bv_image);
+                    let mut w = std::io::Cursor::new(&mut buffer);
+                    w.set_position(w.get_ref().len() as u64);
+                    // Writing to a Cursor<Vec<u8>> can't fail
+                    pixbuf.write_to(&mut w, format).unwrap();
+
+                    bv_image.byte_length = buffer.len() - bv_image.byte_offset;
+
+                    buffer_views.push(bv_image);
+
+                    Binary::BufferView(buffer_views.len() - 1)
+                }
+                GltfFormat::Text => {
+                    let mut name = PathBuf::from(&tex.file_name);
+                    match format.extensions_str() {
+                        &[ext, ..] => {
+                            name.set_extension(ext);
+                        }
+                        _ => {}
+                    }
+                    //pixbuf.save_with_format(name, format);
+                    let mut b = Vec::new();
+                    let mut w = std::io::Cursor::new(&mut b);
+                    // Writing to a Cursor<Vec<u8>> can't fail
+                    pixbuf.write_to(&mut w, format).unwrap();
+
+                    let binary = Binary::Uri(name.to_string_lossy().into_owned());
+                    extra_buffers.push((name, b));
+                    binary
+                }
+            };
 
             images.push(Image {
                 name: Some(&tex.file_name),
                 mime_type: Some(format.to_mime_type()),
-                binary: Binary::BufferView(buffer_views.len() - 1),
+                binary,
             });
 
             textures.push(Texture {
@@ -239,6 +284,26 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
 
     buffer.resize(buffer.len().next_multiple_of(4), 0);
 
+    let pieces_buffer = match gltf_format {
+        GltfFormat::Binary => {
+            buffers.push(Buffer {
+                byte_length: buffer.len(),
+                uri: None,
+            });
+            PiecesBuffer::Embedded(buffer)
+        }
+        GltfFormat::Text => {
+            let mut bin_name = PathBuf::from(&name);
+            bin_name.set_extension("bin");
+            buffers.push(Buffer {
+                byte_length: buffer.len(),
+                uri: Some(bin_name.to_string_lossy().into_owned()),
+            });
+            extra_buffers.push((bin_name, buffer));
+            PiecesBuffer::External(extra_buffers)
+        }
+    };
+
     let header = json!({
         "asset": { "generator": format!("Papercraft {}", env!("CARGO_PKG_VERSION")), "version": "2.0" },
         "scene": 0,
@@ -266,29 +331,59 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
         "images": images,
         "accessors": accessors,
         "bufferViews": buffer_views,
-        "buffers": [ { "byteLength": buffer.len() } ],
+        "buffers": buffers,
     });
 
-    let mut header = header.to_string().into_bytes();
-    header.resize(header.len().next_multiple_of(4), b' ');
+    Pieces {
+        header,
+        buffer: pieces_buffer,
+    }
+}
 
-    let f = std::fs::File::create(file_name)?;
-    let mut f = std::io::BufWriter::new(f);
-    // signature
-    f.write_all(b"glTF")?;
-    // version
-    write_u32(&mut f, 2)?;
-    // total len
-    let total_len = 12 + 8 + header.len() + 8 + buffer.len();
-    write_u32(&mut f, total_len as u32)?;
+pub fn export(papercraft: &Papercraft, file_name: &Path, gltf_format: GltfFormat) -> Result<()> {
+    let name = file_name
+        .file_stem()
+        .map(|s| Cow::Owned(s.display().to_string()))
+        .unwrap_or(Cow::Borrowed("model"));
 
-    write_u32(&mut f, header.len() as u32)?;
-    f.write_all(b"JSON")?;
-    f.write_all(&header)?;
+    let Pieces { header, buffer } = export_pieces(papercraft, &name, gltf_format);
 
-    write_u32(&mut f, buffer.len() as u32)?;
-    f.write_all(b"BIN\0")?;
-    f.write_all(&buffer)?;
-    f.flush()?;
+    match buffer {
+        PiecesBuffer::Embedded(buffer) => {
+            let mut header = header.to_string().into_bytes();
+            header.resize(header.len().next_multiple_of(4), b' ');
+
+            let f = std::fs::File::create(file_name)?;
+            let mut f = std::io::BufWriter::new(f);
+            // signature
+            f.write_all(b"glTF")?;
+            // version
+            write_u32(&mut f, 2)?;
+            // total len
+            let total_len = 12 + 8 + header.len() + 8 + buffer.len();
+            write_u32(&mut f, total_len as u32)?;
+
+            write_u32(&mut f, header.len() as u32)?;
+            f.write_all(b"JSON")?;
+            f.write_all(&header)?;
+
+            write_u32(&mut f, buffer.len() as u32)?;
+            f.write_all(b"BIN\0")?;
+            f.write_all(&buffer)?;
+            f.flush()?;
+        }
+        PiecesBuffer::External(buffers) => {
+            std::fs::write(file_name, &serde_json::to_vec_pretty(&header).unwrap())?;
+            let dir = match file_name.parent() {
+                Some(p) => p,
+                None => Path::new("."),
+            };
+            for (buf_name, data) in buffers {
+                let file_name = dir.join(&buf_name);
+                std::fs::write(file_name, data)?;
+            }
+        }
+    }
+
     Ok(())
 }

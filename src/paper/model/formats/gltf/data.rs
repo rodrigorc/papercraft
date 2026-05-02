@@ -120,7 +120,7 @@ impl<'a> Gltf<'a> {
 
     fn load_buffers(&mut self, mut bin_buffer: Option<&'a [u8]>) -> Result<()> {
         for buf in &self.header.buffers {
-            match buf.uri {
+            match &buf.uri {
                 Some(uri) => {
                     let mut bs = self.load_uri(uri)?;
                     bs.truncate(buf.byte_length);
@@ -154,7 +154,7 @@ impl<'a> Gltf<'a> {
                         .ok_or(anyhow!("missing bufferView {bv}"))?;
                     bs
                 }
-                Binary::Uri(uri) => {
+                Binary::Uri(ref uri) => {
                     data = self.load_uri(uri)?;
                     &data[..]
                 }
@@ -352,7 +352,7 @@ struct Header<'a> {
     scenes: Vec<Scene>,
     nodes: Vec<Node>,
     meshes: Vec<Mesh>,
-    buffers: Vec<Buffer<'a>>,
+    buffers: Vec<Buffer>,
     buffer_views: Vec<BufferView>,
     accessors: Vec<Accessor<'a>>,
     #[serde(default)]
@@ -459,11 +459,12 @@ pub struct Attributes {
     pub texcoord_0: Option<usize>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Buffer<'a> {
-    byte_length: usize,
-    uri: Option<&'a str>,
+pub struct Buffer {
+    pub byte_length: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -508,14 +509,14 @@ pub struct Image<'a> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<&'a str>,
     #[serde(flatten)]
-    pub binary: Binary<'a>,
+    pub binary: Binary,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Binary<'a> {
+pub enum Binary {
     BufferView(usize),
-    Uri(&'a str),
+    Uri(String),
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]

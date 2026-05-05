@@ -809,7 +809,7 @@ impl GlobalContext {
             let _vp =
                 glr::PushViewport::push(&self.gl, 0, 0, page_size_pixels.x, page_size_pixels.y);
 
-            // Cairo surfaces are alpha-premultiplied:
+            // Our pixbufs are alpha-premultiplied:
             // * The framebuffer will be premultiplied, but the input fragments are not.
             // * The clear color is set to transparent (premultiplied).
             // * In the screen DST_ALPHA does not matter, because the framebuffer is not
@@ -1058,6 +1058,7 @@ impl GlobalContext {
                     }
                 }
                 log::debug!("Render {} complete", page + 1);
+                demultiply_image(&mut pixbuf);
                 do_page_fn(page, pixbuf, &extra, &texts, &lines_by_island)?;
             }
         }

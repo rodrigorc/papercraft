@@ -3359,21 +3359,24 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
 
 fn premultiply_image(img: &mut image::RgbaImage) {
     for p in img.pixels_mut() {
-        let a = p.0[3] as u32;
+        let a = u32::from(p.0[3]);
         for i in &mut p.0[0..3] {
-            *i = (*i as u32 * a / 255) as u8;
+            *i = (u32::from(*i) * a / 255) as u8;
         }
     }
 }
 
 fn demultiply_image(img: &mut image::RgbaImage) {
+    use std::num::{NonZeroU8, NonZeroU32};
+
     for p in img.pixels_mut() {
-        let a = p.0[3] as u32;
+        let Some(a) = NonZeroU8::new(p.0[3]) else {
+            p.0 = [0; 4];
+            continue;
+        };
+        let a = NonZeroU32::from(a);
         for i in &mut p.0[0..3] {
-            *i = (*i as u32 * 255)
-                .checked_div(a)
-                .map(|d| d.clamp(0, 255) as u8)
-                .unwrap_or(0);
+            *i = (u32::from(*i) * 255 / a).clamp(0, 255) as u8;
         }
     }
 }

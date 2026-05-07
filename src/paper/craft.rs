@@ -480,6 +480,12 @@ impl FlapEdgeData {
         self.face_sign
     }
     // Do not expose p0/p1 for now, because they have an arbitraty transformation
+
+    pub fn diff2(&self, other: &FlapEdgeData) -> (f32, f32) {
+        let d1 = (self.p0 - other.p1).magnitude2();
+        let d2 = (self.p1 - other.p0).magnitude2();
+        (d1, d2)
+    }
 }
 
 type FlatFaceFlapDimensions = FxHashMap<(FaceIndex, EdgeIndex), FlapGeom>;
@@ -499,6 +505,9 @@ struct Memoization {
 
     // This depends on the islands, but not on the options
     island_perimeters: RefCell<FxHashMap<IslandKey, Rc<[FlapEdgeData]>>>,
+
+    // This is computed directly from island_perimeters
+    matching_edges: RefCell<FxHashMap<IslandKey, Rc<[EdgeIndex]>>>,
 }
 
 impl Memoization {
@@ -506,15 +515,18 @@ impl Memoization {
         self.face_to_face_edge_matrix.borrow_mut().clear();
         self.flat_face_flap_dimensions.borrow_mut().clear();
         self.island_perimeters.borrow_mut().clear();
+        self.matching_edges.borrow_mut().clear();
     }
     fn invalidate_islands(&self, islands: &[IslandKey]) {
         self.island_by_face.borrow_mut().clear();
 
         let mut flat_face_flap_dimensions = self.flat_face_flap_dimensions.borrow_mut();
         let mut island_perimeters = self.island_perimeters.borrow_mut();
+        let mut matching_edges = self.matching_edges.borrow_mut();
         for island in islands {
             flat_face_flap_dimensions.remove(island);
             island_perimeters.remove(island);
+            matching_edges.remove(island);
         }
     }
 }
@@ -1580,15 +1592,35 @@ impl Papercraft {
         let mut memo = self.memo.island_perimeters.borrow_mut();
         use std::collections::hash_map::Entry::*;
         match memo.entry(island_key) {
-            Occupied(o) => Rc::clone(o.get()),
+            Occupied(o) => {
+                let peri = o.get();
+                Rc::clone(peri)
+            }
             Vacant(v) => {
-                let value = self.island_perimeter_internal(island_key);
-                Rc::clone(v.insert(value.into()))
+                let peri = self.island_perimeter_internal(island_key);
+                let peri = v.insert(peri);
+                Rc::clone(peri)
             }
         }
     }
 
-    fn island_perimeter_internal(&self, island_key: IslandKey) -> Vec<FlapEdgeData> {
+    pub fn matching_edges(&self, island_key: IslandKey) -> Rc<[EdgeIndex]> {
+        let mut memo = self.memo.matching_edges.borrow_mut();
+        use std::collections::hash_map::Entry::*;
+        match memo.entry(island_key) {
+            Occupied(o) => {
+                let edges = o.get();
+                Rc::clone(edges)
+            }
+            Vacant(v) => {
+                let edges = self.matching_edges_internal(island_key);
+                let edges = v.insert(edges);
+                Rc::clone(edges)
+            }
+        }
+    }
+
+    fn island_perimeter_internal(&self, island_key: IslandKey) -> Rc<[FlapEdgeData]> {
         let island = self.island_by_key(island_key).unwrap();
         let scale = self.options.scale;
 
@@ -1618,6 +1650,33 @@ impl Papercraft {
                     p0: tr(i_v0),
                     p1: tr(i_v1),
                 }
+            })
+            .collect()
+    }
+
+    fn matching_edges_internal(&self, island_key: IslandKey) -> Rc<[EdgeIndex]> {
+        let perimeter = self.island_perimeter(island_key);
+
+        // Find matching edges in the perimeter.
+        // A matching edge is a cut edge that has both faces in the same island, and that when projected
+        // to the paper, both edges are almost overlapping.
+        // Currently the threshold for matching edges is hardcoded to 1mm.
+        perimeter
+            .iter()
+            .filter_map(|d| {
+                if d.face_sign {
+                    return None;
+                }
+                let d2 = perimeter
+                    .iter()
+                    .find(|d2| d2.i_edge == d.i_edge && d2.face_sign)?;
+
+                let (s1, s2) = d.diff2(d2);
+                let s = s1.max(s2);
+                if s >= 1.0 * 1.0 {
+                    return None;
+                }
+                Some(d.i_edge)
             })
             .collect()
     }

@@ -683,6 +683,7 @@ impl PapercraftContext {
         &self,
         face: &Face,
         i_face: FaceIndex,
+        i_island: IslandKey,
         m: &Matrix3,
         args: &mut PaperDrawFaceArgs,
         extra: &mut PaperDrawFaceArgsExtra,
@@ -774,6 +775,19 @@ impl PapercraftContext {
             let p1 = plane.project(&v1.pos(), scale);
             let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
 
+            // A matching edge, that is a cut edge where both faces are part of the same island and are drawn almost
+            // overlapping in the paper, with an angle below the hidden angle, is not drawn.
+            // The flap is still drawn, but it will most likely be degenerate, so it won't matter too much.
+            // The lines however are a nuisance, so get rid of them.
+            let matching_edges = {
+                if Papercraft::should_be_soft_hidden(options, edge) {
+                    let matching_edges = self.papercraft.matching_edges(i_island);
+                    matching_edges.contains(&i_edge)
+                } else {
+                    false
+                }
+            };
+
             //Dotted lines are drawn for negative 3d angles (valleys) if the edge is joined or
             //cut with a flap
             let crease_kind = if edge_status == EdgeStatus::Joined || draw_flap.is_visible() {
@@ -801,13 +815,17 @@ impl PapercraftContext {
 
             let fold_factor = options.fold_line_len / v_len;
             if let Some(crease_kind) = crease_kind {
-                let visible_line = match options.fold_style {
-                    FoldStyle::Full => (Some(0.0), None),
-                    FoldStyle::FullAndOut => (Some(fold_factor), None),
-                    FoldStyle::Out => (Some(fold_factor), Some(0.0)),
-                    FoldStyle::In => (Some(0.0), Some(fold_factor)),
-                    FoldStyle::InAndOut => (Some(fold_factor), Some(fold_factor)),
-                    FoldStyle::None => (None, None),
+                let visible_line = if matching_edges {
+                    (None, None)
+                } else {
+                    match options.fold_style {
+                        FoldStyle::Full => (Some(0.0), None),
+                        FoldStyle::FullAndOut => (Some(fold_factor), None),
+                        FoldStyle::Out => (Some(fold_factor), Some(0.0)),
+                        FoldStyle::In => (Some(0.0), Some(fold_factor)),
+                        FoldStyle::InAndOut => (Some(fold_factor), Some(fold_factor)),
+                        FoldStyle::None => (None, None),
+                    }
                 };
                 match visible_line {
                     (None, _) => {}
@@ -855,7 +873,7 @@ impl PapercraftContext {
                         args.vertices_edge_crease.push((line_b, crease_kind));
                     }
                 };
-            } else {
+            } else if !matching_edges {
                 // Weird cuts are drawn differently:
                 // * cuts with hidden flaps
                 // * rims
@@ -905,82 +923,86 @@ impl PapercraftContext {
                 let v_1 = vn * tan_1;
                 let n = Vector2::new(-vn.y, vn.x);
                 let mut p = [pos0, pos0 + n + v_1, pos1 + n - v_0, pos1];
-                if triangular {
-                    //The unneeded vertex is [2]
-                    p[2] = p[3];
-                    let mut line_0 = Line2D {
-                        p0: p[0],
-                        p1: p[1],
-                        dash0: 0.0,
-                        dash1: 0.0,
-                        width_left: options.tab_line_width,
-                        width_right: 0.0,
-                    };
-                    let mut line_1 = Line2D {
-                        p0: p[1],
-                        p1: p[2],
-                        dash0: 0.0,
-                        dash1: 0.0,
-                        width_left: options.tab_line_width,
-                        width_right: 0.0,
-                    };
-                    // Weird flaps are drawn differently:
-                    // * forced flap in a rim
-                    if edge.faces().1.is_none() {
-                        line_0.set_dash(5.0);
-                        line_1.set_dash(5.0);
-                    }
-                    args.vertices_flap_edge.push(line_0);
-                    args.vertices_flap_edge.push(line_1);
-                    if let Some(cut_info) = extra.cut_info.as_mut() {
-                        let (source, _) =
-                            cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
-                        let i = args.vertices_flap_edge.len();
-                        *source = CutSource::FlapEdge(i - 2, None, i - 1);
-                    }
-                } else {
-                    let mut line_0 = Line2D {
-                        p0: p[0],
-                        p1: p[1],
-                        dash0: 0.0,
-                        dash1: 0.0,
-                        width_left: options.tab_line_width,
-                        width_right: 0.0,
-                    };
-                    let mut line_1 = Line2D {
-                        p0: p[1],
-                        p1: p[2],
-                        dash0: 0.0,
-                        dash1: 0.0,
-                        width_left: options.tab_line_width,
-                        width_right: 0.0,
-                    };
-                    let mut line_2 = Line2D {
-                        p0: p[2],
-                        p1: p[3],
-                        dash0: 0.0,
-                        dash1: 0.0,
-                        width_left: options.tab_line_width,
-                        width_right: 0.0,
-                    };
-                    if edge.faces().1.is_none() {
-                        line_0.set_dash(5.0);
-                        line_1.set_dash(5.0);
-                        line_2.set_dash(5.0);
-                    }
-                    args.vertices_flap_edge.push(line_0);
-                    args.vertices_flap_edge.push(line_1);
-                    args.vertices_flap_edge.push(line_2);
-                    if let Some(cut_info) = extra.cut_info.as_mut() {
-                        let (source, _) =
-                            cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
-                        let i = args.vertices_flap_edge.len();
-                        *source = CutSource::FlapEdge(i - 3, Some(i - 2), i - 1);
-                    }
-                };
 
-                if let (Some(cut_info), Some(edge_id), Some(i_face_b)) =
-                    (extra.cut_info.as_mut(), edge_id, maybe_i_face_b)
+                if !matching_edges {
+                    if triangular {
+                        //The unneeded vertex is [2]
+                        p[2] = p[3];
+                        let mut line_0 = Line2D {
+                            p0: p[0],
+                            p1: p[1],
+                            dash0: 0.0,
+                            dash1: 0.0,
+                            width_left: options.tab_line_width,
+                            width_right: 0.0,
+                        };
+                        let mut line_1 = Line2D {
+                            p0: p[1],
+                            p1: p[2],
+                            dash0: 0.0,
+                            dash1: 0.0,
+                            width_left: options.tab_line_width,
+                            width_right: 0.0,
+                        };
+                        // Weird flaps are drawn differently:
+                        // * forced flap in a rim
+                        if edge.faces().1.is_none() {
+                            line_0.set_dash(5.0);
+                            line_1.set_dash(5.0);
+                        }
+                        args.vertices_flap_edge.push(line_0);
+                        args.vertices_flap_edge.push(line_1);
+                        if let Some(cut_info) = extra.cut_info.as_mut() {
+                            let (source, _) =
+                                cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
+                            let i = args.vertices_flap_edge.len();
+                            *source = CutSource::FlapEdge(i - 2, None, i - 1);
+                        }
+                    } else {
+                        let mut line_0 = Line2D {
+                            p0: p[0],
+                            p1: p[1],
+                            dash0: 0.0,
+                            dash1: 0.0,
+                            width_left: options.tab_line_width,
+                            width_right: 0.0,
+                        };
+                        let mut line_1 = Line2D {
+                            p0: p[1],
+                            p1: p[2],
+                            dash0: 0.0,
+                            dash1: 0.0,
+                            width_left: options.tab_line_width,
+                            width_right: 0.0,
+                        };
+                        let mut line_2 = Line2D {
+                            p0: p[2],
+                            p1: p[3],
+                            dash0: 0.0,
+                            dash1: 0.0,
+                            width_left: options.tab_line_width,
+                            width_right: 0.0,
+                        };
+                        if edge.faces().1.is_none() {
+                            line_0.set_dash(5.0);
+                            line_1.set_dash(5.0);
+                            line_2.set_dash(5.0);
+                        }
+                        args.vertices_flap_edge.push(line_0);
+                        args.vertices_flap_edge.push(line_1);
+                        args.vertices_flap_edge.push(line_2);
+                        if let Some(cut_info) = extra.cut_info.as_mut() {
+                            let (source, _) =
+                                cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
+                            let i = args.vertices_flap_edge.len();
+                            *source = CutSource::FlapEdge(i - 3, Some(i - 2), i - 1);
+                        }
+                    }
+                }
+
+                if !matching_edges
+                    && let (Some(cut_info), Some(edge_id), Some(i_face_b)) =
+                        (extra.cut_info.as_mut(), edge_id, maybe_i_face_b)
                 {
                     let (_, descr) =
                         cut_info[usize::from(i_edge)].face_sign_mut(edge.face_sign(i_face));
@@ -1140,12 +1162,12 @@ impl PapercraftContext {
         } else {
             None
         };
-        for (_i_island, island) in self.papercraft.islands() {
+        for (i_island, island) in self.papercraft.islands() {
             let _ = self.papercraft.traverse_faces(island, |i_face, face, mx| {
                 if let Some(mx_face) = &mut shadow_cache {
                     mx_face.insert(i_face, *mx);
                 }
-                self.paper_draw_face(face, i_face, mx, &mut args, &mut extra);
+                self.paper_draw_face(face, i_face, i_island, mx, &mut args, &mut extra);
                 ControlFlow::Continue(())
             });
         }
@@ -2543,13 +2565,13 @@ impl PapercraftContext {
         let by_island = self
             .papercraft
             .islands()
-            .map(|(id, island)| {
+            .map(|(i_island, island)| {
                 let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
                 let _ = self.papercraft.traverse_faces(island, |i_face, face, mx| {
-                    self.paper_draw_face(face, i_face, mx, &mut args, &mut extra);
+                    self.paper_draw_face(face, i_face, i_island, mx, &mut args, &mut extra);
                     ControlFlow::Continue(())
                 });
-                (id, args)
+                (i_island, args)
             })
             .collect();
         (by_island, extra)

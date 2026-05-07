@@ -25,7 +25,7 @@ opt-level = 3
 opt-level = 3
 
 [build-dependencies]
-include-po = "0.2"
+include-po = "0.2.1"
 
 [dependencies]
 cgmath = { version = "0.18", features = ["mint"] }

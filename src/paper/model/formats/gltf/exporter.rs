@@ -227,11 +227,8 @@ fn export_pieces(papercraft: &Papercraft, name: &str, gltf_format: GltfFormat) -
                 }
                 GltfFormat::Text => {
                     let mut name = PathBuf::from(&tex.file_name);
-                    match format.extensions_str() {
-                        &[ext, ..] => {
-                            name.set_extension(ext);
-                        }
-                        _ => {}
+                    if let &[ext, ..] = format.extensions_str() {
+                        name.set_extension(ext);
                     }
                     //pixbuf.save_with_format(name, format);
                     let mut b = Vec::new();
@@ -373,7 +370,7 @@ pub fn export(papercraft: &Papercraft, file_name: &Path, gltf_format: GltfFormat
             f.flush()?;
         }
         PiecesBuffer::External(buffers) => {
-            std::fs::write(file_name, &serde_json::to_vec_pretty(&header).unwrap())?;
+            std::fs::write(file_name, serde_json::to_vec_pretty(&header).unwrap())?;
             let dir = match file_name.parent() {
                 Some(p) => p,
                 None => Path::new("."),

@@ -152,6 +152,10 @@ fn default_tab_line_width() -> f32 {
     0.2
 }
 
+fn default_hidden_line_angle() -> f32 {
+    3.0
+}
+
 fn default_edge_id_font_size() -> f32 {
     8.0
 }
@@ -266,7 +270,7 @@ pub struct PaperOptions {
     pub tab_line_color: MyColor,
     #[serde(default = "default_tab_line_width")]
     pub tab_line_width: f32, //for cuts with tab
-    #[serde(default)]
+    #[serde(default = "default_hidden_line_angle")]
     pub hidden_line_angle: f32, //degrees
     #[serde(default = "my_true")]
     pub show_self_promotion: bool,
@@ -320,7 +324,7 @@ impl Default for PaperOptions {
             cut_line_width: default_cut_line_width(),
             tab_line_color: default_tab_line_color(),
             tab_line_width: default_tab_line_width(),
-            hidden_line_angle: 0.0,
+            hidden_line_angle: default_hidden_line_angle(),
             show_self_promotion: true,
             show_page_number: true,
             edge_id_font_size: default_edge_id_font_size(),

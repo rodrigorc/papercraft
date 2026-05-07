@@ -3371,7 +3371,13 @@ fn demultiply_image(img: &mut image::RgbaImage) {
 
     for p in img.pixels_mut() {
         let Some(a) = NonZeroU8::new(p.0[3]) else {
-            p.0 = [0; 4];
+            // If alpha is 0 we don't know the real color (divide by zero).
+            // Common wisdom says to use transparent black, that is (0, 0, 0, 0), but that
+            // may cause dark fringes around edges in some viewers (I suspect they do some blurring or rescaling or something)
+            // and the transparent black gets mixed with non-transparent-non-black pixels.
+            // Since background paper is almost always white, using a white transparent would cause white fringes instead, that are much less noticeable, in general.
+            // If they still annoy you, don't use PDFs for images!
+            p.0 = [255, 255, 255, 0];
             continue;
         };
         let a = NonZeroU32::from(a);

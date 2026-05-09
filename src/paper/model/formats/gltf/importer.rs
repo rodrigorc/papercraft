@@ -1,4 +1,5 @@
 use anyhow::Result;
+use cgmath::Zero;
 use image::DynamicImage;
 use std::io::BufRead;
 use std::{cell::Cell, path::Path};
@@ -23,10 +24,10 @@ impl GltfImporter {
         f.read_to_end(&mut data)?;
 
         let gltf = Gltf::parse(&data, file_name)?;
-        Self::new_inner(gltf)
+        Self::new_inner(&gltf)
     }
 
-    fn new_inner(gltf: Gltf) -> Result<GltfImporter> {
+    fn new_inner(gltf: &Gltf) -> Result<GltfImporter> {
         let images = gltf.load_images()?;
         let mut vertices = Vec::new();
         let mut textures = Vec::new();
@@ -35,15 +36,18 @@ impl GltfImporter {
             for i in 0..3 {
                 vertices.push(Vertex {
                     pos: vs[i] * GLTF_SCALE,
-                    normal: ns.map(|n| n[i]).unwrap_or_else(|| {
-                        has_normals = false;
-                        Vector3::new(0.0, 0.0, 0.0)
-                    }),
+                    normal: ns.map_or_else(
+                        || {
+                            has_normals = false;
+                            Vector3::zero()
+                        },
+                        |n| n[i],
+                    ),
                     uv: uv[i],
                 });
             }
             // texture 0 is the no-tex
-            textures.push(tex.map(|t| (t + 1) as u32).unwrap_or(0))
+            textures.push(tex.map_or(0, |t| (t + 1) as u32));
         })?;
 
         Ok(GltfImporter {
@@ -89,7 +93,7 @@ impl Importer for GltfImporter {
             texs.push(Texture {
                 file_name,
                 pixbuf: Some(pixbuf),
-            })
+            });
         }
         texs
     }

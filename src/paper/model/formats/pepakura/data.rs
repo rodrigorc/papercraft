@@ -207,8 +207,8 @@ impl<R: Read> Reader<'_, R> {
                 angle2: Rad(a2 as f32),
             });
 
-            let mut _fold_info = [0; 24];
-            self.rdr.read_exact(&mut _fold_info)?;
+            let mut fold_info = [0; 24];
+            self.rdr.read_exact(&mut fold_info)?;
             verts.push(VertInFace {
                 i_v,
                 pos2d,

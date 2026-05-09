@@ -34,6 +34,7 @@ impl FlapSide {
         use FlapSide::*;
         match (self, action) {
             (_, EdgeToggleFlapAction::Set(next)) => next,
+
             // toggle
             (False, EdgeToggleFlapAction::Toggle) => {
                 if rim {
@@ -42,13 +43,10 @@ impl FlapSide {
                     True
                 }
             }
-            (True, EdgeToggleFlapAction::Toggle) => False,
-            (Hidden, EdgeToggleFlapAction::Toggle) => False,
-
-            // hide
-            (False, EdgeToggleFlapAction::Hide) => Hidden,
-            (True, EdgeToggleFlapAction::Hide) => Hidden,
+            (True | Hidden, EdgeToggleFlapAction::Toggle) => False,
             (Hidden, EdgeToggleFlapAction::Hide) => False,
+            // hide
+            (True | False, EdgeToggleFlapAction::Hide) => Hidden,
         }
     }
     pub fn flap_visible(self, face_sign: bool) -> bool {
@@ -78,7 +76,7 @@ pub enum EdgeStatus {
     Hidden,
     Joined,
     Cut(FlapSide),
-    /// Is joined, but actually hidden because of hidden_line_angle
+    /// Is joined, but actually hidden because of `hidden_line_angle`
     SoftHidden,
 }
 
@@ -356,7 +354,7 @@ impl PaperOptions {
         let page_cols = self.page_cols;
         let row = page / page_cols;
         let col = page % page_cols;
-        self.row_col_position(row as i32, col as i32)
+        self.row_col_position(row.cast_signed(), col.cast_signed())
     }
     fn row_col_position(&self, row: i32, col: i32) -> Vector2 {
         Vector2::new(
@@ -376,7 +374,7 @@ impl PaperOptions {
     pub fn global_to_page(&self, pos: Vector2) -> PageOffset {
         let page_cols = self.page_cols;
         let page_size = Vector2::from(self.page_size);
-        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).clamp(0, page_cols as i32);
+        let col = ((pos.x / (page_size.x + PAGE_SEP)) as i32).clamp(0, page_cols.cast_signed());
         let row = ((pos.y / (page_size.y + PAGE_SEP)) as i32).max(0);
 
         let zero_pos = self.row_col_position(row, col);
@@ -424,17 +422,17 @@ pub struct Papercraft {
     model: Model,
     #[serde(default)] //TODO: default not actually needed
     options: PaperOptions,
-    edges: Vec<RealEdgeStatus>, //parallel to EdgeIndex
+    edges: Vec<RealEdgeStatus>, // parallel to `EdgeIndex`
     #[serde(with = "super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
 
     #[serde(skip)]
     memo: Memoization,
     #[serde(skip)]
-    edge_ids: Vec<Option<EdgeId>>, //parallel to EdgeIndex
+    edge_ids: Vec<Option<EdgeId>>, // parallel to `EdgeIndex`
 }
 
-/// The printable edge id, not to be confused with EdgeIndex
+/// The printable edge id, not to be confused with `EdgeIndex`
 #[derive(Copy, Clone, Debug)]
 pub struct EdgeId(NonZeroU32);
 
@@ -789,11 +787,8 @@ impl Papercraft {
             }
         }
         let edge = &self.model[i_edge];
-        let (i_face_a, i_face_b) = match edge.faces() {
-            (fa, Some(fb)) => (fa, fb),
-            _ => {
-                return None;
-            }
+        let (i_face_a, Some(i_face_b)) = edge.faces() else {
+            return None;
         };
 
         //one of the edge faces will be the root of the new island, but we do not know which one, yet
@@ -863,11 +858,8 @@ impl Papercraft {
             }
         }
         let edge = &self.model[i_edge];
-        let (i_face_a, i_face_b) = match edge.faces() {
-            (fa, Some(fb)) => (fa, fb),
-            _ => {
-                return None;
-            }
+        let (i_face_a, Some(i_face_b)) = edge.faces() else {
+            return None;
         };
 
         let i_island_b = self.island_by_face(i_face_b);
@@ -983,9 +975,10 @@ impl Papercraft {
         res
     }
     pub fn face_to_face_edge_matrix(&self, edge: &Edge, face_a: &Face, face_b: &Face) -> Matrix3 {
+        use std::collections::hash_map::Entry::*;
+
         // Try to use a memoized value
         let mut memo = self.memo.face_to_face_edge_matrix.borrow_mut();
-        use std::collections::hash_map::Entry::*;
 
         let i_edge = self.model.edge_index(edge);
         let i_face_a = self.model.face_index(face_a);
@@ -1025,9 +1018,10 @@ impl Papercraft {
         i_face_b: Option<FaceIndex>,
         i_edge: EdgeIndex,
     ) -> FlapGeom {
+        use std::collections::hash_map::Entry::*;
+
         // Try to use a memoized value
         let mut memo = self.memo.flat_face_flap_dimensions.borrow_mut();
-        use std::collections::hash_map::Entry::*;
         let i_island = self.island_by_face(i_face_a);
         let island_data = memo.entry(i_island).or_default();
         match island_data.entry((i_face_a, i_edge)) {
@@ -1119,14 +1113,16 @@ impl Papercraft {
             let d1 = &flat_perimeter[(base_index + 1) % flat_perimeter.len()];
 
             // ** Compute max flap angles **
-            let e0 = d0.p1 - d0.p0;
-            let e1 = d1.p0 - d0.p1;
-            let e2 = d1.p1 - d1.p0;
-            let angle0 = Rad::turn_div_2() - e1.angle(e0);
-            let angle1 = Rad::turn_div_2() - e2.angle(e1);
+            {
+                let e0 = d0.p1 - d0.p0;
+                let e1 = d1.p0 - d0.p1;
+                let e2 = d1.p1 - d1.p0;
+                let angle_0 = Rad::turn_div_2() - e1.angle(e0);
+                let angle_1 = Rad::turn_div_2() - e2.angle(e1);
 
-            a0 = Rad(a0.0.min(angle0.0));
-            a1 = Rad(a1.0.min(angle1.0));
+                a0 = Rad(a0.0.min(angle_0.0));
+                a1 = Rad(a1.0.min(angle_1.0));
+            }
 
             // Convert the flat_contour to island coordinates, we know that this edge should match, inverted
             let mx = Matrix3::from_translation(base.0)
@@ -1348,10 +1344,8 @@ impl Papercraft {
         let mut i_edges = vec![i_edge];
         while let Some(i_edge) = i_edges.pop() {
             // First try to join the edge, if it fails skip.
-            let (i_face_a, i_face_b) = match self.model[i_edge].faces() {
-                (a, Some(b)) => (a, b),
-                // Rims cannot be joined
-                _ => continue,
+            let (i_face_a, Some(i_face_b)) = self.model[i_edge].faces() else {
+                continue;
             };
             // Only cuts can be joined
             if !matches!(self.edge_status(i_edge), EdgeStatus::Cut(_)) {
@@ -1589,8 +1583,9 @@ impl Papercraft {
 
     // Returns the island perimeter in paper size, but, beware! with an arbitrary position
     pub fn island_perimeter(&self, island_key: IslandKey) -> Rc<[FlapEdgeData]> {
-        let mut memo = self.memo.island_perimeters.borrow_mut();
         use std::collections::hash_map::Entry::*;
+
+        let mut memo = self.memo.island_perimeters.borrow_mut();
         match memo.entry(island_key) {
             Occupied(o) => {
                 let peri = o.get();
@@ -1605,8 +1600,9 @@ impl Papercraft {
     }
 
     pub fn matching_edges(&self, island_key: IslandKey) -> Rc<[EdgeIndex]> {
-        let mut memo = self.memo.matching_edges.borrow_mut();
         use std::collections::hash_map::Entry::*;
+
+        let mut memo = self.memo.matching_edges.borrow_mut();
         match memo.entry(island_key) {
             Occupied(o) => {
                 let edges = o.get();
@@ -1790,22 +1786,15 @@ impl Papercraft {
                 }
             } else {
                 let faces = edge.faces();
-                i_face = if faces.0 == i_face {
-                    match faces.1 {
-                        Some(f) => f,
-                        None => {
-                            // Should not happen!
-                            log::error!("Broken contour!");
-                            break;
-                        }
+                i_face = match faces {
+                    (fa, Some(fb)) if fa == i_face => fb,
+                    (fa, Some(fb)) if fb == i_face => fa,
+                    _ => {
+                        // Should not happen!
+                        log::error!("Broken contour!");
+                        break;
                     }
-                } else if Some(i_face) == faces.1 {
-                    faces.0
-                } else {
-                    // Should not happen!
-                    log::error!("Broken contour!");
-                    break;
-                }
+                };
             }
         }
         contour

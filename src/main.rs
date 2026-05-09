@@ -18,12 +18,11 @@ use easy_imgui_window::{
     winit,
 };
 use image::{EncodableLayout, GenericImage, GenericImageView, Pixel};
-use lazy_static::lazy_static;
 use std::{
     f32,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::AtomicPtr,
+    sync::{LazyLock, atomic::AtomicPtr},
     time::{Duration, Instant},
 };
 use tr::tr;
@@ -33,7 +32,7 @@ type Ui = imgui::Ui<Box<GlobalContext>>;
 
 static MULTISAMPLES: &[i32] = &[16, 8, 4, 2];
 
-use easy_imgui_filechooser as filechooser;
+use easy_imgui_filechooser::{self as filechooser, CustomAtlas};
 
 mod config;
 mod paper;
@@ -46,12 +45,10 @@ mod ui;
 
 use ui::*;
 
-lazy_static! {
-    static ref LOGO_IMG: image::RgbaImage =
-        load_image_from_memory(include_bytes!("papercraft.png"), true).unwrap();
-    static ref ICONS_IMG: image::RgbaImage =
-        load_image_from_memory(include_bytes!("icons.png"), true).unwrap();
-}
+static LOGO_IMG: LazyLock<image::RgbaImage> =
+    LazyLock::new(|| load_image_from_memory(include_bytes!("papercraft.png"), true).unwrap());
+static ICONS_IMG: LazyLock<image::RgbaImage> =
+    LazyLock::new(|| load_image_from_memory(include_bytes!("icons.png"), true).unwrap());
 
 const KARLA_TTF: &[u8] = include_bytes!("Karla-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
@@ -231,7 +228,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             check_version_status: CheckVersionStatus::Idle,
             option_button_height: 0.0,
             file_dialog: None,
-            filechooser_atlas: Default::default(),
+            filechooser_atlas: CustomAtlas::default(),
             file_operation: None,
             cmd_file_operation: cmd_file_action,
             last_path,
@@ -252,7 +249,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         // Using the pointer will still be technical UB, probably, but hopefully
         // we'll never need it.
         unsafe {
-            CTX.store(&mut *ctx, std::sync::atomic::Ordering::Release);
+            CTX.store(&raw mut *ctx, std::sync::atomic::Ordering::Release);
             install_crash_backup(event_proxy.clone());
         }
         ctx
@@ -443,7 +440,7 @@ enum FileAction {
 }
 
 impl FileAction {
-    fn title(&self) -> String {
+    fn title(self) -> String {
         match self {
             FileAction::OpenCraft | FileAction::OpenCraftReadOnly => tr!("Opening..."),
             FileAction::SaveAsCraft => tr!("Saving..."),
@@ -453,7 +450,7 @@ impl FileAction {
             FileAction::GeneratePrintable => tr!("Generating..."),
         }
     }
-    fn is_save(&self) -> bool {
+    fn is_save(self) -> bool {
         match self {
             FileAction::OpenCraft
             | FileAction::OpenCraftReadOnly
@@ -597,18 +594,18 @@ impl filechooser::PreviewBuilder<Box<GlobalContext>> for &Option<(glr::Texture, 
         let (p1, p2) = if sz.y * img_sz.x > sz.x * img_sz.y {
             let h2 = sz.x * img_sz.y / img_sz.x;
             let my = (sz.y - h2) / 2.0;
-            (Vector2::new(p1.x, p1.y + my), Vector2::new(p2.x, p2.y - my))
+            (vec2(p1.x, p1.y + my), vec2(p2.x, p2.y - my))
         } else {
             let w2 = sz.y * img_sz.x / img_sz.y;
             let mx = (sz.x - w2) / 2.0;
-            (Vector2::new(p1.x + mx, p1.y), Vector2::new(p2.x - mx, p2.y))
+            (vec2(p1.x + mx, p1.y), vec2(p2.x - mx, p2.y))
         };
         dl.add_image(
             TextureRef::Id(Renderer::map_tex(tex.id())),
             p1,
             p2,
-            Vector2::new(0.0, 0.0),
-            Vector2::new(1.0, 1.0),
+            vec2(0.0, 0.0),
+            vec2(1.0, 1.0),
             Color::WHITE,
         );
     }
@@ -861,7 +858,7 @@ impl GlobalContext {
                     _ => {
                         advance_cursor(ui, 0.0, 1.0);
                     }
-                };
+                }
 
                 center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
@@ -1170,9 +1167,8 @@ impl GlobalContext {
         }
     }
     fn build_options_dialog(&mut self, ui: &Ui) {
-        let options = match self.options_opened.take() {
-            Some(o) => o,
-            None => return,
+        let Some(options) = self.options_opened.take() else {
+            return;
         };
         let modifiable = self.modifiable();
         let mut options_opened = true;
@@ -1627,11 +1623,7 @@ impl GlobalContext {
                                 for op in PAPER_SIZES {
                                     if ui
                                         .selectable_config(lbl(op.name))
-                                        .selected(
-                                            paper_size
-                                                .map(|p| std::ptr::eq(p, op))
-                                                .unwrap_or(false),
-                                        )
+                                        .selected(paper_size.is_some_and(|p| std::ptr::eq(p, op)))
                                         .build()
                                     {
                                         options.page_size = (op.size.x, op.size.y);
@@ -2503,7 +2495,7 @@ impl GlobalContext {
                                     });
                                 }
                             });
-                        };
+                        }
                     }
                     let chooser_options = filechooser::UiParameters::new(&self.filechooser_atlas)
                         .with_preview(&fd.tex);
@@ -2518,7 +2510,7 @@ impl GlobalContext {
                             let file_format = fd.chooser.active_filter();
                             let file = fd.chooser.full_path(filters::ext(file_format));
                             if let Some(path) = file.parent() {
-                                self.last_path = path.to_owned();
+                                path.clone_into(&mut self.last_path);
                             }
                             let action = if fd.action == FileAction::OpenCraft && fd.chooser.read_only() {
                                 FileAction::OpenCraftReadOnly
@@ -2585,7 +2577,7 @@ impl GlobalContext {
         maybe_img: Option<image::RgbaImage>,
     ) -> bool {
         if maybe_img.is_some() {
-            log::info!("Thumbnail loaded {full_path:?}");
+            log::info!("Thumbnail loaded {}", full_path.display());
         }
         match self.file_dialog.as_mut() {
             // If the datadialog is still opened and the proper file selected
@@ -2617,13 +2609,13 @@ impl GlobalContext {
 
                             gl.bind_texture(glow::TEXTURE_2D, None);
                         }
-                        Some((ntex, Vector2::new(img.width() as f32, img.height() as f32)))
+                        Some((ntex, vec2(img.width() as f32, img.height() as f32)))
                     }
                 };
                 true
             }
             _ => {
-                log::error!("Thumbnail discarded {full_path:?}");
+                log::error!("Thumbnail discarded {}", full_path.display());
                 false
             }
         }
@@ -2999,7 +2991,7 @@ impl GlobalContext {
             }
             None => {
                 if unsaved.is_empty() {
-                    app_name.to_owned()
+                    app_name
                 } else {
                     format!("{unsaved} - {app_name}")
                 }
@@ -3113,7 +3105,7 @@ impl GlobalContext {
 
             let thumb_data = self
                 .data
-                .prepare_thumbnail(Vector2::new(IMG_WIDTH as f32, IMG_HEIGHT as f32));
+                .prepare_thumbnail(vec2(IMG_WIDTH as f32, IMG_HEIGHT as f32));
 
             // Render the scene upside down to make the image easier to export
             self.data.ui.trans_scene.persp.y.y *= -1.0;
@@ -3391,7 +3383,7 @@ fn load_image_from_memory(data: &[u8], premultiply: bool) -> Result<image::RgbaI
     let image = image::load_from_memory_with_format(data, image::ImageFormat::Png)?;
     let mut image = image.into_rgba8();
     if premultiply {
-        premultiply_image(&mut image)
+        premultiply_image(&mut image);
     }
     Ok(image)
 }
@@ -3436,11 +3428,7 @@ fn center_url(ui: &Ui, s: &str, id: &str, cmd: Option<&str>, w: f32) {
     ui.with_push((imgui::ColorId::Text, color), || {
         ui.text(s);
         ui.set_cursor_screen_pos(pos0);
-        if ui
-            .invisible_button_config(id)
-            .size(Vector2::new(w, ss.y))
-            .build()
-        {
+        if ui.invisible_button_config(id).size(vec2(w, ss.y)).build() {
             let _ = opener::open_browser(cmd.unwrap_or(s));
         }
         if ui.is_item_hovered() {
@@ -3653,7 +3641,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
 
                 match (menu_actions.quit, self.quit_requested) {
                     (BoolWithConfirm::Confirmed, _) | (_, BoolWithConfirm::Confirmed) => {
-                        self.quit_requested = BoolWithConfirm::Confirmed
+                        self.quit_requested = BoolWithConfirm::Confirmed;
                     }
                     (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested) => {
                         self.quit_requested = BoolWithConfirm::None;
@@ -3755,7 +3743,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
     }
 }
 
-/// Computes the PrintableText for an island.
+/// Computes the `PrintableText` for an island.
 /// The `contour` can be provided as an optimization.
 fn printable_island_name(
     papercraft: &Papercraft,
@@ -3770,7 +3758,7 @@ fn printable_island_name(
     let pos = match options.edge_id_position {
         // On top (None should not happen)
         EdgeIdPosition::None | EdgeIdPosition::Outside => {
-            let mut top = Vector2::new(f32::MAX, f32::MAX);
+            let mut top = vec2(f32::MAX, f32::MAX);
             let perimeter = papercraft.island_perimeter(i_island);
             for peri in perimeter.iter() {
                 args.lines_by_cut_info(
@@ -3784,7 +3772,7 @@ fn printable_island_name(
                     },
                 );
             }
-            top - Vector2::new(0.0, edge_id_font_size)
+            top - vec2(0.0, edge_id_font_size)
         }
         // In the middle
         EdgeIdPosition::Inside => {
@@ -3800,7 +3788,7 @@ fn printable_island_name(
                 .sum();
             // Don't forget to divide the center of each triangle by 3!
             let center = center / total_area / 3.0;
-            center + Vector2::new(0.0, edge_id_font_size)
+            center + vec2(0.0, edge_id_font_size)
         }
     };
     PrintableText {
@@ -3856,55 +3844,55 @@ impl TextBuilder for TextHelper<'_> {
             TextAlign::Center => -width() / 2.0,
             TextAlign::Far => -width(),
         };
-        let m = Matrix3::from_translation(pt.pos)
+        let matrix = Matrix3::from_translation(pt.pos)
             * Matrix3::from(cgmath::Matrix2::from_angle(pt.angle))
             * Matrix3::from_scale(pt.size / self.font_size)
-            * Matrix3::from_translation(Vector2::new(x_offset, -baked_font.Ascent));
+            * Matrix3::from_translation(vec2(x_offset, -baked_font.Ascent));
         for c in pt.text.chars() {
-            let r = baked_font.find_glyph(c);
+            let glyph = baked_font.find_glyph(c);
             let unique_id = self.ui.io().font_atlas().current_texture_unique_id();
-            let mut p0 = r.p0();
-            let mut p1 = r.p1();
+            let mut p0 = glyph.p0();
+            let mut p1 = glyph.p1();
             p0.x += x;
             p1.x += x;
-            let mut q = [
+            let mut vertices = [
                 util_gl::MVertexText {
                     pos: p0,
-                    uv: r.uv0(),
+                    uv: glyph.uv0(),
                 },
                 util_gl::MVertexText {
-                    pos: Vector2::new(p1.x, p0.y),
-                    uv: Vector2::new(r.uv1().x, r.uv0().y),
+                    pos: vec2(p1.x, p0.y),
+                    uv: vec2(glyph.uv1().x, glyph.uv0().y),
                 },
                 util_gl::MVertexText {
-                    pos: Vector2::new(p0.x, p1.y),
-                    uv: Vector2::new(r.uv0().x, r.uv1().y),
+                    pos: vec2(p0.x, p1.y),
+                    uv: vec2(glyph.uv0().x, glyph.uv1().y),
                 },
                 util_gl::MVertexText {
-                    pos: Vector2::new(p0.x, p1.y),
-                    uv: Vector2::new(r.uv0().x, r.uv1().y),
+                    pos: vec2(p0.x, p1.y),
+                    uv: vec2(glyph.uv0().x, glyph.uv1().y),
                 },
                 util_gl::MVertexText {
-                    pos: Vector2::new(p1.x, p0.y),
-                    uv: Vector2::new(r.uv1().x, r.uv0().y),
+                    pos: vec2(p1.x, p0.y),
+                    uv: vec2(glyph.uv1().x, glyph.uv0().y),
                 },
                 util_gl::MVertexText {
                     pos: p1,
-                    uv: r.uv1(),
+                    uv: glyph.uv1(),
                 },
             ];
-            for v in &mut q {
-                let p = m * Vector3::new(v.pos.x, v.pos.y, 1.0);
+            for v in &mut vertices {
+                let p = matrix * Vector3::new(v.pos.x, v.pos.y, 1.0);
                 v.pos.x = p.x;
                 v.pos.y = p.y;
             }
 
             if let Some(vs) = vs.iter_mut().find(|v| v.0 == unique_id) {
-                vs.1.extend(q);
+                vs.1.extend(vertices);
             } else {
-                vs.push((unique_id, q.into()));
+                vs.push((unique_id, vertices.into()));
             }
-            x += r.advance_x();
+            x += glyph.advance_x();
         }
     }
 }
@@ -4053,12 +4041,12 @@ mod filters {
     }
 }
 
-lazy_static! {
-    static ref MAX_ANTIALIAS: i32 = std::env::var("PAPERCRAFT_ANTIALIAS")
+static MAX_ANTIALIAS: LazyLock<i32> = LazyLock::new(|| {
+    std::env::var("PAPERCRAFT_ANTIALIAS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(i32::MAX);
-}
+        .unwrap_or(i32::MAX)
+});
 
 fn renderbuffer_storage_antialias<T: glr::BinderFBOTarget>(
     gl: &GlContext,

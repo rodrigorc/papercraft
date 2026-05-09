@@ -4,7 +4,7 @@ use crate::{
 };
 
 use anyhow::{Result, anyhow, bail};
-use cgmath::{EuclideanSpace, InnerSpace, Matrix, SquareMatrix};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix, SquareMatrix, Zero};
 use easy_imgui_window::easy_imgui_renderer::glow;
 use image::{DynamicImage, ImageReader};
 use std::{
@@ -120,24 +120,21 @@ impl<'a> Gltf<'a> {
 
     fn load_buffers(&mut self, mut bin_buffer: Option<&'a [u8]>) -> Result<()> {
         for buf in &self.header.buffers {
-            match &buf.uri {
-                Some(uri) => {
-                    let mut bs = self.load_uri(uri)?;
-                    bs.truncate(buf.byte_length);
-                    if bs.len() != buf.byte_length {
-                        bail!("incorrect buffer length");
-                    }
-                    self.buffers.push(bs.into());
+            if let Some(uri) = &buf.uri {
+                let mut bs = self.load_uri(uri)?;
+                bs.truncate(buf.byte_length);
+                if bs.len() != buf.byte_length {
+                    bail!("incorrect buffer length");
                 }
-                None => {
-                    let Some(buf2) = bin_buffer.take() else {
-                        bail!("missing gltf BIN");
-                    };
-                    let buf2 = buf2
-                        .get(0..buf.byte_length)
-                        .ok_or(anyhow!("binary buffer too short"))?;
-                    self.buffers.push(buf2.into());
-                }
+                self.buffers.push(bs.into());
+            } else {
+                let Some(buf2) = bin_buffer.take() else {
+                    bail!("missing gltf BIN");
+                };
+                let buf2 = buf2
+                    .get(0..buf.byte_length)
+                    .ok_or(anyhow!("binary buffer too short"))?;
+                self.buffers.push(buf2.into());
             }
         }
         Ok(())
@@ -173,10 +170,7 @@ impl<'a> Gltf<'a> {
                 }
             }
             let pixbuf = rdr.decode()?;
-            let name = img
-                .name
-                .map(String::from)
-                .unwrap_or_else(|| format!("tex_{i}"));
+            let name = img.name.map_or_else(|| format!("tex_{i}"), String::from);
             images.push((name, pixbuf));
         }
         Ok(images)
@@ -288,30 +282,22 @@ impl<'a> Gltf<'a> {
                         use cgmath::Transform;
 
                         let ps = indices.map(|index| {
-                            let p = pos
-                                .get(index)
-                                .unwrap_or_else(|| Vector3::new(0.0, 0.0, 0.0));
+                            let p = pos.get(index).unwrap_or(Vector3::zero());
                             mx.transform_point(cgmath::Point3::from_vec(p)).to_vec()
                         });
                         let ns = norm.as_ref().map(|norm| {
                             indices.map(|index| {
-                                let n = norm
-                                    .get(index)
-                                    .unwrap_or_else(|| Vector3::new(0.0, 0.0, 0.0));
+                                let n = norm.get(index).unwrap_or(Vector3::zero());
                                 <Matrix3 as Transform<Point3>>::transform_vector(&mx_normal, n)
                                     .normalize()
                             })
                         });
-                        let uv = texcoord
-                            .as_ref()
-                            .map(|texcoord| {
-                                indices.map(|index| {
-                                    texcoord
-                                        .get(index)
-                                        .unwrap_or_else(|| Vector2::new(0.0, 0.0))
-                                })
-                            })
-                            .unwrap_or_else(|| [Vector2::new(0.0, 0.0); 3]);
+                        let uv = texcoord.as_ref().map_or_else(
+                            || [Vector2::zero(); 3],
+                            |texcoord| {
+                                indices.map(|index| texcoord.get(index).unwrap_or(Vector2::zero()))
+                            },
+                        );
                         f_emit_face(tex, ps, ns, uv);
 
                         Ok(())
@@ -576,6 +562,7 @@ impl Scalar for u32 {
 
 impl Scalar for f32 {
     fn get(data: &[u8], component_type: u32, idx: usize) -> Option<Self> {
+        #[allow(clippy::single_match_else)]
         match component_type {
             glow::FLOAT => {
                 let bs = data.get(4 * idx..4 * (idx + 1))?;
@@ -663,7 +650,7 @@ fn uri_decode(uri: &str) -> Result<String> {
             i += 3;
         } else {
             i += 1;
-        };
+        }
         bres.push(b);
     }
     let res = String::from_utf8(bres)?;
@@ -671,8 +658,10 @@ fn uri_decode(uri: &str) -> Result<String> {
 }
 
 fn decode_data_uri(mut data: &str) -> Result<Vec<u8>> {
+    use base64::prelude::*;
+
     if let Some(semicolon) = data.find(';') {
-        let _mime = &data[..semicolon];
+        // let _mime = &data[..semicolon];
         data = &data[semicolon + 1..];
     }
     if let Some(comma) = data.find(',') {
@@ -682,7 +671,6 @@ fn decode_data_uri(mut data: &str) -> Result<Vec<u8>> {
             bail!("unknown data-uri encoder");
         }
     }
-    use base64::prelude::*;
     let res = BASE64_STANDARD.decode(data)?;
     Ok(res)
 }

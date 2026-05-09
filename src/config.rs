@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde::*;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -25,7 +25,7 @@ impl Config {
     pub fn save(&self) -> Result<()> {
         let file_name = Self::file_name()?;
         if let Some(d) = file_name.parent() {
-            std::fs::create_dir_all(d)?
+            std::fs::create_dir_all(d)?;
         }
         let f = std::fs::File::create(file_name)?;
         let f = std::io::BufWriter::new(f);

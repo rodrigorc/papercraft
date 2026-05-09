@@ -426,12 +426,12 @@ impl Model {
     }
     // These are a bit hacky...
     pub fn edge_index(&self, e: &Edge) -> EdgeIndex {
-        let e = e as *const Edge as usize;
+        let e = std::ptr::from_ref(e).addr();
         let s = self.edges.as_ptr() as usize;
         EdgeIndex::from((e - s) / std::mem::size_of::<Edge>())
     }
     pub fn face_index(&self, f: &Face) -> FaceIndex {
-        let e = f as *const Face as usize;
+        let e = std::ptr::from_ref(f).addr();
         let s = self.faces.as_ptr() as usize;
         FaceIndex::from((e - s) / std::mem::size_of::<Face>())
     }

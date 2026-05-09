@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use crate::{
     paper::{EdgeStatus, FaceIndex, Papercraft, VertexIndex},
@@ -16,17 +16,16 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
 
     // f32 cannot be used as a hash index because it does not implement Eq nor Hash, something to do with precision and ambiguous representations and NaNs...
     // But we never operate with the values in model, so same f32 values should always have the same bit pattern, and we can use that bit-pattern as the hash index.
-    fn index_vector2(v: &Vector2) -> (u32, u32) {
+    fn index_vector2(v: Vector2) -> (u32, u32) {
         (v.x.to_bits(), v.y.to_bits())
     }
-    fn index_vector3(v: &Vector3) -> (u32, u32, u32) {
+    fn index_vector3(v: Vector3) -> (u32, u32, u32) {
         (v.x.to_bits(), v.y.to_bits(), v.z.to_bits())
     }
 
     let title = file_name
         .file_stem()
-        .map(|s| s.to_string_lossy())
-        .unwrap_or(std::borrow::Cow::Borrowed("object"));
+        .map_or(Cow::Borrowed("object"), |s| s.to_string_lossy());
     let title: String = title
         .as_ref()
         .chars()
@@ -75,7 +74,7 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
             (Some(x), Some(y)) => {
                 next_id[x] = next_id[y];
             }
-        };
+        }
     }
     for (i_face, face) in model.faces() {
         for (i_v0, i_v1, i_edge) in face.vertices_with_edges() {
@@ -152,7 +151,7 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
     for (_, v) in model.vertices() {
         let n = v.normal();
         let id = index_vn.len() + 1;
-        let e = index_vn.entry(index_vector3(&n));
+        let e = index_vn.entry(index_vector3(n));
         if let Entry::Vacant(vacant) = e {
             writeln!(f, "vn {} {} {}", n[0], n[1], n[2])?;
             vacant.insert(id);
@@ -161,7 +160,7 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
     for (_, v) in model.vertices() {
         let uv = v.uv();
         let id = index_vt.len() + 1;
-        let e = index_vt.entry(index_vector2(&uv));
+        let e = index_vt.entry(index_vector2(uv));
         if let Entry::Vacant(vacant) = e {
             writeln!(f, "vt {} {}", uv[0], 1.0 - uv[1])?;
             vacant.insert(id);
@@ -218,8 +217,8 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
                 let (i_v0, i_v1) = vertex;
                 let v0 = vertex_map[usize::from(i_v0)];
                 let vx = &model[i_v0];
-                let t = index_vt[&index_vector2(&vx.uv())];
-                let n = index_vn[&index_vector3(&vx.normal())];
+                let t = index_vt[&index_vector2(vx.uv())];
+                let n = index_vn[&index_vector3(vx.normal())];
                 write!(f, " {v0}/{t}/{n}")?;
                 next = flat_contour.iter().position(|(i_x0, _)| i_v1 == *i_x0);
             }

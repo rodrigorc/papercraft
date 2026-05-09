@@ -159,8 +159,7 @@ impl Papercraft {
             // Rim edges can't have any status
             if f1.is_none() {
                 match &mut self.edges[usize::from(i_edge)] {
-                    RealEdgeStatus::Cut(FlapSide::Hidden)
-                    | RealEdgeStatus::Cut(FlapSide::False) => (), // ok
+                    RealEdgeStatus::Cut(FlapSide::Hidden | FlapSide::False) => (), // ok
                     x => {
                         log::warn!("Fix rim edge {i_edge:?}");
                         *x = RealEdgeStatus::Cut(FlapSide::Hidden);

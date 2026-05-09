@@ -2,6 +2,7 @@ use crate::glr::{self, Rgba, UniformField};
 use crate::paper::MaterialIndex;
 use crate::util_3d::*;
 use anyhow::{Result, anyhow};
+use cgmath::vec2;
 use easy_imgui_window::easy_imgui_renderer::easy_imgui_opengl::{attrib, uniform};
 
 //////////////////////////////////////
@@ -86,7 +87,7 @@ attrib! {
 impl Default for MVertex2D {
     fn default() -> MVertex2D {
         MVertex2D {
-            pos_2d: Vector2::new(0.0, 0.0),
+            pos_2d: vec2(0.0, 0.0),
         }
     }
 }

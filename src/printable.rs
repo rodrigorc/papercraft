@@ -401,8 +401,9 @@ impl GlobalContext {
     }
 
     fn image_to_base64(w: &mut impl Write, pixbuf: &image::RgbaImage) -> Result<()> {
-        // Can't write directly the image to the file as a base64, because Image::write_to requires `Seek`, but `base64::EncoderWriter` doesn't implement it.
         use base64::prelude::*;
+
+        // Can't write directly the image to the file as a base64, because Image::write_to requires `Seek`, but `base64::EncoderWriter` doesn't implement it.
         let mut png = Vec::new();
         let mut cpng = std::io::Cursor::new(&mut png);
         pixbuf.write_to(&mut cpng, image::ImageFormat::Png)?;
@@ -1040,8 +1041,7 @@ impl GlobalContext {
                                 .data
                                 .papercraft()
                                 .island_by_key(i_island_b)
-                                .map(|island_b| island_b.name())
-                                .unwrap_or("?");
+                                .map_or("?", |island_b| island_b.name());
                             let text = format!("{}:{}", ii, cut_idx.id);
                             let (is_in_page, pos) =
                                 in_page(cut_idx.pos(self.font_text_line_scale * edge_id_font_size));

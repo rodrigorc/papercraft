@@ -103,7 +103,7 @@ pub fn tessellate(ps: &[Vector3]) -> Vec<[usize; 3]> {
             // Find the vertex with the minimum inner angle
             let inner_angle = Rad(PI) - angle;
 
-            if min_angle.map(|(_, a)| inner_angle < a).unwrap_or(true) {
+            if min_angle.is_none_or(|(_, a)| inner_angle < a) {
                 // If this point is not an ear, discard it
                 if !ps.iter().enumerate().any(|(i_other, (_, p_other))| {
                     i_other != i
@@ -116,7 +116,7 @@ pub fn tessellate(ps: &[Vector3]) -> Vec<[usize; 3]> {
             }
         }
         // min_angle should never be None, but just in case
-        let i = min_angle.map(|(i, _)| i).unwrap_or(0);
+        let i = min_angle.map_or(0, |(i, _)| i);
 
         let tri = (i, (i + 1) % ps.len(), (i + 2) % ps.len());
         res.push([ps[tri.0].0, ps[tri.1].0, ps[tri.2].0]);
@@ -300,7 +300,7 @@ pub fn line_line_intersection(
     let d = line_1.0 - line_2.0;
 
     let dd = s1.x * s2.y - s2.x * s1.y;
-    if dd.abs() < 0.000001 {
+    if dd.abs() < 0.000_001 {
         return (line_1.0, f32::MAX, f32::MAX);
     }
 

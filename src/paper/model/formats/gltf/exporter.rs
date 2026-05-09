@@ -338,10 +338,9 @@ fn export_pieces(papercraft: &Papercraft, name: &str, gltf_format: GltfFormat) -
 }
 
 pub fn export(papercraft: &Papercraft, file_name: &Path, gltf_format: GltfFormat) -> Result<()> {
-    let name = file_name
-        .file_stem()
-        .map(|s| Cow::Owned(s.display().to_string()))
-        .unwrap_or(Cow::Borrowed("model"));
+    let name = file_name.file_stem().map_or(Cow::Borrowed("model"), |s| {
+        Cow::Owned(s.display().to_string())
+    });
 
     let Pieces { header, buffer } = export_pieces(papercraft, &name, gltf_format);
 

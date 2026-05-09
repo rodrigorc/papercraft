@@ -324,7 +324,7 @@ unsafe fn set_texture_filter(gl: &GlContext, tex_filter: bool) {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum ClickResult {
     None,
     Face(FaceIndex),
@@ -484,11 +484,11 @@ pub struct CutDescription {
 
 impl CutDescription {
     /// This struct stores the position and content of an edge-id
-    /// (a, b): coordinates of the edge on paper
-    /// n_flap: if there is a flap, a vector normal to the edge with the length of the flap width
-    /// i_face_b: the face index of the _other _ face (_this_ face is not needed)
-    /// id: the edge id
-    /// options: the PaperOptions
+    /// `(a, b)`: coordinates of the edge on paper
+    /// `n_flap`: if there is a flap, a vector normal to the edge with the length of the flap width
+    /// `i_face_b`: the face index of the _other _ face (_this_ face is not needed)
+    /// `id`: the edge id
+    /// `options`: the `PaperOptions`
     fn new(
         a: Vector2,
         b: Vector2,
@@ -565,6 +565,7 @@ impl Rectangle {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum EdgeAction {
     Normal,
     JoinStrip,
@@ -684,7 +685,7 @@ impl PapercraftContext {
         face: &Face,
         i_face: FaceIndex,
         i_island: IslandKey,
-        m: &Matrix3,
+        matrix: &Matrix3,
         args: &mut PaperDrawFaceArgs,
         extra: &mut PaperDrawFaceArgsExtra,
     ) {
@@ -702,7 +703,7 @@ impl PapercraftContext {
                 .model()
                 .face_plane(face)
                 .project(&v.pos(), scale);
-            let pos_2d = m.transform_point(Point2::from_vec(p)).to_vec();
+            let pos_2d = matrix.transform_point(Point2::from_vec(p)).to_vec();
 
             args.vertices[i0 + i] = MVertex2D { pos_2d };
         }
@@ -769,11 +770,11 @@ impl PapercraftContext {
             let plane = self.papercraft.model().face_plane(face);
             let v0 = &self.papercraft.model()[i_v0];
             let p0 = plane.project(&v0.pos(), scale);
-            let pos0 = m.transform_point(Point2::from_vec(p0)).to_vec();
+            let pos0 = matrix.transform_point(Point2::from_vec(p0)).to_vec();
 
             let v1 = &self.papercraft.model()[i_v1];
             let p1 = plane.project(&v1.pos(), scale);
-            let pos1 = m.transform_point(Point2::from_vec(p1)).to_vec();
+            let pos1 = matrix.transform_point(Point2::from_vec(p1)).to_vec();
 
             // A matching edge, that is a cut edge where both faces are part of the same island and are drawn almost
             // overlapping in the paper, with an angle below the hidden angle, is not drawn.
@@ -802,7 +803,7 @@ impl PapercraftContext {
                 None
             };
 
-            let v = pos1 - pos0;
+            let edge_vec = pos1 - pos0;
             let (width_left, width_right) = if edge_status == EdgeStatus::Joined {
                 (fold_line_width / 2.0, fold_line_width / 2.0)
             } else if draw_flap.is_visible() {
@@ -811,7 +812,7 @@ impl PapercraftContext {
                 (options.cut_line_width, 0.0)
             };
 
-            let v_len = v.magnitude();
+            let v_len = edge_vec.magnitude();
 
             let fold_factor = options.fold_line_len / v_len;
             if let Some(crease_kind) = crease_kind {
@@ -830,7 +831,7 @@ impl PapercraftContext {
                 match visible_line {
                     (None, _) => {}
                     (Some(f), None) => {
-                        let vn = v * f;
+                        let vn = edge_vec * f;
                         let line_2d = Line2D {
                             p0: pos0 - vn,
                             p1: pos1 + vn,
@@ -846,8 +847,8 @@ impl PapercraftContext {
                         args.vertices_edge_crease.push((line_2d, crease_kind));
                     }
                     (Some(f_a), Some(f_b)) => {
-                        let vn_a = v * f_a;
-                        let vn_b = v * f_b;
+                        let vn_a = edge_vec * f_a;
+                        let vn_b = edge_vec * f_b;
                         let line_a = Line2D {
                             p0: pos0 - vn_a,
                             p1: pos0 + vn_b,
@@ -872,7 +873,7 @@ impl PapercraftContext {
                         args.vertices_edge_crease.push((line_a, crease_kind));
                         args.vertices_edge_crease.push((line_b, crease_kind));
                     }
-                };
+                }
             } else if !matching_edges {
                 // Weird cuts are drawn differently:
                 // * cuts with hidden flaps
@@ -918,27 +919,27 @@ impl PapercraftContext {
                     triangular,
                 } = flap_geom;
 
-                let vn = v * (width / v_len);
+                let vn = edge_vec * (width / v_len);
                 let v_0 = vn * tan_0;
                 let v_1 = vn * tan_1;
-                let n = Vector2::new(-vn.y, vn.x);
-                let mut p = [pos0, pos0 + n + v_1, pos1 + n - v_0, pos1];
+                let normal = Vector2::new(-vn.y, vn.x);
+                let mut points = [pos0, pos0 + normal + v_1, pos1 + normal - v_0, pos1];
 
                 if !matching_edges {
                     if triangular {
                         //The unneeded vertex is [2]
-                        p[2] = p[3];
+                        points[2] = points[3];
                         let mut line_0 = Line2D {
-                            p0: p[0],
-                            p1: p[1],
+                            p0: points[0],
+                            p1: points[1],
                             dash0: 0.0,
                             dash1: 0.0,
                             width_left: options.tab_line_width,
                             width_right: 0.0,
                         };
                         let mut line_1 = Line2D {
-                            p0: p[1],
-                            p1: p[2],
+                            p0: points[1],
+                            p1: points[2],
                             dash0: 0.0,
                             dash1: 0.0,
                             width_left: options.tab_line_width,
@@ -960,24 +961,24 @@ impl PapercraftContext {
                         }
                     } else {
                         let mut line_0 = Line2D {
-                            p0: p[0],
-                            p1: p[1],
+                            p0: points[0],
+                            p1: points[1],
                             dash0: 0.0,
                             dash1: 0.0,
                             width_left: options.tab_line_width,
                             width_right: 0.0,
                         };
                         let mut line_1 = Line2D {
-                            p0: p[1],
-                            p1: p[2],
+                            p0: points[1],
+                            p1: points[2],
                             dash0: 0.0,
                             dash1: 0.0,
                             width_left: options.tab_line_width,
                             width_right: 0.0,
                         };
                         let mut line_2 = Line2D {
-                            p0: p[2],
-                            p1: p[3],
+                            p0: points[2],
+                            p1: points[3],
                             dash0: 0.0,
                             dash1: 0.0,
                             width_left: options.tab_line_width,
@@ -1009,7 +1010,7 @@ impl PapercraftContext {
                     *descr = Some(CutDescription::new(
                         pos0,
                         pos1,
-                        Some(n),
+                        Some(normal),
                         i_face_b,
                         edge_id,
                         options,
@@ -1038,7 +1039,8 @@ impl PapercraftContext {
                         // mxx does both convertions at once, inverted
                         let mxx = (mx_b * Matrix3::from(mx_basis)).invert().unwrap();
 
-                        p.iter()
+                        points
+                            .iter()
                             .map(|px| {
                                 //vlocal is in edge-relative coordinates, that can be used to interpolate between UVs
                                 let vlocal = mxx.transform_point(Point2::from_vec(*px)).to_vec();
@@ -1050,24 +1052,22 @@ impl PapercraftContext {
                             .collect()
                     }
                 };
-                match maybe_i_face_b {
-                    Some(i_face_b) => {
-                        let face_b = &self.papercraft.model()[i_face_b];
-                        let mx_b = m * self.papercraft.face_to_face_edge_matrix(edge, face, face_b);
-                        let mx_b_inv = mx_b.invert().unwrap();
-                        // mx_b_inv converts from paper to local face_b coordinates
-                        geom_b = Some((mx_b_inv, i_face_b));
-                        mat = face_b.material();
-                        uvs = compute_uvs(face_b, &mx_b);
-                    }
-                    None => {
-                        // There is no adjacent face to copy the texture from, so use the current
-                        // face but mirrored.
-                        // N shadow flaps.
-                        geom_b = None;
-                        mat = face.material();
-                        uvs = compute_uvs(face, m);
-                    }
+                if let Some(i_face_b) = maybe_i_face_b {
+                    let face_b = &self.papercraft.model()[i_face_b];
+                    let mx_b =
+                        matrix * self.papercraft.face_to_face_edge_matrix(edge, face, face_b);
+                    let mx_b_inv = mx_b.invert().unwrap();
+                    // mx_b_inv converts from paper to local face_b coordinates
+                    geom_b = Some((mx_b_inv, i_face_b));
+                    mat = face_b.material();
+                    uvs = compute_uvs(face_b, &mx_b);
+                } else {
+                    // There is no adjacent face to copy the texture from, so use the current
+                    // face but mirrored.
+                    // N shadow flaps.
+                    geom_b = None;
+                    mat = face.material();
+                    uvs = compute_uvs(face, matrix);
                 }
                 let (root_alpha, tip_alpha) = match flap_style {
                     FlapStyle::Textured => (0.0, 0.0),
@@ -1079,19 +1079,19 @@ impl PapercraftContext {
                 let tip_color = Rgba::new(1.0, 1.0, 1.0, tip_alpha);
                 if triangular {
                     args.vertices_flap.push(MVertex2DColor {
-                        pos_2d: p[0],
+                        pos_2d: points[0],
                         uv: uvs[0],
                         mat,
                         color: root_color,
                     });
                     args.vertices_flap.push(MVertex2DColor {
-                        pos_2d: p[1],
+                        pos_2d: points[1],
                         uv: uvs[1],
                         mat,
                         color: tip_color,
                     });
                     args.vertices_flap.push(MVertex2DColor {
-                        pos_2d: p[2],
+                        pos_2d: points[2],
                         uv: uvs[2],
                         mat,
                         color: root_color,
@@ -1099,25 +1099,25 @@ impl PapercraftContext {
                 } else {
                     let pp = [
                         MVertex2DColor {
-                            pos_2d: p[0],
+                            pos_2d: points[0],
                             uv: uvs[0],
                             mat,
                             color: root_color,
                         },
                         MVertex2DColor {
-                            pos_2d: p[1],
+                            pos_2d: points[1],
                             uv: uvs[1],
                             mat,
                             color: tip_color,
                         },
                         MVertex2DColor {
-                            pos_2d: p[2],
+                            pos_2d: points[2],
                             uv: uvs[2],
                             mat,
                             color: tip_color,
                         },
                         MVertex2DColor {
-                            pos_2d: p[3],
+                            pos_2d: points[3],
                             uv: uvs[3],
                             mat,
                             color: root_color,
@@ -1128,9 +1128,11 @@ impl PapercraftContext {
                 }
                 if let (Some(flaps), Some((mx_b_inv, i_face_b))) = (&mut args.flap_cache, geom_b) {
                     let mut flap_vs = if triangular {
-                        FlapVertices::Tri([p[0], p[1], p[2]])
+                        FlapVertices::Tri([points[0], points[1], points[2]])
                     } else {
-                        FlapVertices::Quad([p[0], p[2], p[1], p[0], p[3], p[2]])
+                        FlapVertices::Quad([
+                            points[0], points[2], points[1], points[0], points[3], points[2],
+                        ])
                     };
                     // Undo the mx_b transformation becase the shadow will be drawn over another
                     // face, the right matrix will be applied afterwards.
@@ -1203,8 +1205,7 @@ impl PapercraftContext {
                     let ii = self
                         .papercraft()
                         .island_by_key(i_island_b)
-                        .map(|island_b| island_b.name())
-                        .unwrap_or("?");
+                        .map_or("?", |island_b| island_b.name());
                     let text = format!("{}:{}", ii, cut_idx.id);
                     let pos = cut_idx.pos(text_builder.font_text_line_scale() * edge_id_font_size);
                     let t = PrintableText {
@@ -1389,14 +1390,12 @@ impl PapercraftContext {
             let mut edge_status = if self
                 .selected_edges
                 .as_ref()
-                .map(|sel| sel.contains(&i_edge))
-                .unwrap_or(false)
+                .is_some_and(|sel| sel.contains(&i_edge))
             {
-                let top = if self.ui.xray_selection { 1 } else { 0 };
                 MLine3DStatus {
                     color: color_edge(self.ui.mode),
                     thick: 5.0 / 2.0,
-                    top,
+                    top: self.ui.xray_selection.into(),
                 }
             } else if !self.ui.show_3d_lines {
                 MLINE3D_HIDDEN
@@ -1492,7 +1491,7 @@ impl PapercraftContext {
             );
         };
 
-        let top = if self.ui.xray_selection { 1 } else { 0 };
+        let top = self.ui.xray_selection.into();
         for sel_island in selection {
             let island = self.papercraft.island_by_face_key(sel_island);
             let body_to_top =
@@ -1677,11 +1676,9 @@ impl PapercraftContext {
                             island_changed = true;
                         } else {
                             if flags.contains(SetSelectionFlags::RELEASED)
-                                && just_selected
-                                    .map(|js| {
-                                        self.papercraft.island_key_by_face_key(js) != i_island
-                                    })
-                                    .unwrap_or(true)
+                                && just_selected.is_none_or(|js| {
+                                    self.papercraft.island_key_by_face_key(js) != i_island
+                                })
                             {
                                 self.unselect_island(i_island);
                                 island_changed = true;
@@ -1711,17 +1708,16 @@ impl PapercraftContext {
                 (edges, Some(i_face))
             }
             ClickResult::Edge(i_edge, maybe_i_face) => {
-                let edges = match (flags.contains(SetSelectionFlags::ALT_PRESSED), maybe_i_face) {
-                    (true, Some(i_face)) => {
-                        let i_island = self.papercraft.island_by_face(i_face);
-                        let island = self.papercraft.island_by_key(i_island).unwrap();
-                        self.papercraft.island_edges(island)
-                    }
-                    _ => {
-                        let mut set = FxHashSet::default();
-                        set.insert(i_edge);
-                        set
-                    }
+                let edges = if flags.contains(SetSelectionFlags::ALT_PRESSED)
+                    && let Some(i_face) = maybe_i_face
+                {
+                    let i_island = self.papercraft.island_by_face(i_face);
+                    let island = self.papercraft.island_by_key(i_island).unwrap();
+                    self.papercraft.island_edges(island)
+                } else {
+                    let mut set = FxHashSet::default();
+                    set.insert(i_edge);
+                    set
                 };
                 (Some(edges), None)
             }
@@ -2162,63 +2158,57 @@ impl PapercraftContext {
         self.last_cursor_pos = pos;
 
         // Check if any island is to be moved
-        match (
-            self.selected_islands.is_empty(),
-            self.grabbed_island.as_mut(),
-        ) {
-            (false, Some(undo)) => {
-                // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
-                if !dragging {
-                    return RebuildFlags::empty();
-                }
-                let undo = std::mem::take(undo);
-                self.push_undo_action(undo);
+        if !self.selected_islands.is_empty()
+            && let Some(undo) = self.grabbed_island.as_mut()
+        {
+            // Keep grabbed_island as Some(empty), grabbed but already pushed into undo_actions
+            if !dragging {
+                return RebuildFlags::empty();
             }
-            _ => {
-                // The same key for rotating (shift) is used for removing the selection.
-                let adding = !mods.contains(KeyMod::Shift);
+            let undo = std::mem::take(undo);
+            self.push_undo_action(undo);
+        } else {
+            // The same key for rotating (shift) is used for removing the selection.
+            let adding = !mods.contains(KeyMod::Shift);
 
-                // No selection, check if we should build a pre-selection rectangle
-                let click = self.ui.trans_paper.paper_click(size, pos);
+            // No selection, check if we should build a pre-selection rectangle
+            let click = self.ui.trans_paper.paper_click(size, pos);
 
-                let (next, flags) = match self.pre_selection.take() {
-                    // First pre-selection click, just save it
-                    None => (
-                        (click, click, Vec::default(), adding),
-                        RebuildFlags::empty(),
-                    ),
-                    // If not dragging yet keep a zero size rectangle
-                    Some(p) if !dragging => (p, RebuildFlags::empty()),
-                    // If dragging do the full pre-selection stuff
-                    Some((orig, _, _pre_sel, _pre_adding)) => {
-                        let mut next_sel = Vec::default();
-                        let rect = Rectangle::new(orig, click);
+            let (next, flags) = match self.pre_selection.take() {
+                // First pre-selection click, just save it
+                None => (
+                    (click, click, Vec::default(), adding),
+                    RebuildFlags::empty(),
+                ),
+                // If not dragging yet keep a zero size rectangle
+                Some(p) if !dragging => (p, RebuildFlags::empty()),
+                // If dragging do the full pre-selection stuff
+                Some((orig, _, _pre_sel, _pre_adding)) => {
+                    let mut next_sel = Vec::default();
+                    let rect = Rectangle::new(orig, click);
 
-                        // An island is in the selection box if any of its vertices is inside the
-                        // rectangle.
-                        for (island_key, island) in self.papercraft.islands() {
-                            let _ = self.papercraft.traverse_faces_no_matrix(island, |i_face| {
-                                let idx = 3 * usize::from(i_face);
-                                for i in idx..idx + 3 {
-                                    let pos = self.gl_objs.paper_vertices[i].pos_2d;
-                                    if rect.contains(pos) {
-                                        let sel = self
-                                            .papercraft
-                                            .island_face_key_by_key(island_key)
-                                            .unwrap();
-                                        next_sel.push(sel);
-                                        return ControlFlow::Break(());
-                                    }
+                    // An island is in the selection box if any of its vertices is inside the
+                    // rectangle.
+                    for (island_key, island) in self.papercraft.islands() {
+                        let _ = self.papercraft.traverse_faces_no_matrix(island, |i_face| {
+                            let idx = 3 * usize::from(i_face);
+                            for i in idx..idx + 3 {
+                                let pos = self.gl_objs.paper_vertices[i].pos_2d;
+                                if rect.contains(pos) {
+                                    let sel =
+                                        self.papercraft.island_face_key_by_key(island_key).unwrap();
+                                    next_sel.push(sel);
+                                    return ControlFlow::Break(());
                                 }
-                                ControlFlow::Continue(())
-                            });
-                        }
-                        ((orig, click, next_sel, adding), RebuildFlags::SELECTION)
+                            }
+                            ControlFlow::Continue(())
+                        });
                     }
-                };
-                self.pre_selection = Some(next);
-                return flags;
-            }
+                    ((orig, click, next_sel, adding), RebuildFlags::SELECTION)
+                }
+            };
+            self.pre_selection = Some(next);
+            return flags;
         }
 
         if mods.contains(KeyMod::Shift) {
@@ -2475,9 +2465,8 @@ impl PapercraftContext {
             return UndoResult::False;
         }
 
-        let action_pack = match self.undo_stack.pop() {
-            None => return UndoResult::False,
-            Some(a) => a,
+        let Some(action_pack) = self.undo_stack.pop() else {
+            return UndoResult::False;
         };
 
         let mut res = UndoResult::Model;
@@ -2550,7 +2539,7 @@ impl PapercraftContext {
         self.selected_edges.is_some()
     }
 
-    /// Check for duplicates in selected_islands: must call this after every possible join.
+    /// Check for duplicates in `selected_islands`: must call this after every possible join.
     fn check_selection(&mut self) {
         self.selected_islands
             .sort_by_key(|i| self.papercraft.island_key_by_face_key(*i));
@@ -2812,9 +2801,9 @@ impl GLObjects {
             paper_vertices_edge_sel,
             paper_vertices_shadow_flap,
 
+            paper_text,
             paper_vertices_page,
             paper_vertices_margin,
-            paper_text,
         })
     }
 }
@@ -2905,7 +2894,7 @@ where
         let mut p1 = line.p1;
         let mut v = (p1 - p0).normalize();
         let n = Vector2::new(v.y, -v.x);
-        v *= (line.width_right + line.width_left) / 2.0;
+        v *= line.width_left.midpoint(line.width_right);
         p0 -= v;
         p1 += v;
 

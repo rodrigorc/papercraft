@@ -1,5 +1,5 @@
+use anyhow::{Result, bail};
 use std::env;
-use std::io::Result;
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
@@ -46,10 +46,10 @@ fn build_resource() -> Result<()> {
                 .arg("res/resource.rc")
                 .status()?
         } else {
-            return Err(std::io::Error::other("RC or WINDRES should be defined"));
+            bail!("RC or WINDRES should be defined");
         };
         if !status.success() {
-            return Err(std::io::Error::other("windres error"));
+            bail!("windres error");
         }
         println!("cargo:rustc-link-arg={}", output.display());
         for entry in std::fs::read_dir("res")? {
@@ -68,7 +68,7 @@ fn build_helvetica() -> Result<()> {
         io::{BufRead, BufReader, BufWriter, Write},
     };
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out_path = PathBuf::from(env::var("OUT_DIR")?);
     let out = File::create(out_path.join("helvetica_afm.rs"))?;
     let mut out = BufWriter::new(out);
 
@@ -77,23 +77,23 @@ fn build_helvetica() -> Result<()> {
     let mut kerns = BTreeMap::<u16, Vec<(u16, i32)>>::new(); // Second-Unicode to list of (First-Unicode, kerning)
 
     println!("cargo:rerun-if-changed=thirdparty/afm/names.txt");
-    let char_names = File::open("thirdparty/afm/names.txt").unwrap();
+    let char_names = File::open("thirdparty/afm/names.txt")?;
     let char_names = BufReader::new(char_names);
     for line in char_names.lines() {
-        let line = line.unwrap();
+        let line = line?;
         let pieces: Vec<&str> = line.split('\t').collect();
         let name = pieces[0];
-        let code = u16::from_str_radix(pieces[1], 16).unwrap();
+        let code = u16::from_str_radix(pieces[1], 16)?;
         names.insert(name.to_owned(), code);
     }
 
     let afm_file = "thirdparty/afm/Helvetica.afm";
     println!("cargo:rerun-if-changed={afm_file}");
-    let afm = File::open(afm_file).unwrap();
+    let afm = File::open(afm_file)?;
     let afm = BufReader::new(afm);
 
     for line in afm.lines() {
-        let line = line.unwrap();
+        let line = line?;
         let pieces: Vec<&str> = line.split(';').collect();
         let words0: Vec<&str> = pieces[0].split_ascii_whitespace().collect();
         if words0.is_empty() {
@@ -110,7 +110,7 @@ fn build_helvetica() -> Result<()> {
                     }
                     match words[0] {
                         "WX" => {
-                            width = Some(words[1].parse().unwrap());
+                            width = Some(words[1].parse()?);
                         }
                         "N" => {
                             name = Some(words[1]);
@@ -132,7 +132,7 @@ fn build_helvetica() -> Result<()> {
                 let Some(&c2) = names.get(words0[2]) else {
                     continue;
                 };
-                let kern: i32 = words0[3].parse().unwrap();
+                let kern: i32 = words0[3].parse()?;
                 kerns.entry(c2).or_default().push((c1, kern));
             }
             _ => {}
@@ -142,12 +142,12 @@ fn build_helvetica() -> Result<()> {
     // Each char maps to (width, [(previous char, kerning)]).
     writeln!(
         out,
-        r#"
+        r"
 pub struct CharInfo {{
     pub width: u32,
     pub kerns: &'static [(char, i32)],
 }}
-        "#
+        "
     )?;
     writeln!(
         out,
@@ -169,8 +169,8 @@ pub struct CharInfo {{
 }
 
 fn build_locales() -> Result<()> {
-    let output_dir = std::env::var("OUT_DIR").unwrap();
+    let output_dir = std::env::var("OUT_DIR")?;
     let out = PathBuf::from(&output_dir).join("locale/translators.rs");
-    include_po::generate_locales_from_dir("locales", out).unwrap();
+    include_po::generate_locales_from_dir("locales", out)?;
     Ok(())
 }

@@ -114,8 +114,7 @@ impl Papercraft {
             if self.model[i_edge].faces().1.is_none() {
                 // Rims can't be crossed, so ignore that
                 self.edges[usize::from(i_edge)] = match status {
-                    RealEdgeStatus::Cut(FlapSide::Hidden)
-                    | RealEdgeStatus::Cut(FlapSide::False) => status,
+                    RealEdgeStatus::Cut(FlapSide::Hidden | FlapSide::False) => status,
                     _ => RealEdgeStatus::Cut(FlapSide::Hidden),
                 };
             } else {
@@ -172,7 +171,7 @@ impl Papercraft {
                 } else {
                     // no match
                     continue;
-                };
+                }
                 // match!
                 oi_real_face_map.insert(o_face, i_face);
             }
@@ -189,7 +188,7 @@ impl Papercraft {
 
         // old_islands uses FaceIndex from the old model, while new_islands uses FaceIndex from the new model, so they cannot compare directly.
         // Here we switch old_island to use the FaceIndex from the new model, if available.
-        for (_, o_faces) in old_islands.iter_mut() {
+        for o_faces in old_islands.values_mut() {
             let i_faces = o_faces
                 .iter()
                 .filter_map(|o| oi_real_face_map.get(o))
@@ -229,8 +228,7 @@ impl Papercraft {
 
             // If the island is not matches, use any face that is matched as a second best option
             let oisland = oisland.or_else(|| {
-                let new_faces = new_islands.get(&i).unwrap();
-                for i_f in new_faces {
+                for i_f in &new_islands[&i] {
                     if let Some((o, _)) = oi_real_face_map.iter().find(|&(_, i)| i == i_f) {
                         let oo = old_obj.island_by_face(*o);
                         return old_obj.island_by_key(oo);
@@ -266,18 +264,15 @@ impl Papercraft {
         }
         for (i_island, maybe_pos) in new_island_pos {
             let island = self.islands.get_mut(i_island).unwrap();
-            match maybe_pos {
-                Some((iroot, rot, loc)) => {
-                    island.reset_transformation(iroot, rot, loc);
-                }
-                None => {
-                    // If the island doesn't have a mapping, dump it into the page -1.
-                    let mut page_offs = self.options.global_to_page(island.loc);
-                    page_offs.row = 0;
-                    page_offs.col = -1;
-                    let loc = self.options.page_to_global(page_offs);
-                    island.reset_transformation(island.root_face(), island.rotation(), loc);
-                }
+            if let Some((iroot, rot, loc)) = maybe_pos {
+                island.reset_transformation(iroot, rot, loc);
+            } else {
+                // If the island doesn't have a mapping, dump it into the page -1.
+                let mut page_offs = self.options.global_to_page(island.loc);
+                page_offs.row = 0;
+                page_offs.col = -1;
+                let loc = self.options.page_to_global(page_offs);
+                island.reset_transformation(island.root_face(), island.rotation(), loc);
             }
         }
         self.memo = Memoization::default();

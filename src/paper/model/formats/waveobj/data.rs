@@ -104,7 +104,7 @@ impl Model {
                     data.faces.push(Face {
                         material: current_material,
                         verts,
-                    })
+                    });
                 }
                 "mtllib" => {
                     // keep spaces in the file name

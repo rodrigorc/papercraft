@@ -37,7 +37,7 @@ impl Stl {
             tris.push(Triangle {
                 normal,
                 vertices: [v0, v1, v2],
-            })
+            });
         }
 
         Ok(Stl { tris })
@@ -65,13 +65,13 @@ impl Stl {
                 bail!(r#"expected "normal""#);
             }
             let Some(nx) = words.next() else {
-                bail!(r#"expected number"#)
+                bail!("expected number")
             };
             let Some(ny) = words.next() else {
-                bail!(r#"expected number"#)
+                bail!("expected number")
             };
             let Some(nz) = words.next() else {
-                bail!(r#"expected number"#)
+                bail!("expected number")
             };
             let normal = Vector3::new(nx.parse()?, ny.parse()?, nz.parse()?);
 
@@ -94,13 +94,13 @@ impl Stl {
                     }
                 }
                 let Some(vx) = words.next() else {
-                    bail!(r#"expected number"#)
+                    bail!("expected number")
                 };
                 let Some(vy) = words.next() else {
-                    bail!(r#"expected number"#)
+                    bail!("expected number")
                 };
                 let Some(vz) = words.next() else {
-                    bail!(r#"expected number"#)
+                    bail!("expected number")
                 };
                 *vert = Vector3::new(vx.parse()?, vy.parse()?, vz.parse()?);
             }
@@ -111,7 +111,7 @@ impl Stl {
             // "end facet"
             line.clear();
             f.read_line(&mut line)?;
-            tris.push(Triangle { normal, vertices })
+            tris.push(Triangle { normal, vertices });
         }
         Ok(Stl { tris })
     }

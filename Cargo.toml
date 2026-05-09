@@ -12,6 +12,19 @@ keywords = ["papercraft", "handcraft"]
 strip = "symbols"
 lto = true
 
+[lints.clippy]
+semicolon_if_nothing_returned = "warn"
+unnecessary_semicolon = "warn"
+map_unwrap_or = "warn"
+single_match_else = "warn"
+dbg_macro = "warn"
+get_unwrap = "warn"
+ref_as_ptr = "warn"
+inconsistent_struct_constructor = "warn"
+manual_is_variant_and = "warn"
+manual_let_else = "warn"
+manual_ilog2 = "warn"
+
 [features]
 # In linux this is basically free, but in Windows this adds a bunch of dependencies
 # for little gain.
@@ -26,6 +39,7 @@ opt-level = 3
 
 [build-dependencies]
 include-po = "0.2.1"
+anyhow = "1"
 
 [dependencies]
 cgmath = { version = "0.18", features = ["mint"] }
@@ -45,7 +59,6 @@ fxhash = "0.2"
 signal-hook = "0.4"
 opener = { version = "0.8", default-features = false }
 maybe-owned = { version = "0.3", features = ["serde"] }
-lazy_static = "1"
 tr = { version = "0.1.10", default-features = false }
 
 lopdf = "0.40"

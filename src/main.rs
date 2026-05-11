@@ -38,6 +38,7 @@ mod config;
 mod paper;
 mod pdf_metrics;
 mod printable;
+mod semaphore;
 mod util_3d;
 mod util_gl;
 
@@ -92,6 +93,7 @@ static LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("es", "Español")];
 fn main() {
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
+        .format_timestamp_millis()
         .parse_default_env()
         .init();
 

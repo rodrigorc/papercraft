@@ -1,6 +1,12 @@
+use std::{
+    sync::{Condvar, Mutex},
+    thread,
+};
+
+use crate::semaphore::Semaphore;
+
 use super::*;
 use anyhow::Result;
-use rayon::prelude::*;
 
 fn file_name_for_page(file_name: &Path, page: u32) -> PathBuf {
     if page == 0 {
@@ -76,186 +82,203 @@ impl GlobalContext {
 
         let mut pages = vec![];
 
-        let (tx_compress, rx_compress) =
-            std::sync::mpsc::channel::<(ObjectId, ObjectId, image::RgbaImage)>();
-        let (tx_done, rx_done) = std::sync::mpsc::channel::<(ObjectId, Stream)>();
+        // This is a thread pool to compress the images, the most expensive part of the PDF
+        // The semaphore is moved in steps of 2 because there are two images per page, and we limit the number of pages, but count the number of images
+        let sem_results = Semaphore::new_with_n_times(2, Vec::<(ObjectId, Stream)>::new());
 
-        rayon::spawn(move || {
-            rx_compress
-                .into_iter()
-                .par_bridge()
-                .flat_map(|(id_mask, id_image, pixbuf)| {
-                    log::debug!("Splitting...");
-                    let (width, height) = pixbuf.dimensions();
-                    let mut rgb = vec![0; (3 * width * height) as usize];
-                    let mut alpha = vec![0; (width * height) as usize];
-                    for (n, px) in pixbuf.pixels().enumerate() {
-                        let c = px.channels();
-                        rgb[3 * n..][..3].copy_from_slice(&c[..3]);
-                        alpha[n] = c[3];
-                    }
-                    let stream_mask = Stream::new(
-                        dictionary! {
-                            "Type" => "XObject",
-                            "Subtype" => "Image",
-                            "Width" => width,
-                            "Height" => height,
-                            "BitsPerComponent" => 8,
-                            "ColorSpace" => "DeviceGray",
-                        },
-                        alpha,
-                    );
-                    let stream_image = Stream::new(
-                        dictionary! {
-                            "Type" => "XObject",
-                            "Subtype" => "Image",
-                            "Width" => width,
-                            "Height" => height,
-                            "BitsPerComponent" => 8,
-                            "ColorSpace" => "DeviceRGB",
-                            "SMask" => id_mask,
-                        },
-                        rgb,
-                    );
-                    log::debug!("Split");
-                    [(id_mask, stream_mask), (id_image, stream_image)]
-                })
-                .for_each(|(id, mut stream)| {
-                    log::debug!("Compressing...");
-                    let _ = stream.compress();
-                    log::debug!("Compressed");
-                    tx_done.send((id, stream)).unwrap();
-                });
-            drop(tx_done);
-        });
+        thread::scope(|s| {
+            self.generate_pages(None, |page, pixbuf, _, texts, _| {
+                let streams = sem_results.take_with(2, |results| std::mem::take(results));
 
-        self.generate_pages(None, |page, pixbuf, _, texts, _| {
-            let write_texts = |ops: &mut Vec<Operation>| {
-                if texts.is_empty() {
-                    return;
+                // Drain the reuslt streams before posting the new page to avoid having all pages in memory at the same time
+                // The order of the streams in the PDF will be somehow arbitrary, but techically correct... the best kind of correct!
+                for (id, stream) in streams {
+                    log::debug!("Stealing {id:?}");
+                    doc.set_object(id, stream);
                 }
-                // Begin Text
-                ops.push(Operation::new("BT", Vec::new()));
-                let mut last_font = None;
-                for text in texts {
-                    let size = text.size * 72.0 / 25.4;
-                    // PDF fonts are just slightly larger than expected
-                    let size = size / 1.1;
-                    let x = text.pos.x;
-                    // (0,0) is in lower-left
-                    let y = page_size_mm.y - text.pos.y;
-                    let (width, cps) = pdf_metrics::measure_helvetica(&text.text);
-                    let width = width as f32 * text.size / 1000.0;
-                    let dx = match text.align {
-                        TextAlign::Near => 0.0,
-                        TextAlign::Center => -width / 2.0,
-                        TextAlign::Far => -width,
-                    };
-                    let cos = text.angle.cos();
-                    let sin = text.angle.sin();
-                    let x = x + dx * cos;
-                    let y = y - dx * sin;
 
-                    // Set font
-                    if last_font != Some(size) {
-                        last_font = Some(size);
-                        ops.push(Operation::new("Tf", vec!["F1".into(), size.into()]));
+                let write_texts = |ops: &mut Vec<Operation>| {
+                    if texts.is_empty() {
+                        return;
                     }
+                    // Begin Text
+                    ops.push(Operation::new("BT", Vec::new()));
+                    let mut last_font = None;
+                    for text in texts {
+                        let size = text.size * 72.0 / 25.4;
+                        // PDF fonts are just slightly larger than expected
+                        let size = size / 1.1;
+                        let x = text.pos.x;
+                        // (0,0) is in lower-left
+                        let y = page_size_mm.y - text.pos.y;
+                        let (width, cps) = pdf_metrics::measure_helvetica(&text.text);
+                        let width = width as f32 * text.size / 1000.0;
+                        let dx = match text.align {
+                            TextAlign::Near => 0.0,
+                            TextAlign::Center => -width / 2.0,
+                            TextAlign::Far => -width,
+                        };
+                        let cos = text.angle.cos();
+                        let sin = text.angle.sin();
+                        let x = x + dx * cos;
+                        let y = y - dx * sin;
 
-                    let mx: Vec<Object> = vec![
-                        cos.into(),
-                        (-sin).into(),
-                        sin.into(),
-                        cos.into(),
-                        (x * 72.0 / 25.4).into(),
-                        (y * 72.0 / 25.4).into(),
-                    ];
-                    ops.push(Operation::new("Tm", mx));
+                        // Set font
+                        if last_font != Some(size) {
+                            last_font = Some(size);
+                            ops.push(Operation::new("Tf", vec!["F1".into(), size.into()]));
+                        }
 
-                    let mut tj = Vec::new();
-                    let mut codepoints = Vec::new();
-                    for (kern, cp) in cps {
-                        if kern != 0 {
-                            if !codepoints.is_empty() {
-                                tj.push(Object::String(
-                                    std::mem::take(&mut codepoints),
-                                    StringFormat::Literal,
-                                ));
+                        let mx: Vec<Object> = vec![
+                            cos.into(),
+                            (-sin).into(),
+                            sin.into(),
+                            cos.into(),
+                            (x * 72.0 / 25.4).into(),
+                            (y * 72.0 / 25.4).into(),
+                        ];
+                        ops.push(Operation::new("Tm", mx));
+
+                        let mut tj = Vec::new();
+                        let mut codepoints = Vec::new();
+                        for (kern, cp) in cps {
+                            if kern != 0 {
+                                if !codepoints.is_empty() {
+                                    tj.push(Object::String(
+                                        std::mem::take(&mut codepoints),
+                                        StringFormat::Literal,
+                                    ));
+                                }
+                                tj.push(kern.into());
                             }
-                            tj.push(kern.into());
+                            if let Ok(c) = u8::try_from(cp) {
+                                codepoints.push(c);
+                            }
                         }
-                        if let Ok(c) = u8::try_from(cp) {
-                            codepoints.push(c);
+                        if !codepoints.is_empty() {
+                            tj.push(Object::String(
+                                std::mem::take(&mut codepoints),
+                                StringFormat::Literal,
+                            ));
+                        }
+                        match tj.len() {
+                            0 => (),
+                            1 => ops.push(Operation::new("Tj", tj)),
+                            _ => ops.push(Operation::new("TJ", vec![Object::Array(tj)])),
                         }
                     }
-                    if !codepoints.is_empty() {
-                        tj.push(Object::String(
-                            std::mem::take(&mut codepoints),
-                            StringFormat::Literal,
-                        ));
-                    }
-                    match tj.len() {
-                        0 => (),
-                        1 => ops.push(Operation::new("Tj", tj)),
-                        _ => ops.push(Operation::new("TJ", vec![Object::Array(tj)])),
-                    }
+                    // End Text
+                    ops.push(Operation::new("ET", Vec::new()));
+                };
+
+                let mut ops: Vec<Operation> = Vec::new();
+
+                if edge_id_position != EdgeIdPosition::Inside {
+                    write_texts(&mut ops);
                 }
-                // End Text
-                ops.push(Operation::new("ET", Vec::new()));
-            };
 
-            let mut ops: Vec<Operation> = Vec::new();
+                let img_name = format!("IMG{page}");
 
-            if edge_id_position != EdgeIdPosition::Inside {
-                write_texts(&mut ops);
-            }
+                ops.push(Operation::new("q", vec![]));
+                let mx: Vec<Object> = vec![
+                    (page_size_mm.x * 72.0 / 25.4).into(),
+                    0.into(),
+                    0.into(),
+                    (page_size_mm.y * 72.0 / 25.4).into(),
+                    0.into(),
+                    0.into(),
+                ];
+                ops.push(Operation::new("cm", mx));
+                ops.push(Operation::new("Do", vec![img_name.clone().into()]));
+                ops.push(Operation::new("Q", vec![]));
 
-            let img_name = format!("IMG{page}");
+                if edge_id_position == EdgeIdPosition::Inside {
+                    write_texts(&mut ops);
+                }
 
-            ops.push(Operation::new("q", vec![]));
-            let mx: Vec<Object> = vec![
-                (page_size_mm.x * 72.0 / 25.4).into(),
-                0.into(),
-                0.into(),
-                (page_size_mm.y * 72.0 / 25.4).into(),
-                0.into(),
-                0.into(),
-            ];
-            ops.push(Operation::new("cm", mx));
-            ops.push(Operation::new("Do", vec![img_name.clone().into()]));
-            ops.push(Operation::new("Q", vec![]));
+                let content = Content { operations: ops };
+                let id_content =
+                    doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
 
-            if edge_id_position == EdgeIdPosition::Inside {
-                write_texts(&mut ops);
-            }
+                let id_mask = doc.new_object_id();
+                let id_image = doc.new_object_id();
 
-            let content = Content { operations: ops };
-            let id_content = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+                s.spawn({
+                    let sem_results = &sem_results;
+                    move || {
+                        log::debug!("Splitting...");
+                        let (width, height) = pixbuf.dimensions();
+                        let mut rgb = vec![0; (3 * width * height) as usize];
+                        let mut alpha = vec![0; (width * height) as usize];
+                        for (n, px) in pixbuf.pixels().enumerate() {
+                            let c = px.channels();
+                            rgb[3 * n..][..3].copy_from_slice(&c[..3]);
+                            alpha[n] = c[3];
+                        }
+                        let stream_mask = Stream::new(
+                            dictionary! {
+                                "Type" => "XObject",
+                                "Subtype" => "Image",
+                                "Width" => width,
+                                "Height" => height,
+                                "BitsPerComponent" => 8,
+                                "ColorSpace" => "DeviceGray",
+                            },
+                            alpha,
+                        );
+                        let stream_image = Stream::new(
+                            dictionary! {
+                                "Type" => "XObject",
+                                "Subtype" => "Image",
+                                "Width" => width,
+                                "Height" => height,
+                                "BitsPerComponent" => 8,
+                                "ColorSpace" => "DeviceRGB",
+                                "SMask" => id_mask,
+                            },
+                            rgb,
+                        );
 
-            let id_mask = doc.new_object_id();
-            let id_image = doc.new_object_id();
-            tx_compress.send((id_mask, id_image, pixbuf)).unwrap();
+                        log::debug!("Split");
+                        for (id, mut stream) in [(id_mask, stream_mask), (id_image, stream_image)] {
+                            s.spawn({
+                                move || {
+                                    log::debug!("Compressing...");
+                                    let _ = stream.compress();
+                                    log::debug!("Compressed");
 
-            let id_resources = doc.add_object(dictionary! {
-                "Font" => dictionary! {
-                    "F1" => id_font,
-                },
-                "XObject" => dictionary! {
-                    img_name => id_image,
-                },
-            });
-            let id_page = doc.add_object(dictionary! {
-                "Type" => "Page",
-                "Parent" => id_pages,
-                "Contents" => id_content,
-                "Resources" => id_resources,
-            });
-            pages.push(id_page.into());
-            Ok(())
+                                    sem_results
+                                        .release_with(1, |results| results.push((id, stream)));
+                                }
+                            });
+                        }
+                    }
+                });
+
+                let id_resources = doc.add_object(dictionary! {
+                    "Font" => dictionary! {
+                        "F1" => id_font,
+                    },
+                    "XObject" => dictionary! {
+                        img_name => id_image,
+                    },
+                });
+                let id_page = doc.add_object(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => id_pages,
+                    "Contents" => id_content,
+                    "Resources" => id_resources,
+                });
+                pages.push(id_page.into());
+
+                Ok(())
+            })
         })?;
 
-        drop(tx_compress);
-        for (id, stream) in rx_done.into_iter() {
+        // Remaining streams
+        let streams = sem_results.into_inner();
+        for (id, stream) in streams {
+            log::debug!("Completing {id:?}");
             doc.set_object(id, stream);
         }
 
@@ -304,71 +327,71 @@ impl GlobalContext {
         let page_size = Vector2::from(options.page_size);
         let edge_id_position = options.edge_id_position;
 
-        // The channel moves (page_no, image, svg_text_before_image, svg_text_after_image)
-        let (tx_compress, rx_compress) =
-            std::sync::mpsc::channel::<(u32, image::RgbaImage, Vec<u8>, Vec<u8>)>();
-        let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
-
         let file_name = PathBuf::from(file_name);
-        // This parallel loop reads from the channel, compresses the image and stores the file
-        rayon::spawn(move || {
-            let res: Result<()> = rx_compress.into_iter().par_bridge().try_for_each(
-                |(page, pixbuf, prefix, suffix)| {
-                    let name = file_name_for_page(&file_name, page);
-                    // A try block would be nice here
-                    ((|| -> Result<()> {
-                        log::debug!("Saving page {}", name.display());
 
-                        let out = std::fs::File::create(&name)?;
-                        let mut out = std::io::BufWriter::new(out);
+        let sem_results = Semaphore::new(Vec::<Result<()>>::new());
 
-                        out.write_all(&prefix)?;
-                        Self::svg_write_layer_background(&mut out, &pixbuf, page_size)?;
-                        out.write_all(&suffix)?;
+        thread::scope(|s| {
+            self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
+                sem_results.take(1);
 
-                        log::debug!("Saved page {}", name.display());
-                        Ok(())
-                    })())
-                    .with_context(|| tr!("Error saving file {}", name.display()))
-                },
-            );
-            // Send the possible error back to the main thread
-            tx_done.send(res).unwrap();
-            drop(tx_done);
-        });
+                let mut prefix = Vec::new();
 
-        self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
+                writeln!(&mut prefix, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
+                writeln!(
+                    &mut prefix,
+                    r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
+                    page_size.x, page_size.y
+                )?;
 
-            let mut prefix = Vec::new();
+                if edge_id_position != EdgeIdPosition::Inside {
+                    Self::svg_write_layer_text(&mut prefix, texts)?;
+                }
 
-            writeln!(&mut prefix, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
-            writeln!(
-                &mut prefix,
-                r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
-                page_size.x, page_size.y
-            )?;
+                let mut suffix = Vec::new();
 
-            if edge_id_position != EdgeIdPosition::Inside {
-                Self::svg_write_layer_text(&mut prefix, texts)?;
-            }
+                if edge_id_position == EdgeIdPosition::Inside {
+                    Self::svg_write_layer_text(&mut suffix, texts)?;
+                }
 
-            let mut suffix = Vec::new();
+                self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)?;
 
-            if edge_id_position == EdgeIdPosition::Inside {
-                Self::svg_write_layer_text(&mut suffix, texts)?;
-            }
+                writeln!(&mut suffix, r#"</svg>"#)?;
 
-            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)?;
+                let name = file_name_for_page(&file_name, page);
+                s.spawn({
+                    let sem_results = &sem_results;
+                    move || {
+                        // A try block would be nice here
+                        let res = ((|| -> Result<()> {
+                                log::debug!("Saving page {}", name.display());
 
-            writeln!(&mut suffix, r#"</svg>"#)?;
+                                let out = std::fs::File::create(&name)?;
+                                let mut out = std::io::BufWriter::new(out);
 
-            tx_compress.send((page, pixbuf, prefix, suffix)).unwrap();
-            Ok(())
+                                out.write_all(&prefix)?;
+                                Self::svg_write_layer_background(&mut out, &pixbuf, page_size)?;
+                                out.write_all(&suffix)?;
+                                drop(out);
+
+                                log::debug!("Saved page {}", name.display());
+                                Ok(())
+                            })())
+                            .with_context(|| tr!("Error saving file {}", name.display()));
+
+                        sem_results.release_with(1, |results| results.push(res));
+
+                    }
+                });
+                Ok(())
+            })
         })?;
 
-        drop(tx_compress);
         // Forward the error, if any
-        rx_done.into_iter().collect::<Result<()>>()?;
+        sem_results
+            .into_inner()
+            .into_iter()
+            .collect::<Result<()>>()?;
 
         Ok(())
     }
@@ -551,149 +574,140 @@ impl GlobalContext {
         let page_size = Vector2::from(options.page_size);
         let edge_id_position = options.edge_id_position;
 
-        // The channel moves (page_no, image, svg_text_before_image, svg_text_after_image)
-        let (tx_compress, rx_compress) =
-            std::sync::mpsc::channel::<(u32, image::RgbaImage, Vec<u8>, Vec<u8>)>();
-        // This other channel moves (page_no, svg_text_for_page)
-        let (tx_page, rx_page) = std::sync::mpsc::channel::<(u32, Vec<u8>)>();
+        // Instead of a channel use a shared Vec of images. Since the compression is done
+        // in a thread pool, the result may be out of order, and a channel is not ideal for that.
+        let received_pages: Mutex<Vec<Vec<u8>>> =
+            Mutex::new((0..options.pages).map(|_| Vec::new()).collect());
+        let cvar_pages = Condvar::new();
 
-        let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
+        // Use this semaphore to limit the number of images in memory, to avoid OOM.
+        let sem_results = Semaphore::new(());
 
-        // This parallel loop reads from the channel, compresses the image and sends the piece of
-        // SVG to tx_page, back to the main thread.
-        rayon::spawn(move || {
-            let res: Result<()> = rx_compress.into_iter().par_bridge().try_for_each(
-                |(page, pixbuf, mut prefix, suffix)| {
-                    // A try block would be nice here
-                    ((|| -> Result<()> {
+        thread::scope(|s| {
+            // This thread writes the actual SVG file. It could be done in the main thread, but then it would have to go after `generate_pages`, and then
+            // all the images would be in memory at the same time, and that's could overflow the available RAM
+            let th_write = s.spawn(|| {
+                let file_name = PathBuf::from(file_name);
+                let f = std::fs::File::create(&file_name)?;
+                let mut f = std::io::BufWriter::new(f);
+
+                let page_size = Vector2::from(options.page_size);
+                writeln!(
+                    &mut f,
+                    r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#
+                )?;
+                writeln!(
+                    &mut f,
+                    r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
+                    page_size.x, page_size.y
+                )?;
+
+                writeln!(&mut f, r#"<sodipodi:namedview>"#)?;
+                for page in 0..options.pages {
+                    let page_offs = options.page_position(page);
+                    writeln!(
+                        &mut f,
+                        r#"<inkscape:page x="{}" y="{}" width="{}" height="{}" id="Page_{}" />"#, // margin?
+                        page_offs.x,
+                        page_offs.y,
+                        page_size.x,
+                        page_size.y,
+                        page + 1
+                    )?;
+                }
+                writeln!(&mut f, r#"</sodipodi:namedview>"#)?;
+
+                // Receive all the pages in order.
+                // The generating threads may end out of order, and we are limiting the size of the pool thread,
+                // but the threads are spawn in order, so the desired page is always either already generated or in-flight.
+                for desired_page in 0 .. options.pages as usize {
+                    let page = {
+                        let received_pages = received_pages.lock().unwrap();
+                        let mut received_pages = cvar_pages.wait_while(received_pages, |r| r[desired_page].is_empty()).unwrap();
+                        std::mem::take(&mut received_pages[desired_page])
+                    };
+
+                    f.write_all(&page)?;
+
+                    sem_results.release(1);
+                }
+
+                writeln!(&mut f, r#"</svg>"#)?;
+
+                Ok(())
+            });
+
+            self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
+                sem_results.take(1);
+
+                let page_offs = options.page_position(page);
+
+                let mut prefix = Vec::new();
+
+                // start layer Page
+                writeln!(&mut prefix, r#"<g inkscape:label="Page_{}" inkscape:groupmode="layer" id="Text" transform="translate({},{})">"#,
+                    page + 1, page_offs.x, page_offs.y)?;
+
+                if edge_id_position != EdgeIdPosition::Inside {
+                    Self::svg_write_layer_text(&mut prefix, texts)?;
+                }
+
+                let mut suffix = Vec::new();
+
+                if edge_id_position == EdgeIdPosition::Inside {
+                    Self::svg_write_layer_text(&mut suffix, texts)?;
+                }
+
+                self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra).unwrap();
+
+                writeln!(&mut suffix, r#"</g>"#)?;
+                // end layer Page
+
+                s.spawn({
+                    let received_pages = &received_pages;
+                    let cvar_data = &cvar_pages;
+                    move || {
                         log::debug!("SVG page {page}");
 
-                        Self::svg_write_layer_background(&mut prefix, &pixbuf, page_size)?;
-                        prefix.write_all(&suffix)?;
+                        // Writing on a Vec<u8> can't fail
+                        Self::svg_write_layer_background(&mut prefix, &pixbuf, page_size).unwrap();
+                        prefix.write_all(&suffix).unwrap();
 
                         log::debug!("Saved page {page}");
-                        tx_page.send((page, prefix))?;
-                        Ok(())
-                    })())
-                    .with_context(|| tr!("Error saving page {}", page))
-                },
-            );
-            // Send the possible error back to the main thread
-            tx_done.send(res).unwrap();
-            drop(tx_done);
-        });
 
-        self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
-            let page_offs = options.page_position(page);
+                        // Send the page to the writing thread
+                        {
+                            let mut received_pages = received_pages.lock().unwrap();
+                            received_pages[page as usize] = prefix;
+                            cvar_data.notify_one();
+                        }
+                    }
+                });
+                Ok(())
+            })?;
 
-            let mut prefix = Vec::new();
-
-            // start layer Page
-            writeln!(&mut prefix, r#"<g inkscape:label="Page_{}" inkscape:groupmode="layer" id="Text" transform="translate({},{})">"#,
-                page + 1, page_offs.x, page_offs.y)?;
-
-            if edge_id_position != EdgeIdPosition::Inside {
-                Self::svg_write_layer_text(&mut prefix, texts)?;
-            }
-
-            let mut suffix = Vec::new();
-
-            if edge_id_position == EdgeIdPosition::Inside {
-                Self::svg_write_layer_text(&mut suffix, texts)?;
-            }
-
-            self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)?;
-
-            writeln!(&mut suffix, r#"</g>"#)?;
-            // end layer Page
-
-            tx_compress.send((page, pixbuf, prefix, suffix)).unwrap();
-            Ok(())
+            // Wait for the write thread to finish and forward the error if any
+            let res: Result<()> = th_write.join().unwrap();
+            res
         })?;
-        drop(tx_compress);
-
-        let file_name = PathBuf::from(file_name);
-        let f = std::fs::File::create(&file_name)?;
-        let mut f = std::io::BufWriter::new(f);
-
-        let page_size = Vector2::from(options.page_size);
-        writeln!(
-            &mut f,
-            r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#
-        )?;
-        writeln!(
-            &mut f,
-            r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
-            page_size.x, page_size.y
-        )?;
-
-        writeln!(&mut f, r#"<sodipodi:namedview>"#)?;
-        for page in 0..options.pages {
-            let page_offs = options.page_position(page);
-            writeln!(
-                &mut f,
-                r#"<inkscape:page x="{}" y="{}" width="{}" height="{}" id="Page_{}" />"#, // margin?
-                page_offs.x,
-                page_offs.y,
-                page_size.x,
-                page_size.y,
-                page + 1
-            )?;
-        }
-        writeln!(&mut f, r#"</sodipodi:namedview>"#)?;
-
-        // Here we get all the pages in an unspecified order, that is not very nice. We want to save
-        // them in the file ordered. So we keep the future pages in a Vec
-        let mut desired_page = 0;
-        let mut received_pages: Vec<Vec<u8>> = (0..options.pages).map(|_| Vec::new()).collect();
-
-        let res: Result<()> = rx_page.into_iter().try_for_each(|(page, mut data)| {
-            log::info!("Got SVG page {}", page + 1);
-            if page == desired_page {
-                loop {
-                    log::info!("Writing desired page {}", desired_page + 1);
-                    f.write_all(&data)?;
-                    desired_page += 1;
-                    if desired_page >= options.pages {
-                        // file complete
-                        break;
-                    }
-                    data = std::mem::take(&mut received_pages[desired_page as usize]);
-                    if data.is_empty() {
-                        // wait for next page
-                        break;
-                    }
-                }
-            } else {
-                // store for later
-                log::info!("Storing page {}", page + 1);
-                received_pages[page as usize] = data;
-            }
-            Ok(())
-        });
-        res?;
-        writeln!(&mut f, r#"</svg>"#)?;
-
-        // Forward the error, if any
-        rx_done.into_iter().collect::<Result<()>>()?;
-
         Ok(())
     }
 
     fn generate_png(&self, font_atlas: &imgui::FontAtlas, file_name: &Path) -> Result<()> {
-        let (tx_compress, rx_compress) = std::sync::mpsc::channel::<(u32, image::RgbaImage)>();
-        let (tx_done, rx_done) = std::sync::mpsc::channel::<Result<()>>();
-
         let file_name = PathBuf::from(file_name);
-        rayon::spawn(move || {
-            let res: Result<()> =
-                rx_compress
-                    .into_iter()
-                    .par_bridge()
-                    .try_for_each(|(page, pixbuf)| {
-                        let name = file_name_for_page(&file_name, page);
+
+        let sem_results = Semaphore::new(Vec::<Result<()>>::new());
+
+        thread::scope(|s| {
+            self.generate_pages(Some(font_atlas), |page, pixbuf, _, _texts, _| {
+                sem_results.take(1);
+
+                let name = file_name_for_page(&file_name, page);
+                s.spawn({
+                    let sem_results = &sem_results;
+                    move || {
                         // A try block would be nice here
-                        ((|| -> Result<()> {
+                        let res = ((|| -> Result<()> {
                             log::debug!("Saving page {}", name.display());
                             let f = std::fs::File::create(&name)?;
                             let mut f = std::io::BufWriter::new(f);
@@ -701,21 +715,20 @@ impl GlobalContext {
                             log::debug!("Saved page {}", name.display());
                             Ok(())
                         })())
-                        .with_context(|| tr!("Error saving file {}", name.display()))
-                    });
-            // Send the possible error back to the main thread
-            tx_done.send(res).unwrap();
-            drop(tx_done);
-        });
+                        .with_context(|| tr!("Error saving file {}", name.display()));
 
-        self.generate_pages(Some(font_atlas), |page, pixbuf, _, _texts, _| {
-            tx_compress.send((page, pixbuf)).unwrap();
-            Ok(())
+                        sem_results.release_with(1, |results| results.push(res));
+                    }
+                });
+                Ok(())
+            })
         })?;
 
-        drop(tx_compress);
         // Forward the error, if any
-        rx_done.into_iter().collect::<Result<()>>()?;
+        sem_results
+            .into_inner()
+            .into_iter()
+            .collect::<Result<()>>()?;
 
         Ok(())
     }

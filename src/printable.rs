@@ -84,11 +84,11 @@ impl GlobalContext {
 
         // This is a thread pool to compress the images, the most expensive part of the PDF
         // The semaphore is moved in steps of 2 because there are two images per page, and we limit the number of pages, but count the number of images
-        let sem_results = Semaphore::new_with_n_times(2, Vec::<(ObjectId, Stream)>::new());
+        let sem_results = Semaphore::new_with_n_times_cpu_num(2, Vec::<(ObjectId, Stream)>::new());
 
         thread::scope(|s| {
             self.generate_pages(None, |page, pixbuf, _, texts, _| {
-                let streams = sem_results.take_with(2, |results| std::mem::take(results));
+                let streams = sem_results.wait_with(2, |results| std::mem::take(results));
 
                 // Drain the reuslt streams before posting the new page to avoid having all pages in memory at the same time
                 // The order of the streams in the PDF will be somehow arbitrary, but techically correct... the best kind of correct!
@@ -248,7 +248,7 @@ impl GlobalContext {
                                     log::debug!("Compressed");
 
                                     sem_results
-                                        .release_with(1, |results| results.push((id, stream)));
+                                        .signal_with(1, |results| results.push((id, stream)));
                                 }
                             });
                         }
@@ -329,11 +329,11 @@ impl GlobalContext {
 
         let file_name = PathBuf::from(file_name);
 
-        let sem_results = Semaphore::new(Vec::<Result<()>>::new());
+        let sem_results = Semaphore::new_with_cpu_num(Vec::<Result<()>>::new());
 
         thread::scope(|s| {
             self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
-                sem_results.take(1);
+                sem_results.wait(1);
 
                 let mut prefix = Vec::new();
 
@@ -379,7 +379,7 @@ impl GlobalContext {
                             })())
                             .with_context(|| tr!("Error saving file {}", name.display()));
 
-                        sem_results.release_with(1, |results| results.push(res));
+                        sem_results.signal_with(1, |results| results.push(res));
 
                     }
                 });
@@ -581,7 +581,7 @@ impl GlobalContext {
         let cvar_pages = Condvar::new();
 
         // Use this semaphore to limit the number of images in memory, to avoid OOM.
-        let sem_results = Semaphore::new(());
+        let sem_results = Semaphore::new_with_cpu_num(());
 
         thread::scope(|s| {
             // This thread writes the actual SVG file. It could be done in the main thread, but then it would have to go after `generate_pages`, and then
@@ -629,7 +629,7 @@ impl GlobalContext {
 
                     f.write_all(&page)?;
 
-                    sem_results.release(1);
+                    sem_results.signal(1);
                 }
 
                 writeln!(&mut f, r#"</svg>"#)?;
@@ -638,7 +638,7 @@ impl GlobalContext {
             });
 
             self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
-                sem_results.take(1);
+                sem_results.wait(1);
 
                 let page_offs = options.page_position(page);
 
@@ -696,11 +696,11 @@ impl GlobalContext {
     fn generate_png(&self, font_atlas: &imgui::FontAtlas, file_name: &Path) -> Result<()> {
         let file_name = PathBuf::from(file_name);
 
-        let sem_results = Semaphore::new(Vec::<Result<()>>::new());
+        let sem_results = Semaphore::new_with_cpu_num(Vec::<Result<()>>::new());
 
         thread::scope(|s| {
             self.generate_pages(Some(font_atlas), |page, pixbuf, _, _texts, _| {
-                sem_results.take(1);
+                sem_results.wait(1);
 
                 let name = file_name_for_page(&file_name, page);
                 s.spawn({
@@ -717,7 +717,7 @@ impl GlobalContext {
                         })())
                         .with_context(|| tr!("Error saving file {}", name.display()));
 
-                        sem_results.release_with(1, |results| results.push(res));
+                        sem_results.signal_with(1, |results| results.push(res));
                     }
                 });
                 Ok(())

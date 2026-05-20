@@ -13,7 +13,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: 'recursive'
       - name: VS
@@ -33,7 +33,7 @@ jobs:
           cd ../..
           7z a "../Papercraft-${{ inputs.name }}-win32.zip" papercraft
       - name: Upload artifact win32
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Papercraft-${{ inputs.name }}-win32.zip
           path: Papercraft-${{ inputs.name }}-win32.zip

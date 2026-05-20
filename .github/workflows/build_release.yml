@@ -39,23 +39,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download Linux
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Papercraft-${{ inputs.tag_name }}-x86_64.AppImage
       - name: Download Win32
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Papercraft-${{ inputs.tag_name }}-win32.zip
       - name: Download Win64
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Papercraft-${{ inputs.tag_name }}-win64.zip
       - name: Download MacOS
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Papercraft-${{ inputs.tag_name }}-MacOS.dmg
       - name: Download LinuxArm
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Papercraft-${{ inputs.tag_name }}-aarch64.AppImage
       - name: Upload all to release

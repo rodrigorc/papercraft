@@ -2265,8 +2265,8 @@ impl GlobalContext {
                             sel_b,
                             Color::new(0.2, 0.2, 1.0, 1.0),
                             4.0,
-                            imgui::DrawFlags::empty(),
                             2.0,
+                            imgui::DrawFlags::empty(),
                         );
                     }
                 }

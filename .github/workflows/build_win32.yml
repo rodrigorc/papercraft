@@ -18,7 +18,7 @@ jobs:
           sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64 libz-mingw-w64-dev nasm
           sudo ln -s /usr/lib/gcc/i686-w64-mingw32/10-win32/include/c++ /usr/i686-w64-mingw32/include/c++
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: 'recursive'
       - name: Build Win32
@@ -42,7 +42,7 @@ jobs:
           cd ../..
           zip -r "../Papercraft-${{ inputs.name }}-win32.zip" papercraft
       - name: Upload artifact win32
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Papercraft-${{ inputs.name }}-win32.zip
           path: Papercraft-${{ inputs.name }}-win32.zip

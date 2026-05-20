@@ -18,7 +18,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: 'recursive'
       - name: Rustup
@@ -59,7 +59,7 @@ jobs:
             "app_folder/"
 
       - name: Upload artifact MacOS
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Papercraft-${{ inputs.name }}-MacOS.dmg
           path: Papercraft-${{ inputs.name }}-MacOS.dmg

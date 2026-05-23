@@ -125,37 +125,79 @@ mod tests {
     }
 
     #[test]
-    fn test_thread() {
-        struct Tok;
+    fn test_limits() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
-        // Keep the sem count and the vec len the same.
-        let sem = Semaphore::new(4, vec![Tok, Tok, Tok, Tok]);
-        let chrono = std::time::Instant::now();
+        let sem = Semaphore::new(4, ());
+        let active_threads = AtomicUsize::new(0);
+
         std::thread::scope(|s| {
-            for _ in 0..10 {
-                s.spawn({
-                    let sem = &sem;
-                    move || {
-                        for _ in 0..10 {
-                            // If the semaphore fails to arbitrate, panic!
-                            let tok = sem.wait_with(1, |v| v.pop()).expect("should have a Tok");
-                            std::thread::sleep(Duration::from_millis(10));
-                            sem.signal_with(1, |v| v.push(tok));
+            for _ in 0..20 {
+                s.spawn(|| {
+                    for _ in 0..10 {
+                        sem.wait(1);
 
-                            std::thread::sleep(Duration::from_millis(1));
-                        }
+                        let current = active_threads.fetch_add(1, Ordering::SeqCst) + 1;
+                        assert!(current <= 4, "Too many threads: {}", current);
+
+                        // Simulate work
+                        std::thread::sleep(Duration::from_millis(1));
+
+                        active_threads.fetch_sub(1, Ordering::SeqCst);
+                        sem.signal(1);
+
+                        std::thread::sleep(Duration::from_millis(1));
                     }
                 });
             }
         });
-        let elapsed = chrono.elapsed().as_millis();
+    }
 
-        dbg!(elapsed);
-        // 10 threads touching tokens 10 times each. Those are 100 touches.
-        // Each touch is 10 ms. Total 1000 ms.
-        // With 4 tokens, it should take a bit over 250 ms (3 tokens would be about 333 ms)
-        // Allow for some imprecision and overloads.
-        // I know, tests that measure time are not pretty, but it works for me...
-        assert!(249 < elapsed && elapsed < 300);
+    #[test]
+    fn test_timeout() {
+        let sem = Semaphore::new(0, ());
+        let result = sem.wait_timeout(1, Duration::from_millis(10));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_timeout_closure() {
+        let sem = Semaphore::new(3, 0);
+        let result = sem.wait_timeout_with(1, Duration::from_millis(10), |data| *data += 1);
+        assert!(result.is_some());
+        assert_eq!(sem.into_inner(), 1);
+    }
+
+    #[test]
+    fn test_timeout_closure_fail() {
+        let sem = Semaphore::new(0, 0);
+        let result = sem.wait_timeout_with(1, Duration::from_millis(10), |data| *data += 1);
+        assert!(result.is_none());
+        assert_eq!(sem.into_inner(), 0);
+    }
+
+    #[test]
+    fn test_wait_closure() {
+        let sem = Semaphore::new(1, 0);
+        let result = sem.wait_with(1, |data| {
+            *data += 1;
+            *data
+        });
+        assert_eq!(result, 1);
+        assert_eq!(sem.into_inner(), 1);
+    }
+
+    #[test]
+    fn test_signal_notifies() {
+        let sem = Semaphore::new(0, ());
+        let sem_ref = &sem;
+        std::thread::scope(|s| {
+            s.spawn(move || {
+                std::thread::sleep(Duration::from_millis(10));
+                sem_ref.signal(1);
+            });
+            let result = sem.wait_timeout(1, Duration::from_millis(100));
+            assert!(result.is_some());
+        });
     }
 }

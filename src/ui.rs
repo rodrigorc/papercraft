@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use anyhow::Result;
 use cgmath::{Deg, Rad, prelude::*};
 use easy_imgui_window::{
-    easy_imgui::{KeyMod, TextureUniqueId},
+    easy_imgui::{KeyMod, TextureUniqueId, vec2},
     easy_imgui_renderer::{
         easy_imgui_opengl::GlContext,
         glow::{self, HasContext},
@@ -130,9 +130,7 @@ bitflags::bitflags! {
         const ANY_REDRAW_PAPER = Self::PAGES.bits() | Self::PAPER.bits() | Self::SELECTION.bits() | Self::PAPER_REDRAW.bits() | Self::ISLANDS.bits() | Self::PAPER_FBO.bits();
         const ANY_REDRAW_SCENE = Self::SCENE_EDGE.bits() | Self::SELECTION.bits() | Self::SCENE_REDRAW.bits() | Self::SCENE_FBO.bits();
     }
-}
 
-bitflags::bitflags! {
     #[derive(Copy, Clone, Debug)]
     pub struct SetSelectionFlags: u32 {
         // CLICKED means not hovering
@@ -141,6 +139,12 @@ bitflags::bitflags! {
         const RELEASED = 0x0002;
         const ADD_TO_SEL = 0x0004;
         const ALT_PRESSED = 0x0008;
+    }
+
+    #[derive(Copy, Clone, Debug)]
+    pub struct PaperAnalyzeClickFlags: u32 {
+        const ALLOW_SOFT_HIDDEN = 0x0001;
+        const UNLIMITED_EDGE_DISTANCE = 0x0002;
     }
 }
 
@@ -159,8 +163,11 @@ pub struct PapercraftContext {
     selected_islands: Vec<IslandFaceKey>,
     // Contains the UndoActions if these islands are to be moved, the actual grabbed islands are selected_islands
     grabbed_island: Option<Vec<UndoAction>>,
-    // This in view coordinates
-    last_cursor_pos: Vector2,
+    // If in snap mode, the highlighted edge when starting to move the islands. The bool is true if the first vertex has precedence.
+    snap_grabbed_edge: Option<(EdgeIndex, FaceIndex, bool)>,
+    // These are view coordinates
+    scene_last_cursor_pos: Vector2,
+    paper_last_cursor_pos: Vector2,
     // This in paper coordinates
     rotation_center: Option<Vector2>,
     // The selection rectangle, while dragging it, plus the pre-selected islands.
@@ -177,6 +184,8 @@ pub struct UiSettings {
     pub mode: MouseMode,
     pub trans_scene: Transformation3D,
     pub trans_paper: TransformationPaper,
+
+    pub snap: bool,
 
     // These shouldn't really be here but in main.rs
     pub show_textures: bool,
@@ -634,7 +643,9 @@ impl PapercraftContext {
             selected_edges: None,
             selected_islands: Vec::new(),
             grabbed_island: None,
-            last_cursor_pos: Vector2::zero(),
+            snap_grabbed_edge: None,
+            scene_last_cursor_pos: Vector2::zero(),
+            paper_last_cursor_pos: Vector2::zero(),
             rotation_center: None,
             pre_selection: None,
             just_selected: None,
@@ -642,6 +653,7 @@ impl PapercraftContext {
                 mode: MouseMode::Face,
                 trans_scene,
                 trans_paper,
+                snap: false,
                 show_textures,
                 show_flaps: true,
                 show_3d_lines: true,
@@ -1784,7 +1796,7 @@ impl PapercraftContext {
         mode: MouseMode,
         size: Vector2,
         pos: Vector2,
-        allow_soft_hidden: bool,
+        flags: PaperAnalyzeClickFlags,
     ) -> ClickResult {
         let x = (pos.x / size.x) * 2.0 - 1.0;
         let y = -((pos.y / size.y) * 2.0 - 1.0);
@@ -1827,7 +1839,11 @@ impl PapercraftContext {
         let mut hit_edge = None;
         for (i_edge, edge) in self.papercraft.model().edges() {
             match (self.papercraft.edge_status(i_edge), mode) {
-                (EdgeStatus::SoftHidden, MouseMode::Edge) if allow_soft_hidden => (),
+                (EdgeStatus::SoftHidden, MouseMode::Edge)
+                    if flags.contains(PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN) =>
+                {
+                    ()
+                }
                 (EdgeStatus::Hidden | EdgeStatus::SoftHidden, _) => continue,
                 (EdgeStatus::Joined, MouseMode::Flap) => continue,
                 _ => (),
@@ -1876,12 +1892,43 @@ impl PapercraftContext {
         }
     }
 
+    fn paper_position_of_edge(
+        &self,
+        i_edge: EdgeIndex,
+        i_face: FaceIndex,
+    ) -> Option<(Vector2, Vector2)> {
+        let scale = self.papercraft.options().scale;
+        let i_island = self.papercraft.island_by_face(i_face);
+        let island = self.papercraft.island_by_key(i_island).unwrap();
+
+        let mut res = None;
+        let _ = self
+            .papercraft
+            .traverse_faces(island, |i_face_2, face, fmx| {
+                if i_face != i_face_2 {
+                    return ControlFlow::Continue(());
+                }
+                let plane = self.papercraft.model().face_plane(face);
+
+                let edge = &self.papercraft.model()[i_edge];
+                let (v0, v1) = self.papercraft.model().edge_pos(edge);
+                let v0 = plane.project(&v0, scale);
+                let v1 = plane.project(&v1, scale);
+                let v0 = fmx.transform_point(Point2::from_vec(v0)).to_vec();
+                let v1 = fmx.transform_point(Point2::from_vec(v1)).to_vec();
+                res = Some((v0, v1));
+                ControlFlow::Break(())
+            });
+
+        res
+    }
+
     pub fn paper_analyze_click(
         &self,
         mode: MouseMode,
         size: Vector2,
         pos: Vector2,
-        allow_soft_hidden: bool,
+        flags: PaperAnalyzeClickFlags,
     ) -> ClickResult {
         let click = self.ui.trans_paper.paper_click(size, pos);
         let mx = self.ui.trans_paper.ortho * self.ui.trans_paper.mx;
@@ -1915,7 +1962,7 @@ impl PapercraftContext {
                         for i_edge in face.index_edges() {
                             match (self.papercraft.edge_status(i_edge), mode) {
                                 #[rustfmt::skip]
-                                (EdgeStatus::SoftHidden, MouseMode::Edge) if allow_soft_hidden => (),
+                                (EdgeStatus::SoftHidden, MouseMode::Edge) if flags.contains(PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN) => (),
                                 (EdgeStatus::Hidden | EdgeStatus::SoftHidden, _) => continue,
                                 (EdgeStatus::Joined, MouseMode::Flap) => continue,
                                 _ => (),
@@ -1933,7 +1980,7 @@ impl PapercraftContext {
                                 Vector2::new(d, 0.0),
                             )
                             .magnitude();
-                            if d > 0.02 {
+                            if d > 0.02 && !flags.contains(PaperAnalyzeClickFlags::UNLIMITED_EDGE_DISTANCE) {
                                 //too far?
                                 continue;
                             }
@@ -1969,7 +2016,7 @@ impl PapercraftContext {
     }
     #[must_use]
     pub fn scene_hover_event(&mut self, size: Vector2, pos: Vector2, mods: KeyMod) -> RebuildFlags {
-        self.last_cursor_pos = pos;
+        self.scene_last_cursor_pos = pos;
         if mods.contains(KeyMod::Super) {
             return RebuildFlags::empty();
         }
@@ -1977,7 +2024,11 @@ impl PapercraftContext {
             self.ui.mode,
             size,
             pos,
-            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+            if mods.contains(KeyMod::Ctrl) {
+                PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN
+            } else {
+                PaperAnalyzeClickFlags::empty()
+            },
         );
         let flags = if mods.contains(KeyMod::Alt) {
             SetSelectionFlags::ALT_PRESSED
@@ -1988,8 +2039,8 @@ impl PapercraftContext {
     }
     #[must_use]
     pub fn scene_button1_click_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
-        let delta = pos - self.last_cursor_pos;
-        self.last_cursor_pos = pos;
+        let delta = pos - self.scene_last_cursor_pos;
+        self.scene_last_cursor_pos = pos;
         // Rotate, half angles
         let ang = delta / 200.0 / 2.0;
         let cosy = ang.x.cos();
@@ -2005,8 +2056,8 @@ impl PapercraftContext {
     }
     #[must_use]
     pub fn scene_button2_click_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
-        let delta = pos - self.last_cursor_pos;
-        self.last_cursor_pos = pos;
+        let delta = pos - self.scene_last_cursor_pos;
+        self.scene_last_cursor_pos = pos;
         // Translate
         let delta = delta / 50.0;
         self.ui.trans_scene.location += Vector3::new(delta.x, -delta.y, 0.0);
@@ -2024,7 +2075,11 @@ impl PapercraftContext {
             MouseMode::Face,
             size,
             pos,
-            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+            if mods.contains(KeyMod::Ctrl) {
+                PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN
+            } else {
+                PaperAnalyzeClickFlags::empty()
+            },
         );
         let ClickResult::Face(i_face) = selection else {
             return RebuildFlags::empty();
@@ -2105,7 +2160,11 @@ impl PapercraftContext {
             self.ui.mode,
             size,
             pos,
-            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+            if mods.contains(KeyMod::Ctrl) {
+                PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN
+            } else {
+                PaperAnalyzeClickFlags::empty()
+            },
         );
         let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
@@ -2140,8 +2199,8 @@ impl PapercraftContext {
     }
     #[must_use]
     pub fn paper_button2_event(&mut self, _size: Vector2, pos: Vector2) -> RebuildFlags {
-        let delta = pos - self.last_cursor_pos;
-        self.last_cursor_pos = pos;
+        let delta = pos - self.paper_last_cursor_pos;
+        self.paper_last_cursor_pos = pos;
         // Translate
         self.ui.trans_paper.mx = Matrix3::from_translation(delta) * self.ui.trans_paper.mx;
         RebuildFlags::PAPER_REDRAW
@@ -2154,8 +2213,11 @@ impl PapercraftContext {
         mods: KeyMod,
         dragging: bool,
     ) -> RebuildFlags {
-        let delta = pos - self.last_cursor_pos;
-        self.last_cursor_pos = pos;
+        let original_pos = self.paper_last_cursor_pos;
+        let delta = pos - self.paper_last_cursor_pos;
+        self.paper_last_cursor_pos = pos;
+
+        let click = self.ui.trans_paper.paper_click(size, pos);
 
         // Check if any island is to be moved
         if !self.selected_islands.is_empty()
@@ -2165,14 +2227,34 @@ impl PapercraftContext {
             if !dragging {
                 return RebuildFlags::empty();
             }
+
             let undo = std::mem::take(undo);
-            self.push_undo_action(undo);
+            // first move, push the undo, and compute the alignment edge
+            if !undo.is_empty() {
+                self.push_undo_action(undo);
+                if self.ui.snap
+                    && let ClickResult::Edge(i_edge, Some(i_face)) = self.paper_analyze_click(
+                        MouseMode::Edge,
+                        size,
+                        pos,
+                        PaperAnalyzeClickFlags::UNLIMITED_EDGE_DISTANCE,
+                    )
+                {
+                    let sel0 = if let Some((p0, p1)) = self.paper_position_of_edge(i_edge, i_face) {
+                        click.distance2(p0) < click.distance2(p1)
+                    } else {
+                        true
+                    };
+                    self.snap_grabbed_edge = Some((i_edge, i_face, sel0));
+                } else {
+                    self.snap_grabbed_edge = None;
+                }
+            }
         } else {
             // The same key for rotating (shift) is used for removing the selection.
             let adding = !mods.contains(KeyMod::Shift);
 
             // No selection, check if we should build a pre-selection rectangle
-            let click = self.ui.trans_paper.paper_click(size, pos);
 
             let (next, flags) = match self.pre_selection.take() {
                 // First pre-selection click, just save it
@@ -2211,15 +2293,40 @@ impl PapercraftContext {
             return flags;
         }
 
+        let snap_grabbed_edge_pos = self.snap_grabbed_edge.and_then(|(i_edge, i_face, sel0)| {
+            let (p0, p1) = self.paper_position_of_edge(i_edge, i_face)?;
+            Some((p0, p1, sel0))
+        });
+
         if mods.contains(KeyMod::Shift) {
             // Rotate island
-            let ppos = self.ui.trans_paper.paper_click(size, pos);
-            let pcenter = *self.rotation_center.get_or_insert(ppos);
+            let pcenter = *self.rotation_center.get_or_insert(click);
             let vcenter = self.ui.trans_paper.paper_unclick(size, pcenter);
             //Rotating when the pointer is very near to the center or rotation the angle could go crazy, so disable it
             if vcenter.distance2(pos) > 10.0_f32.powi(2) {
-                let ppos_prev = self.ui.trans_paper.paper_click(size, pos - delta);
-                let angle = (ppos_prev - pcenter).angle(ppos - pcenter);
+                let ppos_prev = self.ui.trans_paper.paper_click(size, original_pos);
+                let mut angle = (ppos_prev - pcenter).angle(click - pcenter);
+
+                // Snap the rotation?
+                if let Some((p0, p1, _)) = snap_grabbed_edge_pos {
+                    const ANGLE_FACTOR: f32 = 15.0 * f32::consts::PI / 180.0;
+
+                    // This is the current angle of the grabbed edge
+                    let grabbed_angle = vec2(1.0, 0.0).angle(p1 - p0);
+                    // Rotation needed to properly align the grabbed edge, when snap-rotating will be always 0 except on the first frame.
+                    let offset_angle = grabbed_angle
+                        - Rad((grabbed_angle.0 / ANGLE_FACTOR).round() * ANGLE_FACTOR);
+
+                    let next_angle =
+                        ((angle + offset_angle).0 / ANGLE_FACTOR).round() * ANGLE_FACTOR;
+
+                    if (next_angle - offset_angle.0).abs() < 0.01 {
+                        self.paper_last_cursor_pos = original_pos;
+                        return RebuildFlags::empty();
+                    }
+                    angle = Rad(next_angle) - offset_angle;
+                }
+
                 for &i_island in &self.selected_islands {
                     let island = self.papercraft.island_by_face_key_mut(i_island);
                     island.rotate(angle, pcenter);
@@ -2227,11 +2334,30 @@ impl PapercraftContext {
             }
         } else {
             // Move island
-            let delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(
+            let mut delta_scaled = <Matrix3 as Transform<Point2>>::inverse_transform_vector(
                 &self.ui.trans_paper.mx,
                 delta,
             )
             .unwrap();
+
+            // Snap the movement?
+            if let Some((p0, p1, sel0)) = snap_grabbed_edge_pos {
+                let p0 = if sel0 { p0 } else { p1 };
+                let mut p0_next = p0 + delta_scaled;
+                p0_next.x = (p0_next.x / 10.0).round() * 10.0;
+                p0_next.y = (p0_next.y / 10.0).round() * 10.0;
+                //self.paper_last_cursor_pos -= delta;
+                if p0_next.distance2(p0) < 1.0 {
+                    self.paper_last_cursor_pos = original_pos;
+                    return RebuildFlags::empty();
+                }
+                delta_scaled = p0_next - p0;
+                let delta_2 = <Matrix3 as Transform<Point2>>::transform_vector(
+                    &self.ui.trans_paper.mx,
+                    delta_scaled,
+                );
+                self.paper_last_cursor_pos = original_pos + delta_2;
+            }
 
             let mut going_outside = false;
             for &i_island in &self.selected_islands {
@@ -2261,7 +2387,7 @@ impl PapercraftContext {
                         break 'scroll;
                     };
                     let delta = delta / 2.0;
-                    self.last_cursor_pos += delta;
+                    self.paper_last_cursor_pos += delta;
                     self.ui.trans_paper.mx =
                         Matrix3::from_translation(delta) * self.ui.trans_paper.mx;
                 }
@@ -2301,7 +2427,11 @@ impl PapercraftContext {
             self.ui.mode,
             size,
             pos,
-            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+            if mods.contains(KeyMod::Ctrl) {
+                PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN
+            } else {
+                PaperAnalyzeClickFlags::empty()
+            },
         );
         let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
@@ -2362,11 +2492,16 @@ impl PapercraftContext {
         mods: KeyMod,
     ) -> RebuildFlags {
         self.pre_selection = None;
+        self.snap_grabbed_edge = None;
         let selection = self.paper_analyze_click(
             self.ui.mode,
             size,
             pos,
-            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+            if mods.contains(KeyMod::Ctrl) {
+                PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN
+            } else {
+                PaperAnalyzeClickFlags::empty()
+            },
         );
         let flags = if mods.contains(KeyMod::Ctrl) {
             SetSelectionFlags::ADD_TO_SEL
@@ -2397,7 +2532,8 @@ impl PapercraftContext {
     #[must_use]
     pub fn paper_hover_event(&mut self, size: Vector2, pos: Vector2, mods: KeyMod) -> RebuildFlags {
         self.pre_selection = None;
-        self.last_cursor_pos = pos;
+        self.snap_grabbed_edge = None;
+        self.paper_last_cursor_pos = pos;
         self.rotation_center = None;
         self.grabbed_island = None;
         // Super is usually only handled in the 3d scene, however when doing bit rotations the mouse will hover
@@ -2409,7 +2545,11 @@ impl PapercraftContext {
             self.ui.mode,
             size,
             pos,
-            /* allow_soft_hidden */ mods.contains(KeyMod::Ctrl),
+            if mods.contains(KeyMod::Ctrl) {
+                PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN
+            } else {
+                PaperAnalyzeClickFlags::empty()
+            },
         );
         let flags = if mods.contains(KeyMod::Alt) {
             SetSelectionFlags::ALT_PRESSED
@@ -2439,6 +2579,12 @@ impl PapercraftContext {
         self.pre_selection
             .as_ref()
             .map(|(a, b, _, _)| Rectangle::new(*a, *b))
+    }
+
+    pub fn snapping_edge(&self) -> Option<(Vector2, Vector2, bool)> {
+        let (i_edge, i_face, sel0) = self.snap_grabbed_edge?;
+        let (p0, p1) = self.paper_position_of_edge(i_edge, i_face)?;
+        Some((p0, p1, sel0))
     }
 
     #[must_use]
@@ -2535,6 +2681,7 @@ impl PapercraftContext {
         }
         self.undo_stack.push(action);
     }
+
     pub fn has_selected_edge(&self) -> bool {
         self.selected_edges.is_some()
     }

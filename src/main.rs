@@ -1970,6 +1970,17 @@ impl GlobalContext {
 
                     ui.separator();
 
+                    if ui
+                        .menu_item_config(lbl(tr!("Snap")))
+                        .shortcut("S")
+                        .selected(self.data.ui.snap)
+                        .build()
+                    {
+                        self.data.ui.snap ^= true;
+                    }
+
+                    ui.separator();
+
                     if ui.menu_item_config(lbl(tr!("Repack pieces"))).build() {
                         let undo = self.data.pack_islands();
                         self.data.push_undo_action(undo);
@@ -2084,6 +2095,9 @@ impl GlobalContext {
                     imgui::InputFlags::RouteGlobal,
                 ) {
                     menu_actions.undo = true;
+                }
+                if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
+                    self.data.ui.snap ^= true;
                 }
             }
             if ui.shortcut_ex(
@@ -2269,6 +2283,30 @@ impl GlobalContext {
                             imgui::DrawFlags::empty(),
                         );
                     }
+                }
+                if let Some((p0, p1, sel0)) = self.data.snapping_edge() {
+                    let p0 =
+                        (pos + self.data.ui.trans_paper.paper_unclick(self.sz_paper, p0)) / scale;
+                    let p1 =
+                        (pos + self.data.ui.trans_paper.paper_unclick(self.sz_paper, p1)) / scale;
+
+                    let c = Color::new(0.2, 0.2, 1.0, 0.50);
+                    let v = (p1 - p0).normalize_to(5.0);
+                    let p = vec2(-v.y, v.x);
+                    let mut v0 = -v;
+                    let mut v1 = v;
+                    if sel0 {
+                        v0 *= -1.0;
+                    } else {
+                        v1 *= -1.0;
+                    }
+
+                    draw_list.path_line_to(p0 - p + v0);
+                    draw_list.path_line_to(p1 - p + v1);
+                    draw_list.path_line_to(p1 + p + v1);
+                    draw_list.path_line_to(p0 + p + v0);
+                    draw_list.path_fill_convex(c);
+                    draw_list.add_circle_filled(if sel0 { p0 } else { p1 }, 10.0, c, 0);
                 }
             });
         if r.is_none() {

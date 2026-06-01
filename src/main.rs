@@ -1100,7 +1100,7 @@ impl GlobalContext {
                 "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on paper to rotate it."
             ),
             MouseMode::Edge => tr!(
-                "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads."
+                "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full strip of quads. Alt-click to auto-join pieces."
             ),
             MouseMode::Flap => tr!(
                 "Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide a flap."

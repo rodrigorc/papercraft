@@ -2183,15 +2183,14 @@ impl PapercraftContext {
                 };
                 self.do_edge_action(i_edge, i_face, edge_action)
             }
+            (MouseMode::Edge, ClickResult::Face(f)) if mods.contains(KeyMod::Alt) => {
+                self.set_selection(ClickResult::Face(f), flags) | self.auto_join_edges(f)
+            }
             (MouseMode::Flap, ClickResult::Edge(i_edge, _)) => {
                 self.do_flap_action(i_edge, mods.contains(KeyMod::Shift))
             }
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
-                let mut rebuild = self.set_selection(ClickResult::Face(f), flags);
-                if mods.contains(KeyMod::Alt) {
-                    rebuild |= self.auto_join_edges(f);
-                }
-                rebuild
+                self.set_selection(ClickResult::Face(f), flags)
             }
             (_, ClickResult::None) => self.set_selection(ClickResult::None, flags),
             _ => RebuildFlags::empty(),
@@ -2510,12 +2509,11 @@ impl PapercraftContext {
         };
         let flags = flags | SetSelectionFlags::CLICKED | SetSelectionFlags::RELEASED;
         match (self.ui.mode, selection) {
+            (MouseMode::Edge, ClickResult::Face(f)) if mods.contains(KeyMod::Alt) => {
+                self.set_selection(ClickResult::Face(f), flags) | self.auto_join_edges(f)
+            }
             (_, ClickResult::Face(f)) | (MouseMode::ReadOnly, ClickResult::Edge(_, Some(f))) => {
-                let mut rebuild = self.set_selection(ClickResult::Face(f), flags);
-                if mods.contains(KeyMod::Alt) {
-                    rebuild |= self.auto_join_edges(f);
-                }
-                rebuild
+                self.set_selection(ClickResult::Face(f), flags)
             }
             _ => RebuildFlags::empty(),
         }

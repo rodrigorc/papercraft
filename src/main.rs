@@ -51,7 +51,7 @@ static LOGO_IMG: LazyLock<image::RgbaImage> =
 static ICONS_IMG: LazyLock<image::RgbaImage> =
     LazyLock::new(|| load_image_from_memory(include_bytes!("icons.png"), true).unwrap());
 
-const KARLA_TTF: &[u8] = include_bytes!("Karla-Regular.ttf");
+const MPLUS_TTF: &[u8] = include_bytes!("MPLUS1p-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
 
 use paper::{
@@ -88,7 +88,13 @@ fn set_locale(locale: &str) {
     easy_imgui_filechooser::set_locale(locale);
 }
 
-static LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("es", "Español")];
+static LANGUAGES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("es", "Español"),
+    ("fr", "Français"),
+    ("de", "Deutsch"),
+    ("ja", "日本語"),
+];
 
 fn main() {
     env_logger::Builder::new()
@@ -3617,7 +3623,7 @@ impl GlobalContext {
     fn build_fonts(&mut self, atlas: &mut imgui::FontAtlas) {
         self.add_rebuild(RebuildFlags::all());
 
-        self.font_default = atlas.add_font(imgui::FontInfo::new(KARLA_TTF));
+        self.font_default = atlas.add_font(imgui::FontInfo::new(MPLUS_TTF));
         self.font_default_size = 18.0;
         self.font_big_size = 28.0;
         self.font_small_size = 12.0;

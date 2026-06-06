@@ -61,7 +61,7 @@ opener = { version = "0.8", default-features = false }
 maybe-owned = { version = "0.3", features = ["serde"] }
 tr = { version = "0.1.10", default-features = false }
 
-lopdf = "0.40"
+lopdf = "0.41"
 time = { version = "0.3", features = ["local-offset"] }
 
 easy-imgui-window =  "0.23.0"

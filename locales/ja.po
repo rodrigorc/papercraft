@@ -25,7 +25,7 @@ msgstr "ページ {}/{}"
 
 #: src/ui.rs:2980
 msgid "Created with Papercraft. https://github.com/rodrigorc/papercraft"
-msgstr "Papercraftで作成。 https://github.com/rodrigorc/papercraft"
+msgstr "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 
 #: src/main.rs:78
 msgid "Prevents editing of the model, useful as reference to build a real model"

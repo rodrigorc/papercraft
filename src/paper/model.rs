@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use cgmath::{Angle, InnerSpace, Rad};
+use cgmath::{Angle, InnerSpace, Rad, Zero};
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
@@ -35,6 +35,7 @@ pub struct Model {
     edges: Vec<Edge>,
     faces: Vec<Face>,
     multi_body: bool,
+    bounding_box: (Vector3, Vector3),
 }
 
 use maybe_owned::MaybeOwned;
@@ -112,6 +113,7 @@ impl<'de> Deserialize<'de> for Model {
             edges,
             faces,
             multi_body: false,
+            bounding_box: (Vector3::zero(), Vector3::zero()),
         };
         model.post_create();
         Ok(model)
@@ -229,6 +231,7 @@ impl Model {
             edges: Vec::new(),
             faces: Vec::new(),
             multi_body: false,
+            bounding_box: (Vector3::zero(), Vector3::zero()),
         }
     }
 
@@ -360,6 +363,7 @@ impl Model {
             edges,
             faces,
             multi_body: false,
+            bounding_box: (Vector3::zero(), Vector3::zero()),
         };
         model.post_create();
         ImportedModule {
@@ -369,6 +373,9 @@ impl Model {
         }
     }
     fn post_create(&mut self) {
+        // Bounding box
+        self.bounding_box = util_3d::bounding_box_3d(self.vertices.iter().map(|v| v.pos()));
+
         // Compute edge angles
         for i_edge in 0..self.edges.len() {
             let i_edge = EdgeIndex::from(i_edge);
@@ -465,6 +472,9 @@ impl Model {
     }
     pub fn multi_body(&self) -> bool {
         self.multi_body
+    }
+    pub fn bounding_box(&self) -> (Vector3, Vector3) {
+        self.bounding_box
     }
     pub fn textures(&self) -> impl Iterator<Item = &Texture> + '_ {
         self.textures.iter()

@@ -290,9 +290,7 @@ impl Papercraft {
             edge_ids: Vec::new(),
         };
         if need_fix_options {
-            let (v_min, v_max) = crate::util_3d::bounding_box_3d(
-                papercraft.model().vertices().map(|(_, v)| v.pos()),
-            );
+            let (v_min, v_max) = papercraft.model().bounding_box();
             let size = (v_max.x - v_min.x)
                 .max(v_max.y - v_min.y)
                 .max(v_max.z - v_min.z);

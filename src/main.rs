@@ -1231,16 +1231,10 @@ impl GlobalContext {
                 )
             })
             .count();
-        let bbox = util_3d::bounding_box_3d(
-            self.data
-                .papercraft()
-                .model()
-                .vertices()
-                .map(|(_, v)| v.pos()),
-        );
+        let bbox = self.data.papercraft().model().bounding_box();
         let model_size = (bbox.1 - bbox.0) * options.scale;
         let Vector3 { x, y, z } = model_size;
-        let size = format!("{x:.0} x {y:.0} x {z:.0}");
+        let size = format!("{x:.0} × {y:.0} × {z:.0}");
         ui.text(&tr!(
             "Number of pieces: {0}\nNumber of flaps: {1}\nReal size (mm): {2}",
             n_pieces,
@@ -1263,6 +1257,7 @@ impl GlobalContext {
                 ui.tree_node_config(lbl_id(tr!("Model"), "model"))
                     .flags(imgui::TreeNodeFlags::Framed)
                     .with(|| {
+                        // Model scale and size
                         build_length(
                             ui,
                             &mut options.scale,
@@ -1272,8 +1267,71 @@ impl GlobalContext {
                             font_sz * 3.0,
                             "scale",
                         );
-                        options.scale = options.scale.max(0.0);
+
+                        let bbox = self.data.papercraft().model().bounding_box();
+                        let unscaled_size = bbox.1 - bbox.0;
+                        let Vector3 {
+                            x: mut size_x,
+                            y: mut size_y,
+                            z: mut size_z,
+                        } = unscaled_size * options.scale;
+
                         ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 3.0));
+
+                        ui.text(&tr!("Real size (mm)"));
+                        ui.same_line();
+
+                        ui.set_next_item_width(font_sz * 3.0);
+                        ui.with_disabled(unscaled_size.x == 0.0, || {
+                            if ui
+                                .input_float_config(lbl_id("", "size_x"), &mut size_x)
+                                .display_format(imgui::FloatFormat::F(0))
+                                .build()
+                            {
+                                if size_x > 0.0 {
+                                    options.scale = size_x / unscaled_size.x;
+                                }
+                            }
+                        });
+
+                        ui.same_line_ex(imgui::SameLine::Spacing(0.0));
+                        ui.text("×");
+                        ui.same_line_ex(imgui::SameLine::Spacing(0.0));
+
+                        ui.set_next_item_width(font_sz * 3.0);
+                        ui.with_disabled(unscaled_size.y == 0.0, || {
+                            if ui
+                                .input_float_config(lbl_id("", "size_y"), &mut size_y)
+                                .display_format(imgui::FloatFormat::F(0))
+                                .build()
+                            {
+                                if size_y > 0.0 {
+                                    options.scale = size_y / unscaled_size.y;
+                                }
+                            }
+                        });
+
+                        ui.same_line_ex(imgui::SameLine::Spacing(0.0));
+                        ui.text("×");
+                        ui.same_line_ex(imgui::SameLine::Spacing(0.0));
+
+                        ui.set_next_item_width(font_sz * 3.0);
+                        ui.with_disabled(unscaled_size.z == 0.0, || {
+                            if ui
+                                .input_float_config(lbl_id("", "size_z"), &mut size_z)
+                                .display_format(imgui::FloatFormat::F(0))
+                                .build()
+                            {
+                                if size_z > 0.0 {
+                                    options.scale = size_z / unscaled_size.z;
+                                }
+                            }
+                        });
+
+                        // Fix the scale to a sane value
+                        options.scale = options.scale.max(0.0);
+
+                        // Texture options
                         ui.with_disabled(!self.data.papercraft().model().has_textures(), || {
                             ui.checkbox(lbl_id(tr!("Textured"), "textured"), &mut options.texture);
                             ui.same_line_ex(imgui::SameLine::Spacing(font_sz * 3.0));

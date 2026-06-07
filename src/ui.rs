@@ -617,9 +617,8 @@ impl PapercraftContext {
         }
     }
     pub fn from_papercraft(papercraft: Papercraft, gl: &GlContext) -> Result<PapercraftContext> {
-        // Compute the bounding box, then move to the center and scale to a standard size
-        let (v_min, v_max) =
-            util_3d::bounding_box_3d(papercraft.model().vertices().map(|(_, v)| v.pos()));
+        // Get the bounding box, then move to the center and scale to a standard size
+        let (v_min, v_max) = papercraft.model().bounding_box();
         let size = (v_max.x - v_min.x)
             .max(v_max.y - v_min.y)
             .max(v_max.z - v_min.z);

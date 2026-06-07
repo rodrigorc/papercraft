@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     paper::{Papercraft, VertexIndex, formats::gltf::data::BoundingBox},
-    util_3d::{self, Vector2, Vector3},
+    util_3d::{Vector2, Vector3},
 };
 
 fn v_write_vec3(w: &mut Vec<u8>, v: Vector3) {
@@ -100,8 +100,7 @@ fn export_pieces(papercraft: &Papercraft, name: &str, gltf_format: GltfFormat) -
         byte_stride: Some(vertex_stride),
         target: Some(glow::ARRAY_BUFFER),
     });
-    let (bb_min, bb_max) =
-        util_3d::bounding_box_3d(papercraft.model().vertices().map(|(_, v)| v.pos()));
+    let (bb_min, bb_max) = papercraft.model().bounding_box();
 
     accessors.push(Accessor {
         ty: "VEC3",

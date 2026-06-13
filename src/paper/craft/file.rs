@@ -1,13 +1,31 @@
 use std::io::{Read, Seek, Write};
 
+use crate::version::Version;
+
 use super::*;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use formats::Importer;
+use tr::tr;
+
+// CRAFT File format changelog:
+// 1.0.0: Initial version. This is the default if no "version" is declared inside the archive
+// 1.1.0: "version" and "mimetype" are included. The "model.json" is identical as in 1.0.0.
+const CURRENT_CRAFT_FILE_FORMAT: Version = Version {
+    major: 1,
+    minor: 1,
+    rev: 0,
+};
 
 impl Papercraft {
     pub fn save<W: Write + Seek>(&self, w: W, thumbnail: Option<image::RgbaImage>) -> Result<()> {
         let mut zip = zip::ZipWriter::new(w);
         let options = zip::write::SimpleFileOptions::default();
+
+        zip.start_file("mimetype", options)?;
+        zip.write_all(b"application/x-papercraft")?;
+
+        zip.start_file("version", options)?;
+        write!(zip, "{CURRENT_CRAFT_FILE_FORMAT}")?;
 
         zip.start_file("model.json", options)?;
         serde_json::to_writer(&mut zip, self)?;
@@ -40,6 +58,33 @@ impl Papercraft {
 
     pub fn load<R: Read + Seek>(r: R) -> Result<Papercraft> {
         let mut zip = zip::ZipArchive::new(r)?;
+
+        let version = zip
+            .by_name("version")
+            .and_then(|mut fv| {
+                let mut s = String::new();
+                fv.read_to_string(&mut s)?;
+                Ok(Version::new(&s))
+            })
+            .unwrap_or(Version {
+                major: 1,
+                minor: 0,
+                rev: 0,
+            });
+        log::info!(".craft format version: {version}");
+
+        if version.major > CURRENT_CRAFT_FILE_FORMAT.major {
+            bail!(tr!(
+                "This .craft file is too new and can't be read. Please update your Papercraft version."
+            ));
+        } else if version.major == CURRENT_CRAFT_FILE_FORMAT.major
+            && version.minor > CURRENT_CRAFT_FILE_FORMAT.minor
+        {
+            log::warn!(
+                "This .craft file is newer than your Papercraft version. Please update your Papercraft version."
+            );
+        }
+
         let mut zmodel = zip.by_name("model.json")?;
         let mut papercraft: Papercraft = serde_json::from_reader(&mut zmodel)?;
         drop(zmodel);

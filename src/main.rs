@@ -43,8 +43,10 @@ mod util_3d;
 mod util_gl;
 
 mod ui;
-
 use ui::*;
+
+mod version;
+use version::Version;
 
 static LOGO_IMG: LazyLock<image::RgbaImage> =
     LazyLock::new(|| load_image_from_memory(include_bytes!("papercraft.png"), true).unwrap());
@@ -643,36 +645,6 @@ enum CheckVersionStatus {
     Newer(Version, String), // String is the url
     Current,
     Error(String),
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Version {
-    major: u32,
-    minor: u32,
-    rev: u32,
-}
-
-impl std::fmt::Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.rev)
-    }
-}
-
-impl Version {
-    fn new(mut s: &str) -> Version {
-        if let Some(p) = s.find('+') {
-            s = &s[..p];
-        }
-        if let Some(p) = s.find('-') {
-            s = &s[..p];
-        }
-
-        let mut pieces = s.split('.');
-        let major = pieces.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-        let minor = pieces.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-        let rev = pieces.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-        Version { major, minor, rev }
-    }
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]

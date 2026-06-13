@@ -1839,10 +1839,7 @@ impl PapercraftContext {
         for (i_edge, edge) in self.papercraft.model().edges() {
             match (self.papercraft.edge_status(i_edge), mode) {
                 (EdgeStatus::SoftHidden, MouseMode::Edge)
-                    if flags.contains(PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN) =>
-                {
-                    ()
-                }
+                    if flags.contains(PaperAnalyzeClickFlags::ALLOW_SOFT_HIDDEN) => {}
                 (EdgeStatus::Hidden | EdgeStatus::SoftHidden, _) => continue,
                 (EdgeStatus::Joined, MouseMode::Flap) => continue,
                 _ => (),

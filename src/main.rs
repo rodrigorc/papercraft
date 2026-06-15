@@ -1907,7 +1907,11 @@ impl GlobalContext {
                     {
                         menu_actions.save = true;
                     }
-                    if ui.menu_item_config(lbl(tr!("Save as..."))).build() {
+                    if ui
+                        .menu_item_config(lbl(tr!("Save as...")))
+                        .shortcut("Ctrl+Shift+S")
+                        .build()
+                    {
                         menu_actions.save_as = true;
                     }
                 });
@@ -1917,6 +1921,7 @@ impl GlobalContext {
                     }
                     if ui
                         .menu_item_config(lbl(tr!("Update with new model...")))
+                        .shortcut("Ctrl+I")
                         .build()
                     {
                         menu_actions.update_model = self.check_modified();
@@ -1927,6 +1932,7 @@ impl GlobalContext {
                 }
                 if ui
                     .menu_item_config(lbl(tr!("Generate Printable...")))
+                    .shortcut("Ctrl+P")
                     .build()
                 {
                     menu_actions.generate_printable = true;
@@ -2017,10 +2023,12 @@ impl GlobalContext {
 
                     ui.separator();
 
-                    if ui.menu_item_config(lbl(tr!("Repack pieces"))).build() {
-                        let undo = self.data.pack_islands();
-                        self.data.push_undo_action(undo);
-                        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
+                    if ui
+                        .menu_item_config(lbl(tr!("Repack pieces")))
+                        .shortcut("Ctrl+R")
+                        .build()
+                    {
+                        self.pack_islands();
                     }
                 }
             });
@@ -2111,75 +2119,118 @@ impl GlobalContext {
         // Modal pop-ups should disable the shortcuts
         if !ui.is_blocking_modal() {
             if self.modifiable() {
+                // face mode
                 if ui.shortcut_ex(imgui::Key::F5, imgui::InputFlags::RouteGlobal)
                     || ui.shortcut_ex(imgui::Key::Num1, imgui::InputFlags::RouteGlobal)
                 {
                     self.set_mouse_mode(MouseMode::Face);
                 }
+                // edge mode
                 if ui.shortcut_ex(imgui::Key::F6, imgui::InputFlags::RouteGlobal)
                     || ui.shortcut_ex(imgui::Key::Num2, imgui::InputFlags::RouteGlobal)
                 {
                     self.set_mouse_mode(MouseMode::Edge);
                 }
+                // flap mode
                 if ui.shortcut_ex(imgui::Key::F7, imgui::InputFlags::RouteGlobal)
                     || ui.shortcut_ex(imgui::Key::Num3, imgui::InputFlags::RouteGlobal)
                 {
                     self.set_mouse_mode(MouseMode::Flap);
                 }
+                // undo
                 if ui.shortcut_ex(
                     (imgui::KeyMod::Ctrl, imgui::Key::Z),
                     imgui::InputFlags::RouteGlobal,
                 ) {
                     menu_actions.undo = true;
                 }
+                // toggle snap mode
                 if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
                     self.data.ui.snap ^= true;
                 }
+                // repack pieces
+                if ui.shortcut_ex(
+                    (imgui::KeyMod::Ctrl, imgui::Key::R),
+                    imgui::InputFlags::RouteGlobal,
+                ) {
+                    self.pack_islands();
+                }
             }
+            // quit
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl, imgui::Key::Q),
                 imgui::InputFlags::RouteGlobal,
             ) {
                 menu_actions.quit = self.check_modified();
             }
+            // open
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl, imgui::Key::O),
                 imgui::InputFlags::RouteGlobal,
             ) {
                 menu_actions.open = self.check_modified();
             }
+            // save
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl, imgui::Key::S),
                 imgui::InputFlags::RouteGlobal,
             ) {
                 menu_actions.save = true;
             }
+            // save as ...
+            if ui.shortcut_ex(
+                (imgui::KeyMod::Ctrl | imgui::KeyMod::Shift, imgui::Key::S),
+                imgui::InputFlags::RouteGlobal,
+            ) {
+                menu_actions.save_as = true;
+            }
+            // update with new model
+            if ui.shortcut_ex(
+                (imgui::KeyMod::Ctrl, imgui::Key::I),
+                imgui::InputFlags::RouteGlobal,
+            ) {
+                menu_actions.update_model = self.check_modified();
+            }
+            //generate paper printable
+            if ui.shortcut_ex(
+                (imgui::KeyMod::Ctrl, imgui::Key::P),
+                imgui::InputFlags::RouteGlobal,
+            ) {
+                menu_actions.generate_printable = true;
+            }
+            // toggle 3D x-ray
             if ui.shortcut_ex(imgui::Key::X, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.xray_selection ^= true;
                 self.add_rebuild(RebuildFlags::SELECTION);
             }
+            // toggle paper overlap highlight
             if ui.shortcut_ex(imgui::Key::H, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.highlight_overlaps ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
             }
+            // toggle drawing paper layout
             if ui.shortcut_ex(imgui::Key::P, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.draw_paper ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
             }
+            // toggle showing texture
             if self.data.papercraft().options().texture
                 && ui.shortcut_ex(imgui::Key::T, imgui::InputFlags::RouteGlobal)
             {
                 self.data.ui.show_textures ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
             }
+            // toggle 3D model edge lines
             if ui.shortcut_ex(imgui::Key::D, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_3d_lines ^= true;
                 self.add_rebuild(RebuildFlags::SCENE_REDRAW | RebuildFlags::SCENE_EDGE);
             }
+            // toggle showing paper flaps
             if ui.shortcut_ex(imgui::Key::B, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_flaps ^= true;
                 self.add_rebuild(RebuildFlags::PAPER);
             }
+            // toggle showing paper piece labels
             if ui.shortcut_ex(imgui::Key::E, imgui::InputFlags::RouteGlobal) {
                 self.data.ui.show_texts ^= true;
                 self.add_rebuild(RebuildFlags::PAPER_REDRAW);
@@ -2187,6 +2238,7 @@ impl GlobalContext {
                     self.add_rebuild(RebuildFlags::ISLANDS | RebuildFlags::PAPER);
                 }
             }
+            // show/hide document properties
             if ui.shortcut_ex(imgui::Key::Enter, imgui::InputFlags::RouteGlobal) {
                 match &self.options_opened {
                     None => {
@@ -3297,6 +3349,12 @@ impl GlobalContext {
         export_model_file(self.data.papercraft(), file_name)
             .with_context(|| tr!("Error exporting to {}", file_name.display()))?;
         Ok(())
+    }
+
+    fn pack_islands(&mut self) {
+        let undo = self.data.pack_islands();
+        self.data.push_undo_action(undo);
+        self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
     }
 
     fn save_backup_on_panic(&self) {

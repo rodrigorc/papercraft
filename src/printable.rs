@@ -935,9 +935,23 @@ impl GlobalContext {
                 u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
 
                 // Creases
-                gl_fixs.prg_paper_line.draw(
-                    &u,
-                    &self.data.gl_objs().paper_vertices_edge_crease,
+                self.gl.active_texture(glow::TEXTURE1);
+                self.gl.bind_texture(
+                    glow::TEXTURE_1D,
+                    Some(self.data.gl_objs().tex_fold_mountain.id()),
+                );
+
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(
+                    glow::TEXTURE_1D,
+                    Some(self.data.gl_objs().tex_fold_valley.id()),
+                );
+                gl_fixs.prg_paper_line_dash.draw(
+                    (&u, &Uniforms2DDash { tex_2: 1 }),
+                    (
+                        &self.data.gl_objs().paper_vertices_edge_crease,
+                        &self.data.gl_objs().paper_vertices_edge_kind,
+                    ),
                     glow::TRIANGLES,
                 );
 

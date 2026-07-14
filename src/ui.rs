@@ -14,15 +14,18 @@ use easy_imgui_window::{
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
-use crate::util_gl::{
-    MLINE3D_CUT, MLINE3D_HIDDEN, MLINE3D_NORMAL, MLINE3D_RIM, MLINE3D_RIM_TAB, MLine3DStatus,
-    MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL, MStatus, MVertex2D, MVertex2DColor, MVertex2DLine,
-    MVertex3D, MVertex3DLine, MVertexText,
-};
 use crate::{FONT_SIZE, TextBuilder};
 use crate::{
     PrintableText, TextAlign,
     glr::{self, Rgba},
+};
+use crate::{
+    paper::DashPattern,
+    util_gl::{
+        MLINE3D_CUT, MLINE3D_HIDDEN, MLINE3D_NORMAL, MLINE3D_RIM, MLINE3D_RIM_TAB, MLine3DStatus,
+        MSTATUS_HI, MSTATUS_SEL, MSTATUS_UNSEL, MStatus, MVertex2D, MVertex2DColor, MVertex2DKind,
+        MVertex2DLine, MVertex3D, MVertex3DLine, MVertexText,
+    },
 };
 use crate::{
     paper::IslandFaceKey,
@@ -57,9 +60,12 @@ pub struct GLObjects {
     pub edge_map: FxHashMap<EdgeIndex, usize>,
 
     // For 2D
+    pub tex_fold_valley: glr::Texture,
+    pub tex_fold_mountain: glr::Texture,
     pub paper_vertices: glr::DynamicVertexArray<MVertex2D>,
     pub paper_vertices_edge_cut: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_crease: glr::DynamicVertexArray<MVertex2DLine>,
+    pub paper_vertices_edge_kind: glr::DynamicVertexArray<MVertex2DKind>,
     pub paper_vertices_flap: glr::DynamicVertexArray<MVertex2DColor>,
     pub paper_vertices_flap_edge: glr::DynamicVertexArray<MVertex2DLine>,
     pub paper_vertices_edge_sel: glr::DynamicVertexArray<MVertex2DLine>,
@@ -605,9 +611,24 @@ impl PapercraftContext {
                 set_texture_filter(tex.gl(), options.tex_filter);
             }
         }
+
         let old_options = self
             .papercraft
             .set_options(options, /* relocate_pieces */ push_undo_action);
+
+        let new_options = self.papercraft.options();
+        if old_options.fold_pattern_mountain != new_options.fold_pattern_mountain {
+            GLObjects::build_dashed_texture(
+                &self.gl_objs.tex_fold_mountain,
+                &new_options.fold_pattern_mountain,
+            );
+        }
+        if old_options.fold_pattern_valley != new_options.fold_pattern_valley {
+            GLObjects::build_dashed_texture(
+                &self.gl_objs.tex_fold_valley,
+                &new_options.fold_pattern_valley,
+            );
+        }
 
         if let Some(island_pos) = island_pos {
             self.push_undo_action(vec![UndoAction::DocConfig {
@@ -824,63 +845,69 @@ impl PapercraftContext {
             };
 
             let v_len = edge_vec.magnitude();
+            let edge_vec_unit = edge_vec / v_len;
 
-            let fold_factor = options.fold_line_len / v_len;
+            //let fold_factor = options.fold_line_len / v_len;
             if let Some(crease_kind) = crease_kind {
-                let visible_line = if matching_edges {
+                // visible_line.0:
+                //    * None: do not show the line
+                //    * Some(x): extend the line x units outward
+                // visible_line.1:
+                //    * None: The line between the vertices is solid
+                //    * Some(0): The line between the vertices is not shown
+                //    * Some(x): The line between the vertices is broken, x units from each vertex
+                let visible_line: (Option<f32>, Option<f32>) = if matching_edges {
                     (None, None)
                 } else {
                     match options.fold_style {
                         FoldStyle::Full => (Some(0.0), None),
-                        FoldStyle::FullAndOut => (Some(fold_factor), None),
-                        FoldStyle::Out => (Some(fold_factor), Some(0.0)),
-                        FoldStyle::In => (Some(0.0), Some(fold_factor)),
-                        FoldStyle::InAndOut => (Some(fold_factor), Some(fold_factor)),
+                        FoldStyle::FullAndOut => (Some(options.fold_line_len), None),
+                        FoldStyle::Out => (Some(options.fold_line_len), Some(0.0)),
+                        FoldStyle::In => (Some(0.0), Some(options.fold_line_len)),
+                        FoldStyle::InAndOut => {
+                            (Some(options.fold_line_len), Some(options.fold_line_len))
+                        }
                         FoldStyle::None => (None, None),
                     }
                 };
+                // Divide by 10.0 to convert dash texel length to mm
+                let dash_len = options.fold_pattern(crease_kind).sum() as f32 / 10.0;
                 match visible_line {
+                    // No line
                     (None, _) => {}
+                    // One line (-f .... +f)
                     (Some(f), None) => {
-                        let vn = edge_vec * f;
+                        let vn = edge_vec_unit * f;
                         let line_2d = Line2D {
                             p0: pos0 - vn,
                             p1: pos1 + vn,
-                            dash0: 0.0,
-                            dash1: if crease_kind == EdgeDrawKind::Valley {
-                                v_len * (1.0 + 2.0 * f)
-                            } else {
-                                0.0
-                            },
+                            dash0: -f / dash_len,
+                            dash1: (v_len + f) / dash_len,
                             width_left,
                             width_right,
                         };
                         args.vertices_edge_crease.push((line_2d, crease_kind));
                     }
+                    // Two lines (-f_a:f_b    -fb:f_a)
                     (Some(f_a), Some(f_b)) => {
-                        let vn_a = edge_vec * f_a;
-                        let vn_b = edge_vec * f_b;
+                        let vn_a = edge_vec_unit * f_a;
+                        let vn_b = edge_vec_unit * f_b;
                         let line_a = Line2D {
                             p0: pos0 - vn_a,
                             p1: pos0 + vn_b,
-                            dash0: 0.0,
-                            dash1: if crease_kind == EdgeDrawKind::Valley {
-                                v_len * (f_a + f_b)
-                            } else {
-                                0.0
-                            },
+                            dash0: -f_a / dash_len,
+                            dash1: f_b / dash_len,
                             width_left,
                             width_right,
                         };
                         let line_b = Line2D {
                             p0: pos1 - vn_b,
                             p1: pos1 + vn_a,
-                            dash0: 0.0,
-                            dash1: line_a.dash1,
+                            dash0: f_b / dash_len,
+                            dash1: -f_a / dash_len,
                             width_left,
                             width_right,
                         };
-                        // two lines
                         args.vertices_edge_crease.push((line_a, crease_kind));
                         args.vertices_edge_crease.push((line_b, crease_kind));
                     }
@@ -1281,11 +1308,30 @@ impl PapercraftContext {
             &args.vertices_edge_cut,
             options.cut_line_color.to_rgba(),
         );
-        build_vertices_for_lines_2d(
-            self.gl_objs.paper_vertices_edge_crease.data_mut(),
-            args.vertices_edge_crease.iter().map(|(v, _)| v),
-            options.fold_line_color.to_rgba(),
-        );
+
+        // The edge_crease are tricky becasue there are valleys and mountains
+        {
+            let gl_vertices = self.gl_objs.paper_vertices_edge_crease.data_mut();
+            let gl_kind = self.gl_objs.paper_vertices_edge_kind.data_mut();
+
+            build_vertices_for_lines_2d(
+                gl_vertices,
+                args.vertices_edge_crease.iter().map(|(v, _)| v),
+                options.fold_line_color.to_rgba(),
+            );
+            gl_kind.clear();
+            gl_kind.extend(
+                args.vertices_edge_crease
+                    .iter()
+                    .map(|(_, t)| {
+                        let k = MVertex2DKind {
+                            valley: (*t == EdgeDrawKind::Valley) as i8,
+                        };
+                        std::iter::repeat(k).take(6)
+                    })
+                    .flatten(),
+            );
+        }
         self.gl_objs.paper_vertices_flap.set(args.vertices_flap);
         build_vertices_for_lines_2d(
             self.gl_objs.paper_vertices_flap_edge.data_mut(),
@@ -2911,9 +2957,36 @@ impl GLObjects {
         let scene_vertices_edge = glr::DynamicVertexArray::from_data(gl, edges)?;
         let scene_vertices_edge_status = glr::DynamicVertexArray::from_data(gl, edge_status)?;
 
+        let tex_fold_mountain = glr::Texture::generate(gl)?;
+        let tex_fold_valley = glr::Texture::generate(gl)?;
+        for tex_fold in [&tex_fold_mountain, &tex_fold_valley] {
+            unsafe {
+                gl.bind_texture(glow::TEXTURE_1D, Some(tex_fold.id()));
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_1D,
+                    glow::TEXTURE_MIN_FILTER,
+                    glow::NEAREST as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_1D,
+                    glow::TEXTURE_MAG_FILTER,
+                    glow::NEAREST as i32,
+                );
+                gl.tex_parameter_i32(glow::TEXTURE_1D, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
+                gl.tex_parameter_i32(glow::TEXTURE_1D, glow::TEXTURE_MAX_LEVEL, 0);
+                gl.bind_texture(glow::TEXTURE_1D, None);
+            }
+        }
+        Self::build_dashed_texture(
+            &tex_fold_mountain,
+            &papercraft.options().fold_pattern_mountain,
+        );
+        Self::build_dashed_texture(&tex_fold_valley, &papercraft.options().fold_pattern_valley);
+
         let paper_vertices = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_edge_crease = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_edge_kind = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_flap = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_flap_edge = glr::DynamicVertexArray::new(gl)?;
         let paper_vertices_edge_sel = glr::DynamicVertexArray::new(gl)?;
@@ -2934,9 +3007,12 @@ impl GLObjects {
             scene_vertices_edge_status,
             edge_map,
 
+            tex_fold_valley,
+            tex_fold_mountain,
             paper_vertices,
             paper_vertices_edge_cut,
             paper_vertices_edge_crease,
+            paper_vertices_edge_kind,
             paper_vertices_flap,
             paper_vertices_flap_edge,
             paper_vertices_edge_sel,
@@ -2946,6 +3022,36 @@ impl GLObjects {
             paper_vertices_page,
             paper_vertices_margin,
         })
+    }
+
+    // Builds a 1D texture based on a DashPattern.
+    // The scale is fixed at 10 texel/mm
+    fn build_dashed_texture(tex: &glr::Texture, pattern: &DashPattern) {
+        let gl = tex.gl();
+        let len = pattern.sum();
+        let mut dash = vec![0; len];
+        let mut color = 0xff;
+        let mut pos = 0;
+        for d in pattern.iter() {
+            dash[pos..][..d].fill(color);
+            color ^= 0xff;
+            pos += d;
+        }
+        unsafe {
+            gl.bind_texture(glow::TEXTURE_1D, Some(tex.id()));
+            gl.tex_image_1d(
+                glow::TEXTURE_1D,
+                0,
+                glow::R8 as i32,
+                dash.len() as i32,
+                0,
+                glow::RED,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(&dash)),
+            );
+
+            gl.bind_texture(glow::TEXTURE_1D, None);
+        }
     }
 }
 

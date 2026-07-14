@@ -61,7 +61,7 @@ use paper::{
     formats::{export_model_file, import_model_file},
 };
 use util_3d::Matrix3;
-use util_gl::{UniformQuad, Uniforms2D, Uniforms3D};
+use util_gl::{UniformQuad, Uniforms2D, Uniforms2DDash, Uniforms3D};
 
 use clap::Parser;
 
@@ -340,6 +340,9 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
             .with_context(|| "paper_solid")?;
     let prg_paper_line = util_gl::program_from_source(gl, include_str!("shaders/paper_line.glsl"))
         .with_context(|| "paper_line")?;
+    let prg_paper_line_dash =
+        util_gl::program_from_source(gl, include_str!("shaders/paper_line_dash.glsl"))
+            .with_context(|| "paper_line_dash")?;
     let prg_quad = util_gl::program_from_source(gl, include_str!("shaders/quad.glsl"))
         .with_context(|| "quad")?;
     let prg_text = util_gl::program_from_source(gl, include_str!("shaders/text.glsl"))
@@ -414,6 +417,8 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
         prg_scene_line,
         prg_paper_solid,
         prg_paper_line,
+        prg_paper_line_dash,
+
         prg_quad,
         prg_text,
     })
@@ -434,6 +439,7 @@ struct GLFixedObjects {
     prg_scene_line: glr::Program,
     prg_paper_solid: glr::Program,
     prg_paper_line: glr::Program,
+    prg_paper_line_dash: glr::Program,
     prg_quad: glr::Program,
     prg_text: glr::Program,
 }
@@ -1458,6 +1464,40 @@ impl GlobalContext {
                                 options.fold_line_width = fold_line.thick.max(0.0);
                                 options.fold_line_color.0 = fold_line.color;
                             });
+
+                            ui.align_text_to_frame_padding();
+                            ui.text(&tr!("Patterns:"));
+                            ui.same_line();
+                            ui.text_disabled("(?)");
+                            ui.with_item_tooltip(|| {
+                                ui.with_push(imgui::TextWrapPos(font_sz * 20.0), || {
+                                    ui.text(&tr!("Patterns are written as a list of numbers, each a length in millimeters (with 0.1 mm precision) representing the lengths of \"dash-space-dash-space\"."));
+                                });
+                            });
+                            ui.same_line();
+                            ui.text(&tr!("Mountains"));
+                            ui.same_line();
+                            ui.set_next_item_width(font_sz * 8.0);
+                            let mut mpat = options.fold_pattern_mountain.to_string();
+                            if ui.input_text_config(lbl_id("", "mountain_pattern"), &mut mpat)
+                                .build()
+                            {
+                                if let Ok(dash) = mpat.parse() {
+                                    options.fold_pattern_mountain = dash;
+                                }
+                            }
+                            ui.same_line();
+                            ui.text(&tr!("Valleys"));
+                            ui.same_line();
+                            ui.set_next_item_width(font_sz * 8.0);
+                            let mut mpat = options.fold_pattern_valley.to_string();
+                            if ui.input_text_config(lbl_id("", "valley_pattern"), &mut mpat)
+                                .build()
+                            {
+                                if let Ok(dash) = mpat.parse() {
+                                    options.fold_pattern_valley = dash;
+                                }
+                            }
 
                             build_length(
                                 ui,
@@ -3012,9 +3052,23 @@ impl GlobalContext {
             }
 
             // Creases
-            gl_fixs.prg_paper_line.draw(
-                &u,
-                &self.data.gl_objs().paper_vertices_edge_crease,
+            self.gl.active_texture(glow::TEXTURE1);
+            self.gl.bind_texture(
+                glow::TEXTURE_1D,
+                Some(self.data.gl_objs().tex_fold_mountain.id()),
+            );
+
+            self.gl.active_texture(glow::TEXTURE0);
+            self.gl.bind_texture(
+                glow::TEXTURE_1D,
+                Some(self.data.gl_objs().tex_fold_valley.id()),
+            );
+            gl_fixs.prg_paper_line_dash.draw(
+                (&u, &Uniforms2DDash { tex_2: 1 }),
+                (
+                    &self.data.gl_objs().paper_vertices_edge_crease,
+                    &self.data.gl_objs().paper_vertices_edge_kind,
+                ),
                 glow::TRIANGLES,
             );
 

@@ -10,9 +10,10 @@ use tr::tr;
 // CRAFT File format changelog:
 // 1.0.0: Initial version. This is the default if no "version" is declared inside the archive
 // 1.1.0: "version" and "mimetype" are included. The "model.json" is identical as in 1.0.0.
+// 1.2.0: "fold_pattern_mountain" and "fold_pattern_valley"
 const CURRENT_CRAFT_FILE_FORMAT: Version = Version {
     major: 1,
-    minor: 1,
+    minor: 2,
     rev: 0,
 };
 

@@ -2,6 +2,7 @@ use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::{cell::RefCell, rc::Rc};
 
+use crate::ui::EdgeDrawKind;
 use crate::util_3d;
 use crate::util_gl::MLine3DStatus;
 use cgmath::{Deg, Rad, prelude::*};
@@ -202,6 +203,14 @@ fn default_line3d_cut() -> LineConfig {
     }
 }
 
+fn default_fold_pattern_mountain() -> DashPattern {
+    DashPattern(vec![100, 0])
+}
+
+fn default_fold_pattern_valley() -> DashPattern {
+    DashPattern(vec![5, 5])
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MyColor(pub Color);
 
@@ -210,6 +219,10 @@ impl MyColor {
         Rgba::new(self.0.r, self.0.g, self.0.b, self.0.a)
     }
 }
+
+// A dash pattern is a sequence of dash-space in 0.1 mm units
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct DashPattern(pub Vec<u32>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LineConfig {
@@ -253,6 +266,10 @@ pub struct PaperOptions {
     #[serde(rename = "tab_angle")]
     pub flap_angle: f32, //degrees
     pub fold_line_len: f32, //only for folds in & out
+    #[serde(default = "default_fold_pattern_mountain")]
+    pub fold_pattern_mountain: DashPattern,
+    #[serde(default = "default_fold_pattern_valley")]
+    pub fold_pattern_valley: DashPattern,
     #[serde(default, rename = "shadow_tab_alpha")]
     pub shadow_flap_alpha: f32, //0.0 - 1.0
     // Do not use LineConfig for compatibility with older models
@@ -336,6 +353,8 @@ impl Default for PaperOptions {
             paper_color: default_paper_color(),
             paper_bg_color: default_paper_bg_color(),
             paper_highlight_color: default_paper_highlight_color(),
+            fold_pattern_mountain: default_fold_pattern_mountain(),
+            fold_pattern_valley: default_fold_pattern_valley(),
         }
     }
 }
@@ -414,6 +433,13 @@ impl PaperOptions {
         self.paper_color = default_paper_color();
         self.paper_highlight_color = default_paper_highlight_color();
         self.margin = (10.0, 10.0, 10.0, 10.0);
+    }
+
+    pub fn fold_pattern(&self, kind: EdgeDrawKind) -> &DashPattern {
+        match kind {
+            EdgeDrawKind::Mountain => &self.fold_pattern_mountain,
+            EdgeDrawKind::Valley => &self.fold_pattern_valley,
+        }
     }
 }
 
@@ -2195,5 +2221,63 @@ impl<'de> Deserialize<'de> for MyColor {
         }
         let d = Def::deserialize(deserializer)?;
         Ok(MyColor(Color::new(d.r, d.g, d.b, d.a)))
+    }
+}
+
+impl DashPattern {
+    pub fn sum(&self) -> usize {
+        self.0.iter().map(|c| *c as usize).sum()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = usize> {
+        self.0.iter().map(|c| *c as usize)
+    }
+}
+
+// For the Options UI
+impl std::fmt::Display for DashPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Since values in the dash are measured in 0.1mm units but the user expects millimeters, divide by 10.0 when formatting
+        // and multiply when parsing.
+        // We only print one decimal, and only if needed.
+        fn fmt_value(x: u32) -> String {
+            let mut s = format!("{:.1}", (x as f32) / 10.0);
+            let s0: String = s.trim_end_matches('0').trim_end_matches('.').into();
+            s.truncate(s0.len());
+            s
+        }
+        let d = &self.0[..];
+        match d {
+            &[] => {}
+            &[first, ref rest @ ..] => {
+                write!(f, "{}", fmt_value(first))?;
+                for x in rest {
+                    write!(f, " {}", fmt_value(*x))?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::str::FromStr for DashPattern {
+    type Err = std::num::ParseFloatError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut res = Vec::new();
+        for sn in s.split_whitespace() {
+            let x: f32 = sn.parse()?;
+            res.push((x * 10.0).round() as u32);
+        }
+        // Do not build an empty pattern, that would be inconvenient later
+        if res.is_empty() {
+            res.push(100);
+        }
+        // This is not needed, but it is nice to see the length always even
+        if !res.len().is_multiple_of(2) {
+            res.push(0);
+        }
+        // TODO check max length
+        Ok(DashPattern(res))
     }
 }

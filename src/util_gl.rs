@@ -23,6 +23,9 @@ uniform! {
         pub texturize: i32,
         pub notex_color: Rgba,
     }
+    pub struct Uniforms2DDash {
+        pub tex_2: i32,
+    }
     pub struct UniformQuad {
         pub color: Rgba,
     }
@@ -69,6 +72,11 @@ attrib! {
         pub pos_2d: Vector2,
         pub color: Rgba,
         pub line_dash: f32,
+    }
+    #[derive(Copy, Clone, Debug)]
+    #[repr(C)]
+    pub struct MVertex2DKind {
+        pub valley: i8,
     }
     #[derive(Copy, Clone, Debug)]
     #[repr(C)]

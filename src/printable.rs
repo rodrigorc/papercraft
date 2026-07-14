@@ -524,10 +524,9 @@ impl GlobalContext {
             writeln!(
                 suffix,
                 r#"<g inkscape:label="{0}" inkscape:groupmode="layer" id="{0}">"#,
-                if fold_kind == EdgeDrawKind::Mountain {
-                    "Mountain"
-                } else {
-                    "Valley"
+                match fold_kind {
+                    EdgeDrawKind::Mountain => "Mountain",
+                    EdgeDrawKind::Valley => "Valley",
                 }
             )?;
             for (idx, (_, lines)) in lines_by_island.iter().enumerate() {
@@ -541,20 +540,14 @@ impl GlobalContext {
                     })
                     .collect::<Vec<_>>();
                 if !page_creases.is_empty() {
+                    let (color, prefix) = match fold_kind == EdgeDrawKind::Mountain {
+                        true => ("#ff0000", "foldm"),
+                        false => ("#0000ff", "foldv"),
+                    };
                     writeln!(
                         suffix,
                         r#"<path style="fill:none;stroke:{1};stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter" id="{2}_{0}" d=""#,
-                        idx,
-                        if fold_kind == EdgeDrawKind::Mountain {
-                            "#ff0000"
-                        } else {
-                            "#0000ff"
-                        },
-                        if fold_kind == EdgeDrawKind::Mountain {
-                            "foldm"
-                        } else {
-                            "foldv"
-                        }
+                        idx, color, prefix
                     )?;
                     for (a, b) in page_creases {
                         writeln!(suffix, r#"M {},{} {},{}"#, a.x, a.y, b.x, b.y)?;

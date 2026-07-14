@@ -49,9 +49,9 @@ slotmap = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zip = "8.1.0"
-bitflags = "2"
+bitflags = "2.13.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-clap = { version = "4", features = ["derive", "cargo"] }
+clap = { version = "4.6.2", features = ["derive", "cargo"] }
 log = "0.4"
 env_logger = "0.11"
 flate2 = "1"
@@ -61,7 +61,7 @@ opener = { version = "0.8", default-features = false }
 maybe-owned = { version = "0.3", features = ["serde"] }
 tr = { version = "0.1.10", default-features = false }
 
-lopdf = "0.41"
+lopdf = "0.44.0"
 time = { version = "0.3", features = ["local-offset"] }
 
 easy-imgui-window =  "0.23.0"
@@ -77,3 +77,5 @@ num_cpus = "1.17.0"
 
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "default-tls"] }
 
+# shouldn't be needed, will be in next easy-imgui
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }

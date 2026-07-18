@@ -870,19 +870,20 @@ impl PapercraftContext {
                         FoldStyle::None => (None, None),
                     }
                 };
-                // Divide by 10.0 to convert dash texel length to mm
-                let dash_len = options.fold_pattern(crease_kind).sum() as f32 / 10.0;
                 match visible_line {
                     // No line
                     (None, _) => {}
                     // One line (-f .... +f)
                     (Some(f), None) => {
+                        let dash_len_fixed = options
+                            .fold_pattern(crease_kind)
+                            .pattern_length_fixed(v_len);
                         let vn = edge_vec_unit * f;
                         let line_2d = Line2D {
                             p0: pos0 - vn,
                             p1: pos1 + vn,
-                            dash0: -f / dash_len,
-                            dash1: (v_len + f) / dash_len,
+                            dash0: -f / dash_len_fixed,
+                            dash1: (v_len + f) / dash_len_fixed,
                             width_left,
                             width_right,
                         };
@@ -890,6 +891,7 @@ impl PapercraftContext {
                     }
                     // Two lines (-f_a:f_b    -fb:f_a)
                     (Some(f_a), Some(f_b)) => {
+                        let dash_len = options.fold_pattern(crease_kind).pattern_length();
                         let vn_a = edge_vec_unit * f_a;
                         let vn_b = edge_vec_unit * f_b;
                         let line_a = Line2D {
@@ -1320,17 +1322,12 @@ impl PapercraftContext {
                 options.fold_line_color.to_rgba(),
             );
             gl_kind.clear();
-            gl_kind.extend(
-                args.vertices_edge_crease
-                    .iter()
-                    .map(|(_, t)| {
-                        let k = MVertex2DKind {
-                            valley: (*t == EdgeDrawKind::Valley) as i8,
-                        };
-                        std::iter::repeat(k).take(6)
-                    })
-                    .flatten(),
-            );
+            gl_kind.extend(args.vertices_edge_crease.iter().flat_map(|(_, t)| {
+                let k = MVertex2DKind {
+                    valley: (*t == EdgeDrawKind::Valley) as i8,
+                };
+                std::iter::repeat_n(k, 6)
+            }));
         }
         self.gl_objs.paper_vertices_flap.set(args.vertices_flap);
         build_vertices_for_lines_2d(
@@ -1527,12 +1524,10 @@ impl PapercraftContext {
         } else {
             -1
         };
-        for vi in self.gl_objs.vertices_sel.data_mut() {
-            *vi = MStatus {
-                color: MSTATUS_UNSEL.color,
-                top,
-            };
-        }
+        self.gl_objs.vertices_sel.data_mut().fill(MStatus {
+            color: MSTATUS_UNSEL.color,
+            top,
+        });
 
         let fn_body_to_top = |vertices_sel: &mut glr::DynamicVertexArray<MStatus>,
                               i_face: FaceIndex| {
@@ -3028,7 +3023,7 @@ impl GLObjects {
     // The scale is fixed at 10 texel/mm
     fn build_dashed_texture(tex: &glr::Texture, pattern: &DashPattern) {
         let gl = tex.gl();
-        let len = pattern.sum();
+        let len = pattern.texture_length();
         let mut dash = vec![0; len];
         let mut color = 0xff;
         let mut pos = 0;

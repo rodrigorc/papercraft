@@ -1463,41 +1463,41 @@ impl GlobalContext {
                                 );
                                 options.fold_line_width = fold_line.thick.max(0.0);
                                 options.fold_line_color.0 = fold_line.color;
-                            });
 
-                            ui.align_text_to_frame_padding();
-                            ui.text(&tr!("Patterns:"));
-                            ui.same_line();
-                            ui.text_disabled("(?)");
-                            ui.with_item_tooltip(|| {
-                                ui.with_push(imgui::TextWrapPos(font_sz * 20.0), || {
-                                    ui.text(&tr!("Patterns are written as a list of numbers, each a length in millimeters (with 0.1 mm precision) representing the lengths of \"dash-space-dash-space\"."));
+                                ui.align_text_to_frame_padding();
+                                ui.text(&tr!("Patterns:"));
+                                ui.same_line();
+                                ui.text_disabled("(?)");
+                                ui.with_item_tooltip(|| {
+                                    ui.with_push(imgui::TextWrapPos(font_sz * 20.0), || {
+                                        ui.text(&tr!("Patterns are written as a list of numbers, each a length in millimeters (with 0.1 mm precision) representing the lengths of \"dash-space-dash-space\"."));
+                                    });
                                 });
+                                ui.same_line();
+                                ui.text(&tr!("Mountains"));
+                                ui.same_line();
+                                ui.set_next_item_width(font_sz * 8.0);
+                                let mut mpat = options.fold_pattern_mountain.to_string();
+                                if ui.input_text_config(lbl_id("", "mountain_pattern"), &mut mpat)
+                                    .build()
+                                {
+                                    if let Ok(dash) = mpat.parse() {
+                                        options.fold_pattern_mountain = dash;
+                                    }
+                                }
+                                ui.same_line();
+                                ui.text(&tr!("Valleys"));
+                                ui.same_line();
+                                ui.set_next_item_width(font_sz * 8.0);
+                                let mut mpat = options.fold_pattern_valley.to_string();
+                                if ui.input_text_config(lbl_id("", "valley_pattern"), &mut mpat)
+                                    .build()
+                                {
+                                    if let Ok(dash) = mpat.parse() {
+                                        options.fold_pattern_valley = dash;
+                                    }
+                                }
                             });
-                            ui.same_line();
-                            ui.text(&tr!("Mountains"));
-                            ui.same_line();
-                            ui.set_next_item_width(font_sz * 8.0);
-                            let mut mpat = options.fold_pattern_mountain.to_string();
-                            if ui.input_text_config(lbl_id("", "mountain_pattern"), &mut mpat)
-                                .build()
-                            {
-                                if let Ok(dash) = mpat.parse() {
-                                    options.fold_pattern_mountain = dash;
-                                }
-                            }
-                            ui.same_line();
-                            ui.text(&tr!("Valleys"));
-                            ui.same_line();
-                            ui.set_next_item_width(font_sz * 8.0);
-                            let mut mpat = options.fold_pattern_valley.to_string();
-                            if ui.input_text_config(lbl_id("", "valley_pattern"), &mut mpat)
-                                .build()
-                            {
-                                if let Ok(dash) = mpat.parse() {
-                                    options.fold_pattern_valley = dash;
-                                }
-                            }
 
                             build_length(
                                 ui,

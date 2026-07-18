@@ -2225,8 +2225,33 @@ impl<'de> Deserialize<'de> for MyColor {
 }
 
 impl DashPattern {
-    pub fn sum(&self) -> usize {
+    pub fn texture_length(&self) -> usize {
         self.0.iter().map(|c| *c as usize).sum()
+    }
+
+    pub fn pattern_length(&self) -> f32 {
+        // Divide by 10.0 to convert dash texel length to mm
+        self.texture_length() as f32 / 10.0
+    }
+
+    // We'd like the pattern to end in the last solid dash, not the transparent one, that is the actual end.
+    // That happens when v_len = (K * dash_len - last_gap_len), for some integer K > 0
+    // So: K = (v_len + last_gap_len) / dash_len
+    // We will hack the dash_len just a bit to get this effect.
+    pub fn pattern_length_fixed(&self, v_len: f32) -> f32 {
+        // A pattern of the form "X 0" is actually solid, so this fix doesn't apply
+        if self.0.len() <= 2 && self.0.get(1).copied().unwrap_or(0) == 0 {
+            return v_len;
+        }
+        let dash_len = self.pattern_length();
+        let last_gap_len = if self.0.len().is_multiple_of(2) {
+            self.0.last().map_or(0.0, |c| *c as f32 / 10.0)
+        } else {
+            0.0
+        };
+        let k = ((v_len + last_gap_len) / dash_len).ceil();
+        let k = if k == 0.0 { 1.0 } else { k };
+        dash_len / ((k * dash_len - last_gap_len) / v_len)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = usize> {
@@ -2248,9 +2273,9 @@ impl std::fmt::Display for DashPattern {
         }
         let d = &self.0[..];
         match d {
-            &[] => {}
-            &[first, ref rest @ ..] => {
-                write!(f, "{}", fmt_value(first))?;
+            [] => {}
+            [first, rest @ ..] => {
+                write!(f, "{}", fmt_value(*first))?;
                 for x in rest {
                     write!(f, " {}", fmt_value(*x))?;
                 }

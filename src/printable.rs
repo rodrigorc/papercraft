@@ -88,7 +88,7 @@ impl GlobalContext {
 
         thread::scope(|s| {
             self.generate_pages(None, |page, pixbuf, _, texts, _| {
-                let streams = sem_results.wait_with(2, |results| std::mem::take(results));
+                let streams = sem_results.wait_with(2, std::mem::take);
 
                 // Drain the reuslt streams before posting the new page to avoid having all pages in memory at the same time
                 // The order of the streams in the PDF will be somehow arbitrary, but techically correct... the best kind of correct!

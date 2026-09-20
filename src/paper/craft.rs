@@ -453,6 +453,8 @@ pub struct Papercraft {
     islands: SlotMap<IslandKey, Island>,
     #[serde(skip)]
     island_order: Vec<IslandKey>,
+    #[serde(rename = "island_order", default, skip_serializing)]
+    saved_island_order: Option<Vec<FaceIndex>>,
 
     #[serde(skip)]
     memo: Memoization,
@@ -567,6 +569,7 @@ impl Papercraft {
             edges: Vec::new(),
             islands: SlotMap::with_key(),
             island_order: Vec::new(),
+            saved_island_order: None,
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         }
@@ -696,6 +699,82 @@ impl Papercraft {
         self.island_order = island_order;
     }
 
+    pub fn move_islands_in_order(&mut self, selected: &[IslandKey], toward_end: bool) -> bool {
+        let selected: FxHashSet<_> = selected.iter().copied().collect();
+        if selected.is_empty() || selected.len() == self.island_order.len() {
+            return false;
+        }
+        //grab island order indices of selected islands
+        let selected_positions: Vec<_> = self
+            .island_order
+            .iter()
+            .enumerate()
+            .filter_map(|(index, key)| selected.contains(key).then_some(index))
+            .collect();
+        if selected_positions.is_empty() {
+            return false;
+        }
+        if toward_end {
+            //stop if any selected island reached last letter
+            if selected_positions.last() == Some(&(self.island_order.len() - 1)) {
+                return false;
+            }
+            //start swapping at tail to let unselected islands trickle down 1 step at a time
+            for index in (0..self.island_order.len() - 1).rev() {
+                if selected.contains(&self.island_order[index])
+                    && !selected.contains(&self.island_order[index + 1])
+                {
+                    self.island_order.swap(index, index + 1);
+                }
+            }
+        } else {
+            //stop if any selected island reached first letter 'A'
+            if selected_positions.first() == Some(&0) {
+                return false;
+            }
+            //start swapping at head to make unselected islands bubble up 1 step at a time
+            for index in 1..self.island_order.len() {
+                if selected.contains(&self.island_order[index])
+                    && !selected.contains(&self.island_order[index - 1])
+                {
+                    self.island_order.swap(index, index - 1);
+                }
+            }
+        }
+        true
+    }
+
+    pub fn restore_island_order(&mut self, roots_prev_order: &[FaceIndex]) {
+        let current: FxHashMap<FaceIndex, IslandKey> = self
+            .islands
+            .iter()
+            .map(|(key, island)| (island.root_face(), key))
+            .collect();
+        let mut restored = Vec::with_capacity(self.islands.len());
+        let mut restored_keys = FxHashSet::default();
+        //list previously existing islands
+        for root in roots_prev_order {
+            if let Some(&key) = current.get(root) {
+                restored.push(key);
+                restored_keys.insert(key);
+            }
+        }
+        //list any newly spawned islands (should not happen)
+        let current_order = self.island_order.clone();
+        for key in current_order {
+            if restored_keys.insert(key) {
+                restored.push(key);
+            }
+        }
+        //list any still unlisted islands (should also not happen)
+        for key in self.islands.keys() {
+            if restored_keys.insert(key) {
+                restored.push(key);
+            }
+        }
+        self.island_order = restored;
+    }
+
     pub fn island_bounding_box_angle(
         &self,
         island: &Island,
@@ -804,8 +883,9 @@ impl Papercraft {
         self.islands.get_mut(key)
     }
     fn rebuild_island_order(&mut self) {
-        log::warn!("Skipping island order rebuild")
-        // self.island_order = self.islands.keys().collect();
+        if self.island_order.is_empty() {
+            self.island_order = self.islands.keys().collect();
+        }
     }
     fn remove_island(&mut self, i_island: IslandKey) -> Option<Island> {
         let island = self.islands.remove(i_island)?;

@@ -672,6 +672,8 @@ struct MenuActions {
     quit: BoolWithConfirm,
     reset_views: bool,
     undo: bool,
+    page_up: bool,
+    page_down: bool,
 }
 
 // Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
@@ -2183,6 +2185,14 @@ impl GlobalContext {
                 ) {
                     menu_actions.undo = true;
                 }
+                // increase island labels
+                if ui.shortcut_ex(imgui::Key::PageUp, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.page_up = true;
+                }
+                // decrease island labels
+                if ui.shortcut_ex(imgui::Key::PageDown, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.page_down = true;
+                }
                 // toggle snap mode
                 if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
                     self.data.ui.snap ^= true;
@@ -2473,6 +2483,16 @@ impl GlobalContext {
                     self.options_applied = Some((options, false));
                 }
                 UndoResult::False => {}
+            }
+        }
+        if menu_actions.page_up || menu_actions.page_down {
+            //move islads - page down: towards A, page up: towards Z+
+            let undo = self.data.move_selected_islands(menu_actions.page_up);
+            if !undo.is_empty() {
+                self.data.push_undo_action(undo);
+                self.add_rebuild(
+                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                );
             }
         }
 

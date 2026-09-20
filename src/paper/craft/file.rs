@@ -29,7 +29,13 @@ impl Papercraft {
         write!(zip, "{CURRENT_CRAFT_FILE_FORMAT}")?;
 
         zip.start_file("model.json", options)?;
-        serde_json::to_writer(&mut zip, self)?;
+        let mut model = serde_json::to_value(self)?;
+        let order = self.island_order_as_root_faces();
+        let serde_json::Value::Object(ref mut object) = model else {
+            anyhow::bail!("Papercraft model did not serialize as a JSON object");
+        };
+        object.insert("island_order".to_owned(), serde_json::to_value(order)?);
+        serde_json::to_writer(&mut zip, &model)?;
 
         for tex in self.model.textures() {
             if let Some(pixbuf) = tex.pixbuf() {
@@ -55,6 +61,14 @@ impl Papercraft {
 
         zip.finish()?;
         Ok(())
+    }
+
+    fn island_order_as_root_faces(&self) -> Vec<usize> {
+        self.island_order
+            .iter()
+            .filter_map(|&key| self.islands.get(key))
+            .map(|island| usize::from(island.root_face()))
+            .collect()
     }
 
     pub fn load<R: Read + Seek>(r: R) -> Result<Papercraft> {
@@ -108,6 +122,9 @@ impl Papercraft {
     pub fn post_create(&mut self) {
         self.rebuild_island_order();
         self.sanitize();
+        if let Some(saved_order) = self.saved_island_order.take() {
+            self.restore_island_order(&saved_order);
+        }
         self.recompute_edge_ids();
     }
     pub fn sanitize(&mut self) {
@@ -340,6 +357,7 @@ impl Papercraft {
             edges,
             islands,
             island_order: island_size_order,
+            saved_island_order: None,
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         };

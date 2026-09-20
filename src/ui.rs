@@ -96,6 +96,9 @@ pub fn color_edge(mode: MouseMode) -> Rgba {
 //UndoItem cannot store IslandKey, because they are dynamic, use the root of the island instead
 #[derive(Debug)]
 pub enum UndoAction {
+    IslandOrder {
+        prev_order: Vec<FaceIndex>,
+    },
     IslandMove {
         i_root: FaceIndex,
         prev_rot: Rad<f32>,
@@ -2637,6 +2640,32 @@ impl PapercraftContext {
         undo_actions
     }
 
+    /// in-/decrements labels of selected islands by 1 letter
+    pub fn move_selected_islands(&mut self, toward_end: bool) -> Vec<UndoAction> {
+        let selected_faces: Vec<_> = self.selected_islands.iter().map(|key| key.0).collect();
+        let selected: Vec<_> = self
+            .papercraft
+            .islands()
+            .filter(|(_, island)| {
+                selected_faces
+                    .iter()
+                    .any(|&face| self.papercraft.contains_face(island, face))
+            })
+            .map(|(key, _)| key)
+            .collect();
+        //save root faces of old order
+        let prev_order: Vec<_> = self
+            .papercraft
+            .islands()
+            .map(|(_, island)| island.root_face())
+            .collect();
+        if self.papercraft.move_islands_in_order(&selected, toward_end) {
+            vec![UndoAction::IslandOrder { prev_order }]
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
@@ -2664,6 +2693,10 @@ impl PapercraftContext {
 
     fn undo_single_action(&mut self, action: UndoAction) -> Option<UndoResult> {
         match action {
+            UndoAction::IslandOrder { prev_order } => {
+                self.papercraft.restore_island_order(&prev_order);
+                None
+            }
             UndoAction::IslandMove {
                 i_root,
                 prev_rot,

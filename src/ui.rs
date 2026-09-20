@@ -2642,16 +2642,10 @@ impl PapercraftContext {
 
     /// in-/decrements labels of selected islands by 1 letter
     pub fn move_selected_islands(&mut self, toward_end: bool) -> Vec<UndoAction> {
-        let selected_faces: Vec<_> = self.selected_islands.iter().map(|key| key.0).collect();
         let selected: Vec<_> = self
-            .papercraft
-            .islands()
-            .filter(|(_, island)| {
-                selected_faces
-                    .iter()
-                    .any(|&face| self.papercraft.contains_face(island, face))
-            })
-            .map(|(key, _)| key)
+            .selected_islands
+            .iter()
+            .map(|&key| self.papercraft.island_by_face(key.0))
             .collect();
         //save root faces of old order
         let prev_order: Vec<_> = self
@@ -2666,9 +2660,29 @@ impl PapercraftContext {
         }
     }
 
+    pub fn reorder_islands(&mut self) -> Vec<UndoAction> {
+        if self.selected_islands.len() != 1 {
+            return Vec::new();
+        }
+        let selected: Vec<_> = self
+            .selected_islands
+            .iter()
+            .map(|&key| self.papercraft.island_by_face(key.0))
+            .collect();
+        //save root faces of old order
+        let prev_order: Vec<_> = self
+            .papercraft
+            .islands()
+            .map(|(_, island)| island.root_face())
+            .collect();
+        self.papercraft.adjacency_order_islands(selected[0]);
+        vec![UndoAction::IslandOrder { prev_order }]
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
+
     pub fn undo_action(&mut self) -> UndoResult {
         //Do not undo while grabbing or the stack will be messed up
         if self.grabbed_island.is_some() {

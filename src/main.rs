@@ -674,6 +674,7 @@ struct MenuActions {
     undo: bool,
     page_up: bool,
     page_down: bool,
+    reorder_labels: bool,
 }
 
 // Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
@@ -2071,6 +2072,11 @@ impl GlobalContext {
                     {
                         self.pack_islands();
                     }
+                    ui.separator();
+
+                    if ui.menu_item_config(lbl(tr!("Reorder labels"))).build() {
+                        menu_actions.reorder_labels = true;
+                    }
                 }
             });
             ui.menu_config(lbl(tr!("View"))).with(|| {
@@ -2495,7 +2501,16 @@ impl GlobalContext {
                 );
             }
         }
-
+        if menu_actions.reorder_labels {
+            let undo = self.data.reorder_islands();
+            if !undo.is_empty() {
+                self.data.push_undo_action(undo);
+                self.add_rebuild(
+                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                );
+            }
+            //TODO show warning popup if more !1 island was selected?
+        }
         let mut save_as = false;
         let mut open_file_dialog = false;
 

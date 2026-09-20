@@ -299,7 +299,7 @@ impl Papercraft {
                 &model,
                 root,
                 (),
-                NoMatrixTraverseFace(&edges),
+                NoMatrixTraverseIsland(&edges),
                 |i_face, _, _| {
                     pending_faces.remove(&i_face);
                     ControlFlow::Continue(())

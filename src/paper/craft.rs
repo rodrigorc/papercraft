@@ -972,6 +972,20 @@ impl Papercraft {
         });
         area
     }
+    pub fn get_real_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
+        let mut res = FxHashSet::default();
+        let _ = traverse_faces_ex(
+            &self.model,
+            i_face,
+            (),
+            RealFlatTraverseFace(&self.edges),
+            |i_next_face, _, _| {
+                res.insert(i_next_face);
+                ControlFlow::Continue(())
+            },
+        );
+        res
+    }
     pub fn get_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
         let mut res = FxHashSet::default();
         let _ = traverse_faces_ex(
@@ -1361,7 +1375,7 @@ impl Papercraft {
             &self.model,
             island.root_face(),
             (),
-            NoMatrixTraverseFace(&self.edges),
+            NoMatrixTraverseIsland(&self.edges),
             |i, _, ()| visit_face(i),
         )
     }
@@ -1756,7 +1770,7 @@ impl Papercraft {
             &self.model,
             island.root_face(),
             (),
-            NoMatrixTraverseFace(&self.edges),
+            NoMatrixTraverseIsland(&self.edges),
             |i_face, face, _| {
                 for i_edge in face.index_edges() {
                     if let EdgeStatus::Cut(_) = self.edge_status(i_edge) {
@@ -1925,15 +1939,28 @@ impl TraverseFacePolicy for NormalTraverseFace<'_> {
     }
 }
 
-struct NoMatrixTraverseFace<'a>(&'a [RealEdgeStatus]);
+struct NoMatrixTraverseIsland<'a>(&'a [RealEdgeStatus]);
 
-impl TraverseFacePolicy for NoMatrixTraverseFace<'_> {
+impl TraverseFacePolicy for NoMatrixTraverseIsland<'_> {
     type State = ();
 
     fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
         match self.0[usize::from(i_edge)] {
             RealEdgeStatus::Cut(_) => false,
             RealEdgeStatus::Joined | RealEdgeStatus::Hidden => true,
+        }
+    }
+}
+
+struct RealFlatTraverseFace<'a>(&'a [RealEdgeStatus]);
+
+impl TraverseFacePolicy for RealFlatTraverseFace<'_> {
+    type State = ();
+
+    fn cross_edge(&self, i_edge: EdgeIndex) -> bool {
+        match self.0[usize::from(i_edge)] {
+            RealEdgeStatus::Hidden => true,
+            RealEdgeStatus::Joined | RealEdgeStatus::Cut(_) => false,
         }
     }
 }

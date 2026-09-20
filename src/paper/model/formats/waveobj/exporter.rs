@@ -195,7 +195,7 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
                 continue;
             }
             //In model, faces are all triangles, group them by flatness
-            let flat_face = papercraft.get_flat_faces(i_face);
+            let flat_face = papercraft.get_real_flat_faces(i_face);
             let mut flat_contour: Vec<_> = flat_face
                 .iter()
                 .map(|&f| {
@@ -203,12 +203,9 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
                     f
                 })
                 .flat_map(|f| model[f].vertices_with_edges())
-                .filter_map(|(i_v0, i_v1, e)| {
-                    if papercraft.edge_status(e) == EdgeStatus::Hidden {
-                        None
-                    } else {
-                        Some((i_v0, i_v1))
-                    }
+                .filter_map(|(i_v0, i_v1, e)| match papercraft.edge_status(e) {
+                    EdgeStatus::Hidden => None,
+                    _ => Some((i_v0, i_v1)),
                 })
                 .collect();
             write!(f, "f")?;

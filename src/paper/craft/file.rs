@@ -106,6 +106,7 @@ impl Papercraft {
         Ok(papercraft)
     }
     pub fn post_create(&mut self) {
+        self.rebuild_island_order();
         self.sanitize();
         self.recompute_edge_ids();
     }
@@ -165,7 +166,7 @@ impl Papercraft {
                         i_island,
                         i_owner
                     );
-                    self.islands.remove(i_island);
+                    self.remove_island(i_island);
                     self.memo = Memoization::default();
                     changed = true;
                     break; // restart loop
@@ -185,16 +186,17 @@ impl Papercraft {
                 });
             }
             // Create just one island, just in case it has some connected
-            if let Some(&root) = all_faces.iter().next() {
+            if let Some(&root) = all_faces.iter().min_by_key(|face| usize::from(**face)) {
                 log::warn!("Creating missing island for face {root:?}");
                 // Any coordinates are good enough, we are on emergency mode
-                self.islands.insert(Island {
+                let i_island = self.islands.insert(Island {
                     root,
                     loc: Vector2::zero(),
                     rot: Rad::zero(),
                     mx: Matrix3::one(),
                     name: String::new(),
                 });
+                self.island_order.push(i_island);
                 self.memo = Memoization::default();
                 changed = true;
             }
@@ -292,7 +294,12 @@ impl Papercraft {
             model.faces().map(|(i_face, _face)| i_face).collect();
 
         let mut islands = SlotMap::with_key();
-        while let Some(root) = pending_faces.iter().copied().next() {
+        let mut island_order = Vec::new();
+        while let Some(root) = pending_faces
+            .iter()
+            .copied()
+            .min_by_key(|face| usize::from(*face))
+        {
             pending_faces.remove(&root);
 
             let _ = traverse_faces_ex(
@@ -313,7 +320,8 @@ impl Papercraft {
                 mx: Matrix3::one(),
                 name: String::new(),
             };
-            islands.insert(island);
+            let i_island = islands.insert(island);
+            island_order.push(i_island);
         }
 
         let need_packing = !importer.relocate_islands(&model, islands.values_mut());
@@ -332,6 +340,7 @@ impl Papercraft {
             options,
             edges,
             islands,
+            island_order,
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         };

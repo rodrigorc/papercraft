@@ -451,6 +451,8 @@ pub struct Papercraft {
     edges: Vec<RealEdgeStatus>, // parallel to `EdgeIndex`
     #[serde(with = "super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
+    #[serde(skip)]
+    island_order: Vec<IslandKey>,
 
     #[serde(skip)]
     memo: Memoization,
@@ -564,6 +566,7 @@ impl Papercraft {
             options: PaperOptions::default(),
             edges: Vec::new(),
             islands: SlotMap::with_key(),
+            island_order: Vec::new(),
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         }
@@ -622,7 +625,9 @@ impl Papercraft {
     }
 
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
-        self.islands.iter()
+        self.island_order
+            .iter()
+            .filter_map(|&i_island| self.islands.get(i_island).map(|island| (i_island, island)))
     }
     pub fn num_islands(&self) -> usize {
         self.islands.len()
@@ -734,16 +739,15 @@ impl Papercraft {
     pub fn island_by_key_mut(&mut self, key: IslandKey) -> Option<&mut Island> {
         self.islands.get_mut(key)
     }
+    fn rebuild_island_order(&mut self) {
+        self.island_order = self.islands.keys().collect();
+    }
+    fn remove_island(&mut self, i_island: IslandKey) -> Option<Island> {
+        let island = self.islands.remove(i_island)?;
+        self.island_order.retain(|&key| key != i_island);
+        Some(island)
+    }
     pub fn rebuild_island_names(&mut self) {
-        // To get somewhat predictable names try to sort the islands before naming them.
-        // For now, sort them by area.
-        let mut islands: Vec<_> = self
-            .islands
-            .iter()
-            .map(|(i_island, island)| (i_island, self.island_area(island)))
-            .collect();
-        islands.sort_by_key(|(_, n)| TotalF32(*n));
-
         // A, B, ... Z, AA, ... AZ, BA, .... ZZ, AAA, AAB, ...
         fn next_name(name: &mut Vec<u8>) {
             for ch in name.iter_mut().rev() {
@@ -759,9 +763,9 @@ impl Papercraft {
         }
 
         let mut island_name = Vec::new();
-        for (i_island, _) in &islands {
+        for &i_island in &self.island_order {
             next_name(&mut island_name);
-            self.islands[*i_island].name = String::from_utf8(island_name.clone()).unwrap();
+            self.islands[i_island].name = String::from_utf8(island_name.clone()).unwrap();
         }
     }
 
@@ -867,6 +871,12 @@ impl Papercraft {
             }
         }
         let i_new_island = self.islands.insert(new_island);
+        let island_index = self
+            .island_order
+            .iter()
+            .position(|&key| key == i_island)
+            .unwrap();
+        self.island_order.insert(island_index + 1, i_new_island);
         self.memo.invalidate_islands(&[i_island, i_new_island]);
         Some((i_island, i_new_island))
     }
@@ -897,10 +907,25 @@ impl Papercraft {
         // Join both islands
         let i_island_a = self.island_by_face(i_face_a);
         self.memo.invalidate_islands(&[i_island_a, i_island_b]);
-        let mut island_b = self.islands.remove(i_island_b).unwrap();
-
-        // Keep position of a or b?
-        if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
+        let index_a = self
+            .island_order
+            .iter()
+            .position(|&key| key == i_island_a)
+            .unwrap();
+        let index_b = self
+            .island_order
+            .iter()
+            .position(|&key| key == i_island_b)
+            .unwrap();
+        let remove_key = if index_a < index_b {
+            i_island_b
+        } else {
+            i_island_a
+        };
+        let mut island_b = self.remove_island(remove_key).unwrap();
+        if remove_key == i_island_b
+            && self.compare_islands(&self.islands[i_island_a], &island_b, priority_face)
+        {
             std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
         }
         self.edges[usize::from(i_edge)] = RealEdgeStatus::Joined;

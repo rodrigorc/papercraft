@@ -19,7 +19,6 @@ use easy_imgui_window::{
 };
 use image::{EncodableLayout, GenericImage, GenericImageView, Pixel};
 use std::{
-    f32,
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{LazyLock, atomic::AtomicPtr},

@@ -19,7 +19,7 @@ use easy_imgui_window::{
 };
 use image::{EncodableLayout, GenericImage, GenericImageView, Pixel};
 use std::{
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::{LazyLock, atomic::AtomicPtr},
     time::{Duration, Instant},
@@ -35,9 +35,9 @@ use easy_imgui_filechooser::{self as filechooser, CustomAtlas};
 
 mod config;
 mod paper;
-mod pdf_metrics;
 mod printable;
 mod semaphore;
+mod ttf_subset;
 mod util_3d;
 mod util_gl;
 
@@ -55,11 +55,14 @@ static ICONS_IMG: LazyLock<image::RgbaImage> =
 const MPLUS_TTF: &[u8] = include_bytes!("MPLUS1p-Regular.ttf");
 const FONT_SIZE: f32 = 3.0;
 
+static MPLUS_FONT_TTF: LazyLock<ttf_subset::FontFile<'static>> =
+    std::sync::LazyLock::new(|| ttf_subset::FontFile::parse_ttf(MPLUS_TTF).unwrap());
+
 use paper::{
     EdgeIdPosition, FlapStyle, FoldStyle, IslandKey, PaperOptions, Papercraft,
     formats::{export_model_file, import_model_file},
 };
-use util_3d::Matrix3;
+use util_3d::{Matrix3, Point2};
 use util_gl::{UniformQuad, Uniforms2D, Uniforms2DDash, Uniforms3D};
 
 use clap::Parser;
@@ -217,8 +220,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             font_default_size: 1.0,
             font_big_size: 1.0,
             font_small_size: 1.0,
-            font_text_size: 1.0,
-            font_text_line_scale: 1.0,
+            font_render_size: 1.0,
             icons_rect: [imgui::CustomRectIndex::default(); 3],
             logo_rect: imgui::CustomRectIndex::default(),
             data,
@@ -289,6 +291,8 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         if let Some(new_config) = self.config_applied.take() {
             self.config = new_config;
             set_locale(&self.config.locale);
+            self.add_rebuild(RebuildFlags::all());
+
             if self.config.light_mode {
                 imgui.style_mut().set_colors_light();
             } else {
@@ -528,8 +532,7 @@ struct GlobalContext {
     font_default_size: f32,
     font_big_size: f32,
     font_small_size: f32,
-    font_text_size: f32,
-    font_text_line_scale: f32,
+    font_render_size: f32,
     icons_rect: [imgui::CustomRectIndex; 3],
     logo_rect: imgui::CustomRectIndex,
     data: PapercraftContext,
@@ -3583,9 +3586,8 @@ impl GlobalContext {
     fn pre_render_flags(&mut self, ui: &Ui, rebuild: RebuildFlags) {
         let text_helper = TextHelper {
             ui,
-            font_text_line_scale: self.font_text_line_scale,
             font_id: self.font_default,
-            font_size: self.font_text_size,
+            font_render_size: self.font_render_size,
         };
         self.data.pre_render(rebuild, &text_helper);
     }
@@ -3922,10 +3924,9 @@ impl GlobalContext {
         self.font_small_size = 12.0;
         let options = self.data.papercraft().options();
 
-        let edge_id_font_size = options.edge_id_font_size * options.resolution as f32 / 72.0;
-        self.font_text_size = edge_id_font_size;
-        // This is eye-balled, depending on the particular font
-        self.font_text_line_scale = 0.80;
+        // Nominal size for the font used by the renderer. It is scaled with the output resolution.
+        self.font_render_size =
+            (4.0 * options.edge_id_font_size * options.resolution as f32 / 72.0).round();
 
         self.logo_rect = atlas.add_custom_rect([LOGO_IMG.width(), LOGO_IMG.height()], |img| {
             img.copy_from(&*LOGO_IMG, 0, 0).unwrap();
@@ -4142,13 +4143,11 @@ fn printable_island_name(
 struct TextHelper<'a> {
     // To use the imgui fonts we need a Ui.
     ui: &'a Ui,
-    font_text_line_scale: f32,
     font_id: imgui::FontId,
-    font_size: f32,
+    font_render_size: f32,
 }
 
 trait TextBuilder {
-    fn font_text_line_scale(&self) -> f32;
     fn make_text(
         &self,
         p: &PrintableText,
@@ -4157,43 +4156,73 @@ trait TextBuilder {
 }
 
 impl TextBuilder for TextHelper<'_> {
-    fn font_text_line_scale(&self) -> f32 {
-        self.font_text_line_scale
-    }
     fn make_text(
         &self,
         pt: &PrintableText,
         vs: &mut Vec<(TextureUniqueId, Vec<util_gl::MVertexText>)>,
     ) {
+        let ttf = &*MPLUS_FONT_TTF;
         let baked_font = self
             .ui
-            .get_font_baked(self.font_id, self.font_size, Some(2.0));
+            .get_font_baked(self.font_id, self.font_render_size, Some(1.0));
+
+        let font_scale = ttf.scaler(pt.size);
+        let atlas_font_scale = ttf.legacy_scaler(self.font_render_size);
+
         let mut x = 0.0;
         let width = || {
-            pt.text
-                .chars()
-                .map(|c| {
-                    let r = baked_font.find_glyph(c);
-                    r.advance_x()
-                })
-                .sum::<f32>()
+            font_scale.scale(ttf_subset::measure_text(
+                &pt.text,
+                ttf,
+                ttf_subset::LigatureSource::default(),
+            ))
         };
         let x_offset = match pt.align {
             TextAlign::Near => 0.0,
             TextAlign::Center => -width() / 2.0,
             TextAlign::Far => -width(),
         };
-        let matrix = Matrix3::from_translation(pt.pos)
+
+        let matrix =
+            // Position of the whole text
+            Matrix3::from_translation(pt.pos)
+            // Rotation of the whole text
             * Matrix3::from(cgmath::Matrix2::from_angle(pt.angle))
-            * Matrix3::from_scale(pt.size / self.font_size)
-            * Matrix3::from_translation(vec2(x_offset, -baked_font.Ascent));
-        for c in pt.text.chars() {
-            let glyph = baked_font.find_glyph(c);
+            // Alignment of the text
+            * Matrix3::from_translation(vec2(x_offset, 0.0))
+            // The quads use atlas_font metrics, convert to proper font size
+            * Matrix3::from_scale(font_scale.factor() / atlas_font_scale.factor())
+            ;
+
+        //let mut custom = 0xe000;
+        let glyphs =
+            ttf_subset::encode_glyphs(&pt.text, ttf, ttf_subset::LigatureSource::default(), None);
+        let mut prev_glyph_id = None;
+        for glyph_id in glyphs {
+            let c = match ttf.unmap_glyph(glyph_id) {
+                Some(ttf_subset::Char(c)) => c,
+                None => continue,
+                /*
+                // TODO: add_remap_codepoint_to_glyph is not available yet
+                let ff = self.ui.get_font(self.font_id);
+                ff.add_remap_codepoint_to_glyph(char::from_u32(custom as u32).unwrap(), 0, g.0 as i32);
+                custom += 1;
+                custom - 1
+                */
+            };
+            let glyph = baked_font.find_glyph(char::try_from(c as u32).unwrap());
             let unique_id = self.ui.io().font_atlas().current_texture_unique_id();
+            if let Some(kern) = prev_glyph_id.and_then(|prev| ttf.kerning(prev, glyph_id)) {
+                x += atlas_font_scale.scale(kern);
+            }
             let mut p0 = glyph.p0();
             let mut p1 = glyph.p1();
             p0.x += x;
             p1.x += x;
+            // vertical Y refers to the baseline
+            p0.y -= baked_font.Ascent;
+            p1.y -= baked_font.Ascent;
+
             let mut vertices = [
                 util_gl::MVertexText {
                     pos: p0,
@@ -4221,7 +4250,7 @@ impl TextBuilder for TextHelper<'_> {
                 },
             ];
             for v in &mut vertices {
-                let p = matrix * Vector3::new(v.pos.x, v.pos.y, 1.0);
+                let p = matrix.transform_point(Point2::from_vec(v.pos)).to_vec();
                 v.pos.x = p.x;
                 v.pos.y = p.y;
             }
@@ -4231,7 +4260,8 @@ impl TextBuilder for TextHelper<'_> {
             } else {
                 vs.push((unique_id, vertices.into()));
             }
-            x += glyph.advance_x();
+            x += atlas_font_scale.scale(ttf.glyph_advance_width(glyph_id));
+            prev_glyph_id = Some(glyph_id);
         }
     }
 }
@@ -4239,10 +4269,6 @@ impl TextBuilder for TextHelper<'_> {
 struct TextBuilderDummy;
 
 impl TextBuilder for TextBuilderDummy {
-    fn font_text_line_scale(&self) -> f32 {
-        1.0
-    }
-
     fn make_text(
         &self,
         _p: &PrintableText,

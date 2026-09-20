@@ -1,4 +1,5 @@
 use std::{
+    io::Write,
     sync::{Condvar, Mutex},
     thread,
 };
@@ -58,7 +59,7 @@ impl GlobalContext {
 
     fn generate_pdf(&self, file_name: &Path) -> Result<()> {
         use lopdf::{
-            Document, Object, ObjectId, Stream, StringFormat,
+            Document, Object, ObjectId, Stream,
             content::{Content, Operation},
             dictionary,
             xref::XrefType,
@@ -73,12 +74,10 @@ impl GlobalContext {
 
         let id_pages = doc.new_object_id();
 
-        let id_font = doc.add_object(dictionary! {
-            "Type" => "Font",
-            "Subtype" => "Type1",
-            "BaseFont" => "Helvetica",
-            "Encoding" => "WinAnsiEncoding",
-        });
+        let ttf = &*MPLUS_FONT_TTF;
+        let liga_source = ttf_subset::LigatureSource::default();
+        let mut ttf_subset = ttf_subset::LopdfSubsetBuilder::new(ttf, &mut doc, "MPLUS1p-Regular");
+        let pdf_font_name = "MPLUS1";
 
         let mut pages = vec![];
 
@@ -97,7 +96,7 @@ impl GlobalContext {
                     doc.set_object(id, stream);
                 }
 
-                let write_texts = |ops: &mut Vec<Operation>| {
+                let mut write_texts = |ops: &mut Vec<Operation>| {
                     if texts.is_empty() {
                         return;
                     }
@@ -105,14 +104,15 @@ impl GlobalContext {
                     ops.push(Operation::new("BT", Vec::new()));
                     let mut last_font = None;
                     for text in texts {
-                        let size = text.size * 72.0 / 25.4;
-                        // PDF fonts are just slightly larger than expected
-                        let size = size / 1.1;
                         let x = text.pos.x;
                         // (0,0) is in lower-left
                         let y = page_size_mm.y - text.pos.y;
-                        let (width, cps) = pdf_metrics::measure_helvetica(&text.text);
-                        let width = width as f32 * text.size / 1000.0;
+
+                        let (width, op_text) =
+                            ttf_subset.encode_measure_text(&text.text, liga_source);
+                        let scaler = ttf.scaler(text.size);
+                        let width = scaler.scale(width);
+
                         let dx = match text.align {
                             TextAlign::Near => 0.0,
                             TextAlign::Center => -width / 2.0,
@@ -124,9 +124,15 @@ impl GlobalContext {
                         let y = y - dx * sin;
 
                         // Set font
-                        if last_font != Some(size) {
-                            last_font = Some(size);
-                            ops.push(Operation::new("Tf", vec!["F1".into(), size.into()]));
+                        // Font size is reported in points
+                        let size_pt = text.size * 72.0 / 25.4;
+
+                        if last_font != Some(size_pt) {
+                            last_font = Some(size_pt);
+                            ops.push(Operation::new(
+                                "Tf",
+                                vec![pdf_font_name.into(), size_pt.into()],
+                            ));
                         }
 
                         let mx: Vec<Object> = vec![
@@ -139,33 +145,7 @@ impl GlobalContext {
                         ];
                         ops.push(Operation::new("Tm", mx));
 
-                        let mut tj = Vec::new();
-                        let mut codepoints = Vec::new();
-                        for (kern, cp) in cps {
-                            if kern != 0 {
-                                if !codepoints.is_empty() {
-                                    tj.push(Object::String(
-                                        std::mem::take(&mut codepoints),
-                                        StringFormat::Literal,
-                                    ));
-                                }
-                                tj.push(kern.into());
-                            }
-                            if let Ok(c) = u8::try_from(cp) {
-                                codepoints.push(c);
-                            }
-                        }
-                        if !codepoints.is_empty() {
-                            tj.push(Object::String(
-                                std::mem::take(&mut codepoints),
-                                StringFormat::Literal,
-                            ));
-                        }
-                        match tj.len() {
-                            0 => (),
-                            1 => ops.push(Operation::new("Tj", tj)),
-                            _ => ops.push(Operation::new("TJ", vec![Object::Array(tj)])),
-                        }
+                        ops.extend(op_text);
                     }
                     // End Text
                     ops.push(Operation::new("ET", Vec::new()));
@@ -257,7 +237,7 @@ impl GlobalContext {
 
                 let id_resources = doc.add_object(dictionary! {
                     "Font" => dictionary! {
-                        "F1" => id_font,
+                        pdf_font_name => ttf_subset.id_font(),
                     },
                     "XObject" => dictionary! {
                         img_name => id_image,
@@ -297,6 +277,9 @@ impl GlobalContext {
             "Type" => "Catalog",
             "Pages" => id_pages,
         });
+
+        ttf_subset.complete_document(&mut doc);
+
         doc.trailer.set("Root", id_catalog);
 
         let date = time::OffsetDateTime::now_utc();
@@ -451,7 +434,7 @@ impl GlobalContext {
             let pos = basis2.rotate_vector(text.pos);
             writeln!(
                 out,
-                r#"<text x="{}" y="{}" style="{}font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
+                r#"<text x="{}" y="{}" style="{}font-size:{};font-family:'M PLUS 1p',sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
                 pos.x,
                 pos.y,
                 match text.align {
@@ -1049,6 +1032,7 @@ impl GlobalContext {
                     }
                     // Edge ids
                     if !options.island_name_only {
+                        let scaler = MPLUS_FONT_TTF.scaler(edge_id_font_size);
                         for cut_idx in extra
                             .cut_info()
                             .unwrap()
@@ -1063,8 +1047,9 @@ impl GlobalContext {
                                 .island_by_key(i_island_b)
                                 .map_or("?", |island_b| island_b.name());
                             let text = format!("{}:{}", ii, cut_idx.id);
+
                             let (is_in_page, pos) =
-                                in_page(cut_idx.pos(self.font_text_line_scale * edge_id_font_size));
+                                in_page(cut_idx.pos(scaler.scale(MPLUS_FONT_TTF.ascender())));
                             if is_in_page {
                                 texts.push(PrintableText {
                                     size: edge_id_font_size,

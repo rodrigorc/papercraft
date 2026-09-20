@@ -15,7 +15,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
 use crate::{
-    FONT_SIZE, TextBuilder,
+    FONT_SIZE, MPLUS_FONT_TTF, TextBuilder,
     paper::{IslandOrder, MoveInOrderDirection},
 };
 use crate::{
@@ -493,21 +493,30 @@ impl PaperDrawFaceArgs {
     }
 }
 
+/// This struct stores the position and content of an edge-id, useful to place the text
 #[derive(Copy, Clone, Debug)]
 pub struct CutDescription {
-    pub center: Vector2,
-    pub dir: Vector2,
+    /// Center point of the cut line or the flap, if that is to be used instead
+    center: Vector2,
+    /// Normalized vector parallel to the cut line.
+    dir: Vector2,
+    /// offset that separates the text from the line, in ascender units
+    f_offs: f32,
+    /// extra offset, in mm, to avoid the width of the adjacent line
+    mm_offs: f32,
+
+    /// Angle of the cut line, relative to the horizontal
     pub angle: Rad<f32>,
+    /// The face index of the _other_ face (_this_ face is not needed)
     pub i_face_b: FaceIndex,
+    /// Edge id of this cut
     pub id: EdgeId,
-    pub voffs: f32,
 }
 
 impl CutDescription {
-    /// This struct stores the position and content of an edge-id
     /// `(a, b)`: coordinates of the edge on paper
     /// `n_flap`: if there is a flap, a vector normal to the edge with the length of the flap width
-    /// `i_face_b`: the face index of the _other _ face (_this_ face is not needed)
+    /// `i_face_b`: ditto
     /// `id`: the edge id
     /// `options`: the `PaperOptions`
     fn new(
@@ -521,20 +530,20 @@ impl CutDescription {
         let mut center = (a + b) / 2.0;
 
         // Where does the edge-id go?
-        let voffs = match (options.edge_id_position, n_flap) {
+        let (f_offs, mm_offs) = match (options.edge_id_position, n_flap) {
             // inside the face
-            (EdgeIdPosition::Inside, None) => -0.2,
+            (EdgeIdPosition::Inside, None) => (-0.2, 0.0),
             // in the flap, next to the face
-            (EdgeIdPosition::Inside, Some(_)) => 1.0,
+            (EdgeIdPosition::Inside, Some(_)) => (1.0, options.fold_line_width),
             // outside the face
-            (EdgeIdPosition::Outside, None) => 1.0,
+            (EdgeIdPosition::Outside, None) => (1.0, options.cut_line_width),
             // outside the flap
             (EdgeIdPosition::Outside, Some(n)) => {
                 center += n;
-                1.0
+                (1.0, options.tab_line_width)
             }
             // should not happen, if pos is None it is filtered before getting here
-            (EdgeIdPosition::None, _) => 0.0,
+            (EdgeIdPosition::None, _) => Default::default(),
         };
         let dir = (b - a).normalize();
         //let normal = Vector2::new(-dir.y, dir.x);
@@ -543,15 +552,16 @@ impl CutDescription {
         CutDescription {
             center,
             dir,
+            f_offs,
+            mm_offs,
             angle,
             i_face_b,
             id,
-            voffs,
         }
     }
-    pub fn pos(&self, font_size: f32) -> Vector2 {
+    pub fn pos(&self, ascender: f32) -> Vector2 {
         let normal = Vector2::new(-self.dir.y, self.dir.x);
-        self.center + font_size * self.voffs * normal
+        self.center + (ascender * self.f_offs + self.mm_offs) * normal
     }
 }
 
@@ -1243,6 +1253,7 @@ impl PapercraftContext {
         // Draw the EdgeId?
         if let Some(cut_info) = extra.cut_info.as_ref() {
             let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
+            let scaler = MPLUS_FONT_TTF.scaler(edge_id_font_size);
 
             // Edge ids
             if !self.papercraft.options().island_name_only {
@@ -1253,7 +1264,8 @@ impl PapercraftContext {
                         .island_by_key(i_island_b)
                         .map_or("?", |island_b| island_b.name());
                     let text = format!("{}:{}", ii, cut_idx.id);
-                    let pos = cut_idx.pos(text_builder.font_text_line_scale() * edge_id_font_size);
+
+                    let pos = cut_idx.pos(scaler.scale(MPLUS_FONT_TTF.ascender()));
                     let t = PrintableText {
                         size: edge_id_font_size,
                         pos,

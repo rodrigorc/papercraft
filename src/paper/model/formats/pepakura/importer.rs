@@ -148,7 +148,7 @@ impl Importer for PepakuraImporter {
             if v_f.flap.is_some() {
                 Some(RealEdgeStatus::Cut(FlapSide::True))
             } else {
-                None
+                Some(RealEdgeStatus::Cut(FlapSide::False))
             }
         }
     }

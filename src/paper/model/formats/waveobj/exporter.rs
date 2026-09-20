@@ -31,7 +31,8 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    let mtl_name = file_name.with_extension("mtl");
+    let mtl_file_name = file_name.with_extension("mtl");
+
     let has_textures = model.has_textures();
 
     let f = std::fs::File::create(file_name)?;
@@ -136,8 +137,8 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
         })
         .collect();
 
-    if has_textures {
-        writeln!(f, "mtllib {}", mtl_name.display())?;
+    if has_textures && let Some(mtllib) = mtl_file_name.file_name() {
+        writeln!(f, "mtllib {}", mtllib.display())?;
     }
     writeln!(f, "o {title}")?;
     for pos in &vertex_pos {
@@ -228,7 +229,7 @@ pub fn export(papercraft: &Papercraft, file_name: &Path) -> Result<()> {
     drop(f);
 
     if has_textures {
-        let fm = std::fs::File::create(mtl_name)?;
+        let fm = std::fs::File::create(mtl_file_name)?;
         let mut fm = std::io::BufWriter::new(fm);
 
         let dir = file_name.parent();

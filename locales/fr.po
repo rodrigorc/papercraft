@@ -15,23 +15,23 @@ msgstr ""
 "Ce fichier .craft est trop récent et ne peut pas être lu. Veuillez mettre à "
 "jour votre version de Papercraft."
 
-#: src/printable.rs:48
+#: src/printable.rs:47
 msgid "Don't know how to write the format of {}"
 msgstr "Je ne sais pas comment écrire le format de {}"
 
-#: src/printable.rs:53 src/main.rs:3404
+#: src/printable.rs:52 src/main.rs:3404
 msgid "Error exporting to {}"
 msgstr "Erreur lors de l'exportation vers {}"
 
-#: src/printable.rs:380 src/printable.rs:711 src/main.rs:3372
+#: src/printable.rs:514 src/printable.rs:845 src/main.rs:3372
 msgid "Error saving file {}"
 msgstr "Erreur lors de l'enregistrement du fichier {}"
 
-#: src/printable.rs:1029 src/ui.rs:1292
+#: src/printable.rs:1163 src/ui.rs:1294
 msgid "Page {}/{}"
 msgstr "Page {}/{}"
 
-#: src/ui.rs:3082
+#: src/ui.rs:3077
 msgid "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 msgstr "Créé avec Papercraft. https://github.com/rodrigorc/papercraft"
 
@@ -299,22 +299,25 @@ msgstr "Longueur"
 msgid "Line"
 msgstr "Ligne"
 
-#: src/main.rs:1469
+#: src/main.rs:1468
 msgid "Patterns:"
 msgstr "Motifs :"
 
-#: src/main.rs:1474
+#: src/main.rs:1473
 msgid ""
 "Patterns are written as a list of numbers, each a length in millimeters "
 "(with 0.1 mm precision) representing the lengths of \"dash-space-dash-"
 "space\"."
-msgstr "Les motifs sont écrits sous forme de liste de nombres, chacun une longueur en millimètres (avec une précision de 0,1 mm) représentant les longueurs de \"tiret-espace-tiret-espace\"."
+msgstr ""
+"Les motifs sont écrits sous forme de liste de nombres, chacun une longueur "
+"en millimètres (avec une précision de 0,1 mm) représentant les longueurs de "
+"\"tiret-espace-tiret-espace\"."
 
-#: src/main.rs:1478
+#: src/main.rs:1477
 msgid "Mountains"
 msgstr "Montagnes"
 
-#: src/main.rs:1490
+#: src/main.rs:1489
 msgid "Valleys"
 msgstr "Vallées"
 
@@ -444,6 +447,10 @@ msgstr "Papier"
 #: src/main.rs:1828
 msgid "Highlight"
 msgstr "Surligner"
+
+#: src/main.rs:1835
+msgid "Margins"
+msgstr "Marges"
 
 #: src/main.rs:1840
 msgid "top"

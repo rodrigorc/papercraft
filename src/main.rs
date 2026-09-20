@@ -19,8 +19,7 @@ use easy_imgui_window::{
 };
 use image::{EncodableLayout, GenericImage, GenericImageView, Pixel};
 use std::{
-    f32,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::{LazyLock, atomic::AtomicPtr},
     time::{Duration, Instant},
@@ -36,9 +35,9 @@ use easy_imgui_filechooser::{self as filechooser, CustomAtlas};
 
 mod config;
 mod paper;
-mod pdf_metrics;
 mod printable;
 mod semaphore;
+mod ttf_subset;
 mod util_3d;
 mod util_gl;
 
@@ -1832,7 +1831,7 @@ impl GlobalContext {
                                         );
 
                                         ui.align_text_to_frame_padding();
-                                        ui.text("Margins");
+                                        ui.text(&tr!("Margins"));
                                         ui.with_push(imgui::Indent(1.0 * font_sz), || {
                                             build_length(
                                                 ui,

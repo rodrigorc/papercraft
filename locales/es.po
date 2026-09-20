@@ -15,23 +15,23 @@ msgstr ""
 "Este archivo .craft es demasiado reciente y no se puede leer. Por favor, "
 "actualiza tu versión de Papercraft."
 
-#: src/printable.rs:48
+#: src/printable.rs:47
 msgid "Don't know how to write the format of {}"
 msgstr "No sé cómo escribir el formato de {}"
 
-#: src/printable.rs:53 src/main.rs:3404
+#: src/printable.rs:52 src/main.rs:3404
 msgid "Error exporting to {}"
 msgstr "Error exportando a {}"
 
-#: src/printable.rs:380 src/printable.rs:711 src/main.rs:3372
+#: src/printable.rs:514 src/printable.rs:845 src/main.rs:3372
 msgid "Error saving file {}"
 msgstr "Error guardando archivo {}"
 
-#: src/printable.rs:1029 src/ui.rs:1292
+#: src/printable.rs:1163 src/ui.rs:1294
 msgid "Page {}/{}"
 msgstr "Pág. {}/{}"
 
-#: src/ui.rs:3082
+#: src/ui.rs:3077
 msgid "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 msgstr "Creado con Papercraft. https://github.com/rodrigorc/papercraft"
 
@@ -297,22 +297,25 @@ msgstr "Longitud"
 msgid "Line"
 msgstr "Línea"
 
-#: src/main.rs:1469
+#: src/main.rs:1468
 msgid "Patterns:"
 msgstr "Patrones:"
 
-#: src/main.rs:1474
+#: src/main.rs:1473
 msgid ""
 "Patterns are written as a list of numbers, each a length in millimeters "
 "(with 0.1 mm precision) representing the lengths of \"dash-space-dash-"
 "space\"."
-msgstr "Los patrones se escriben como una lista de números, cada uno una longitud en milímetros (con precisión de 0.1 mm) que representa las longitudes de \"guión-espacio-guión-espacio\"."
+msgstr ""
+"Los patrones se escriben como una lista de números, cada uno una longitud en "
+"milímetros (con precisión de 0.1 mm) que representa las longitudes de "
+"\"guión-espacio-guión-espacio\"."
 
-#: src/main.rs:1478
+#: src/main.rs:1477
 msgid "Mountains"
 msgstr "Montañas"
 
-#: src/main.rs:1490
+#: src/main.rs:1489
 msgid "Valleys"
 msgstr "Valles"
 
@@ -442,6 +445,10 @@ msgstr "Papel"
 #: src/main.rs:1828
 msgid "Highlight"
 msgstr "Resalte"
+
+#: src/main.rs:1835
+msgid "Margins"
+msgstr "Márgenes"
 
 #: src/main.rs:1840
 msgid "top"

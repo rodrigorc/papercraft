@@ -15,23 +15,23 @@ msgstr ""
 "Diese .craft-Datei ist zu neu und kann nicht gelesen werden. Bitte "
 "aktualisieren Sie Ihre Papercraft-Version."
 
-#: src/printable.rs:48
+#: src/printable.rs:47
 msgid "Don't know how to write the format of {}"
 msgstr "Weiß nicht, wie das Format von {} geschrieben wird"
 
-#: src/printable.rs:53 src/main.rs:3404
+#: src/printable.rs:52 src/main.rs:3404
 msgid "Error exporting to {}"
 msgstr "Fehler beim Exportieren nach {}"
 
-#: src/printable.rs:380 src/printable.rs:711 src/main.rs:3372
+#: src/printable.rs:514 src/printable.rs:845 src/main.rs:3372
 msgid "Error saving file {}"
 msgstr "Fehler beim Speichern der Datei {}"
 
-#: src/printable.rs:1029 src/ui.rs:1292
+#: src/printable.rs:1163 src/ui.rs:1294
 msgid "Page {}/{}"
 msgstr "Seite {}/{}"
 
-#: src/ui.rs:3082
+#: src/ui.rs:3077
 msgid "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 msgstr "Erstellt mit Papercraft. https://github.com/rodrigorc/papercraft"
 
@@ -299,22 +299,25 @@ msgstr "Länge"
 msgid "Line"
 msgstr "Linie"
 
-#: src/main.rs:1469
+#: src/main.rs:1468
 msgid "Patterns:"
 msgstr "Muster:"
 
-#: src/main.rs:1474
+#: src/main.rs:1473
 msgid ""
 "Patterns are written as a list of numbers, each a length in millimeters "
 "(with 0.1 mm precision) representing the lengths of \"dash-space-dash-"
 "space\"."
-msgstr "Muster werden als Liste von Zahlen geschrieben, jeweils eine Länge in Millimetern (mit 0,1 mm Genauigkeit), die die Längen von \"Strich-Leerzeichen-Strich-Leerzeichen\" darstellen."
+msgstr ""
+"Muster werden als Liste von Zahlen geschrieben, jeweils eine Länge in "
+"Millimetern (mit 0,1 mm Genauigkeit), die die Längen von \"Strich-"
+"Leerzeichen-Strich-Leerzeichen\" darstellen."
 
-#: src/main.rs:1478
+#: src/main.rs:1477
 msgid "Mountains"
 msgstr "Berge"
 
-#: src/main.rs:1490
+#: src/main.rs:1489
 msgid "Valleys"
 msgstr "Täler"
 
@@ -444,6 +447,10 @@ msgstr "Papier"
 #: src/main.rs:1828
 msgid "Highlight"
 msgstr "Hervorhebung"
+
+#: src/main.rs:1835
+msgid "Margins"
+msgstr "Ränder"
 
 #: src/main.rs:1840
 msgid "top"

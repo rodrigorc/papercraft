@@ -1,4 +1,5 @@
 use std::{
+    io::Write,
     sync::{Condvar, Mutex},
     thread,
 };
@@ -58,11 +59,13 @@ impl GlobalContext {
 
     fn generate_pdf(&self, file_name: &Path) -> Result<()> {
         use lopdf::{
-            Document, Object, ObjectId, Stream, StringFormat,
+            Document, Object, ObjectId, Stream,
             content::{Content, Operation},
             dictionary,
             xref::XrefType,
         };
+
+        use ttf_subset::{FontFile, LopdfSubsetBuilder, Scaler};
 
         let options = self.data.papercraft().options();
         let page_size_mm = Vector2::from(options.page_size);
@@ -73,12 +76,20 @@ impl GlobalContext {
 
         let id_pages = doc.new_object_id();
 
-        let id_font = doc.add_object(dictionary! {
-            "Type" => "Font",
-            "Subtype" => "Type1",
-            "BaseFont" => "Helvetica",
-            "Encoding" => "WinAnsiEncoding",
-        });
+        let ttf = FontFile::parse_ttf(MPLUS_TTF).unwrap();
+        let mut ttf_subset = LopdfSubsetBuilder::new(&ttf, &mut doc, "MPLUS1p-Regular");
+        let pdf_font_name = "MPLUS1";
+        /*
+        let base_font_name = "MPLUS1p-Regular";
+
+        let id_font_file = doc.new_object_id();
+        let id_unicode_cmap = doc.new_object_id();
+        let id_font_descriptor = doc.new_object_id();
+        let id_font = doc.new_object_id();
+
+        let mut glyph_map = GlyphMap::default();
+        let mut char_map = BTreeMap::<GlyphId, CMapTrans>::new();
+        */
 
         let mut pages = vec![];
 
@@ -97,7 +108,7 @@ impl GlobalContext {
                     doc.set_object(id, stream);
                 }
 
-                let write_texts = |ops: &mut Vec<Operation>| {
+                let mut write_texts = |ops: &mut Vec<Operation>| {
                     if texts.is_empty() {
                         return;
                     }
@@ -111,8 +122,11 @@ impl GlobalContext {
                         let x = text.pos.x;
                         // (0,0) is in lower-left
                         let y = page_size_mm.y - text.pos.y;
-                        let (width, cps) = pdf_metrics::measure_helvetica(&text.text);
-                        let width = width as f32 * text.size / 1000.0;
+
+                        //let (width, op_text) = ttf_subset::encode_measure_text(&text.text, &ttf, &mut glyph_map, &mut char_map);
+                        let (width, op_text) = ttf_subset.encode_measure_text(&text.text);
+                        let width = Scaler::new(text.size, &ttf).scale(width);
+
                         let dx = match text.align {
                             TextAlign::Near => 0.0,
                             TextAlign::Center => -width / 2.0,
@@ -126,7 +140,10 @@ impl GlobalContext {
                         // Set font
                         if last_font != Some(size) {
                             last_font = Some(size);
-                            ops.push(Operation::new("Tf", vec!["F1".into(), size.into()]));
+                            ops.push(Operation::new(
+                                "Tf",
+                                vec![pdf_font_name.into(), size.into()],
+                            ));
                         }
 
                         let mx: Vec<Object> = vec![
@@ -139,33 +156,7 @@ impl GlobalContext {
                         ];
                         ops.push(Operation::new("Tm", mx));
 
-                        let mut tj = Vec::new();
-                        let mut codepoints = Vec::new();
-                        for (kern, cp) in cps {
-                            if kern != 0 {
-                                if !codepoints.is_empty() {
-                                    tj.push(Object::String(
-                                        std::mem::take(&mut codepoints),
-                                        StringFormat::Literal,
-                                    ));
-                                }
-                                tj.push(kern.into());
-                            }
-                            if let Ok(c) = u8::try_from(cp) {
-                                codepoints.push(c);
-                            }
-                        }
-                        if !codepoints.is_empty() {
-                            tj.push(Object::String(
-                                std::mem::take(&mut codepoints),
-                                StringFormat::Literal,
-                            ));
-                        }
-                        match tj.len() {
-                            0 => (),
-                            1 => ops.push(Operation::new("Tj", tj)),
-                            _ => ops.push(Operation::new("TJ", vec![Object::Array(tj)])),
-                        }
+                        ops.extend(op_text);
                     }
                     // End Text
                     ops.push(Operation::new("ET", Vec::new()));
@@ -257,7 +248,7 @@ impl GlobalContext {
 
                 let id_resources = doc.add_object(dictionary! {
                     "Font" => dictionary! {
-                        "F1" => id_font,
+                        pdf_font_name => ttf_subset.id_font(),
                     },
                     "XObject" => dictionary! {
                         img_name => id_image,
@@ -297,6 +288,9 @@ impl GlobalContext {
             "Type" => "Catalog",
             "Pages" => id_pages,
         });
+
+        ttf_subset.complete_document(&mut doc);
+
         doc.trailer.set("Root", id_catalog);
 
         let date = time::OffsetDateTime::now_utc();
@@ -317,7 +311,7 @@ impl GlobalContext {
             "ModDate" => Object::string_literal(s_date),
         });
         doc.trailer.set("Info", id_info);
-        doc.compress();
+        //doc.compress();
         doc.save(file_name)?;
         Ok(())
     }
@@ -451,7 +445,7 @@ impl GlobalContext {
             let pos = basis2.rotate_vector(text.pos);
             writeln!(
                 out,
-                r#"<text x="{}" y="{}" style="{}font-size:{};font-family:sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
+                r#"<text x="{}" y="{}" style="{}font-size:{};font-family:'M PLUS 1p',sans-serif;fill:#000000" transform="rotate({})">{}</text>"#,
                 pos.x,
                 pos.y,
                 match text.align {

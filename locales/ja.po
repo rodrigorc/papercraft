@@ -15,23 +15,23 @@ msgstr ""
 "この .craft ファイルは新しすぎて読み込めません。Papercraft のバージョンを更新"
 "してください。"
 
-#: src/printable.rs:48
+#: src/printable.rs:47
 msgid "Don't know how to write the format of {}"
 msgstr "{}の書き込みフォーマットが不明です"
 
-#: src/printable.rs:53 src/main.rs:3404
+#: src/printable.rs:52 src/main.rs:3404
 msgid "Error exporting to {}"
 msgstr "{}へのエクスポートエラー"
 
-#: src/printable.rs:380 src/printable.rs:711 src/main.rs:3372
+#: src/printable.rs:514 src/printable.rs:845 src/main.rs:3372
 msgid "Error saving file {}"
 msgstr "ファイル{}の保存エラー"
 
-#: src/printable.rs:1029 src/ui.rs:1292
+#: src/printable.rs:1163 src/ui.rs:1294
 msgid "Page {}/{}"
 msgstr "ページ {}/{}"
 
-#: src/ui.rs:3082
+#: src/ui.rs:3077
 msgid "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 msgstr "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 
@@ -296,22 +296,24 @@ msgstr "長さ"
 msgid "Line"
 msgstr "線"
 
-#: src/main.rs:1469
+#: src/main.rs:1468
 msgid "Patterns:"
 msgstr "パターン："
 
-#: src/main.rs:1474
+#: src/main.rs:1473
 msgid ""
 "Patterns are written as a list of numbers, each a length in millimeters "
 "(with 0.1 mm precision) representing the lengths of \"dash-space-dash-"
 "space\"."
-msgstr "パターンは数値のリストとして記述します。各数値はミリメートル単位の長さ（0.1mm精度）で、「ダッシュ-スペース-ダッシュ-スペース」の長さを表します。"
+msgstr ""
+"パターンは数値のリストとして記述します。各数値はミリメートル単位の長さ（0.1mm"
+"精度）で、「ダッシュ-スペース-ダッシュ-スペース」の長さを表します。"
 
-#: src/main.rs:1478
+#: src/main.rs:1477
 msgid "Mountains"
 msgstr "山折り"
 
-#: src/main.rs:1490
+#: src/main.rs:1489
 msgid "Valleys"
 msgstr "谷折り"
 
@@ -441,6 +443,10 @@ msgstr "紙"
 #: src/main.rs:1828
 msgid "Highlight"
 msgstr "強調表示"
+
+#: src/main.rs:1835
+msgid "Margins"
+msgstr "余白"
 
 #: src/main.rs:1840
 msgid "top"

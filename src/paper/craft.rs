@@ -632,6 +632,70 @@ impl Papercraft {
     pub fn num_islands(&self) -> usize {
         self.islands.len()
     }
+
+    /// orders islands with flood fill by adjacency.
+    /// picks next island by most edges touching visited islands,
+    /// breaks equal score by sticking to "more recently added" edge.
+    /// * `start` - island to start ordering from
+    pub fn adjacency_order_islands(&mut self, start: IslandKey) {
+        if !self.islands.contains_key(start) {
+            return;
+        }
+        let island_keys: Vec<_> = self.island_order.clone();
+        let mut island_indices = FxHashMap::default();
+
+        for (index, &i_island) in island_keys.iter().enumerate() {
+            island_indices.insert(i_island, index);
+        }
+        let mut island_neighbors = vec![Vec::new(); island_keys.len()];
+        // list neighboring islands by shared edges
+        for (_i_edge, edge) in self.model.edges() {
+            let (fa, Some(fb)) = edge.faces() else {
+                continue;
+            };
+            let ia = island_indices[&self.island_by_face(fa)];
+            let ib = island_indices[&self.island_by_face(fb)];
+            if ia != ib {
+                island_neighbors[ia].push(ib);
+                island_neighbors[ib].push(ia);
+            }
+        }
+        let start_index = island_indices[&start];
+        let mut island_order = Vec::with_capacity(island_keys.len());
+        let mut visited = vec![false; island_keys.len()];
+        visited[start_index] = true;
+        island_order.push(start);
+        //store index of each ordered island
+        let mut visit_order = vec![0; island_keys.len()];
+        visit_order[start_index] = 0;
+
+        for order_idx in 1..island_keys.len() {
+            let next = (0..island_keys.len())
+                // ignore visited islands
+                .filter(|&i_island| !visited[i_island])
+                .max_by_key(|&i_island| {
+                    // count visited neighbor islands
+                    let visited_edges = island_neighbors[i_island]
+                        .iter()
+                        .filter(|&&neighbor| visited[neighbor])
+                        .count();
+                    // break tie by finding island with most recently added neighbor
+                    let most_recent_neighbor = island_neighbors[i_island]
+                        .iter()
+                        .filter(|&&neighbor| visited[neighbor])
+                        .map(|&neighbor| visit_order[neighbor])
+                        .max()
+                        .unwrap_or(0);
+                    (visited_edges, most_recent_neighbor)
+                })
+                .unwrap();
+            visited[next] = true;
+            visit_order[next] = order_idx;
+            island_order.push(island_keys[next]);
+        }
+        self.island_order = island_order;
+    }
+
     pub fn island_bounding_box_angle(
         &self,
         island: &Island,
@@ -740,7 +804,8 @@ impl Papercraft {
         self.islands.get_mut(key)
     }
     fn rebuild_island_order(&mut self) {
-        self.island_order = self.islands.keys().collect();
+        log::warn!("Skipping island order rebuild")
+        // self.island_order = self.islands.keys().collect();
     }
     fn remove_island(&mut self, i_island: IslandKey) -> Option<Island> {
         let island = self.islands.remove(i_island)?;
@@ -761,8 +826,8 @@ impl Papercraft {
             // doesn't matter.
             name.push(b'A');
         }
-
         let mut island_name = Vec::new();
+        // assign labels in the order islands are indexed as
         for &i_island in &self.island_order {
             next_name(&mut island_name);
             self.islands[i_island].name = String::from_utf8(island_name.clone()).unwrap();

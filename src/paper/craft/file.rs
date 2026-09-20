@@ -294,7 +294,7 @@ impl Papercraft {
             model.faces().map(|(i_face, _face)| i_face).collect();
 
         let mut islands = SlotMap::with_key();
-        let mut island_order = Vec::new();
+        let mut island_size_order = Vec::new();
         while let Some(root) = pending_faces
             .iter()
             .copied()
@@ -321,9 +321,9 @@ impl Papercraft {
                 name: String::new(),
             };
             let i_island = islands.insert(island);
-            island_order.push(i_island);
+            island_size_order.push(i_island);
         }
-
+        let start_island = island_size_order[0];
         let need_packing = !importer.relocate_islands(&model, islands.values_mut());
 
         let mut need_fix_options = false;
@@ -334,16 +334,16 @@ impl Papercraft {
         if !model.has_textures() {
             options.texture = false;
         }
-
         let mut papercraft = Papercraft {
             model,
             options,
             edges,
             islands,
-            island_order,
+            island_order: island_size_order,
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         };
+        papercraft.adjacency_order_islands(start_island);
         if need_fix_options {
             let (v_min, v_max) = papercraft.model().bounding_box();
             let size = (v_max.x - v_min.x)

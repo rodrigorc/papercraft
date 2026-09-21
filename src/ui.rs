@@ -2641,7 +2641,7 @@ impl PapercraftContext {
     }
 
     /// in-/decrements labels of selected islands by 1 letter
-    pub fn move_selected_islands(&mut self, toward_end: bool) -> Vec<UndoAction> {
+    pub fn move_selected_islands(&mut self, toward_back: bool) -> Vec<UndoAction> {
         let selected: Vec<_> = self
             .selected_islands
             .iter()
@@ -2653,7 +2653,32 @@ impl PapercraftContext {
             .islands()
             .map(|(_, island)| island.root_face())
             .collect();
-        if self.papercraft.move_islands_in_order(&selected, toward_end) {
+        if self
+            .papercraft
+            .move_islands_in_order(&selected, toward_back)
+        {
+            vec![UndoAction::IslandOrder { prev_order }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn move_selected_islands_to_end(&mut self, toward_back: bool) -> Vec<UndoAction> {
+        let selected: Vec<_> = self
+            .selected_islands
+            .iter()
+            .map(|&key| self.papercraft.island_by_face(key.0))
+            .collect();
+        //save root faces of old order
+        let prev_order: Vec<_> = self
+            .papercraft
+            .islands()
+            .map(|(_, island)| island.root_face())
+            .collect();
+        if self
+            .papercraft
+            .move_islands_in_order_to_end(&selected, toward_back)
+        {
             vec![UndoAction::IslandOrder { prev_order }]
         } else {
             Vec::new()

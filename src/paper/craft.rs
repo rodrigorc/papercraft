@@ -731,7 +731,7 @@ impl Papercraft {
         self.island_order = island_order;
     }
 
-    pub fn move_islands_in_order(&mut self, selected: &[IslandKey], toward_end: bool) -> bool {
+    pub fn move_islands_in_order(&mut self, selected: &[IslandKey], toward_back: bool) -> bool {
         let selected: FxHashSet<_> = selected.iter().copied().collect();
         if selected.is_empty() || selected.len() == self.island_order.len() {
             return false;
@@ -746,7 +746,7 @@ impl Papercraft {
         if selected_positions.is_empty() {
             return false;
         }
-        if toward_end {
+        if toward_back {
             //stop if any selected island reached last letter
             if selected_positions.last() == Some(&(self.island_order.len() - 1)) {
                 return false;
@@ -772,6 +772,32 @@ impl Papercraft {
                     self.island_order.swap(index, index - 1);
                 }
             }
+        }
+        true
+    }
+
+    /// creates island order with selected islands all moved to front / back of order
+    pub fn move_islands_in_order_to_end(
+        &mut self,
+        selected: &[IslandKey],
+        toward_back: bool,
+    ) -> bool {
+        let mut selected_islands = Vec::new();
+        let mut unselected_islands = Vec::new();
+
+        for island in self.island_order.drain(..) {
+            if selected.contains(&island) {
+                selected_islands.push(island);
+            } else {
+                unselected_islands.push(island);
+            }
+        }
+        if toward_back {
+            unselected_islands.extend(selected_islands);
+            self.island_order = unselected_islands;
+        } else {
+            selected_islands.extend(unselected_islands);
+            self.island_order = selected_islands;
         }
         true
     }

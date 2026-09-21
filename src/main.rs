@@ -672,8 +672,10 @@ struct MenuActions {
     quit: BoolWithConfirm,
     reset_views: bool,
     undo: bool,
-    page_up: bool,
-    page_down: bool,
+    increase_labels: bool,
+    decrease_labels: bool,
+    labels_to_front: bool,
+    labels_to_back: bool,
     reorder_labels: bool,
 }
 
@@ -2191,13 +2193,19 @@ impl GlobalContext {
                 ) {
                     menu_actions.undo = true;
                 }
-                // increase island labels
+                // in/decrease island labels
                 if ui.shortcut_ex(imgui::Key::PageUp, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.page_up = true;
+                    menu_actions.increase_labels = true;
                 }
-                // decrease island labels
                 if ui.shortcut_ex(imgui::Key::PageDown, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.page_down = true;
+                    menu_actions.decrease_labels = true;
+                }
+                // move islands to front/back of order
+                if ui.shortcut_ex(imgui::Key::Home, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.labels_to_front = true;
+                }
+                if ui.shortcut_ex(imgui::Key::End, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.labels_to_back = true;
                 }
                 // toggle snap mode
                 if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
@@ -2491,9 +2499,23 @@ impl GlobalContext {
                 UndoResult::False => {}
             }
         }
-        if menu_actions.page_up || menu_actions.page_down {
-            //move islads - page down: towards A, page up: towards Z+
-            let undo = self.data.move_selected_islands(menu_actions.page_up);
+        if menu_actions.increase_labels || menu_actions.decrease_labels {
+            //move islands down: towards A, up: towards Z+
+            let undo = self
+                .data
+                .move_selected_islands(menu_actions.increase_labels);
+            if !undo.is_empty() {
+                self.data.push_undo_action(undo);
+                self.add_rebuild(
+                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                );
+            }
+        }
+        if menu_actions.labels_to_front || menu_actions.labels_to_back {
+            //move islands to front: A, back: Z+
+            let undo = self
+                .data
+                .move_selected_islands_to_end(menu_actions.labels_to_back);
             if !undo.is_empty() {
                 self.data.push_undo_action(undo);
                 self.add_rebuild(

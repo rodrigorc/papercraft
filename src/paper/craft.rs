@@ -636,65 +636,97 @@ impl Papercraft {
         self.islands.len()
     }
 
-    /// orders islands with flood fill by adjacency.
-    /// picks next island by most edges touching visited islands,
-    /// breaks equal score by sticking to "more recently added" edge.
+    /// orders islands by following their cut edges with a right-hand walk.
+    /// scans each island's contour in stored winding order, backtracking when
+    /// no unvisited neighboring island remains.
     /// * `start` - island to start ordering from
     pub fn adjacency_order_islands(&mut self, start: IslandKey) {
         if !self.islands.contains_key(start) {
             return;
         }
-        let island_keys: Vec<_> = self.island_order.clone();
-        let mut island_indices = FxHashMap::default();
-
-        for (index, &i_island) in island_keys.iter().enumerate() {
-            island_indices.insert(i_island, index);
+        // helper to store island edge data for backtracking
+        struct Frame {
+            island: IslandKey,
+            edges: Vec<EdgeIndex>,
+            next_edge: usize,
         }
-        let mut island_neighbors = vec![Vec::new(); island_keys.len()];
-        // list neighboring islands by shared edges
-        for (_i_edge, edge) in self.model.edges() {
-            let (fa, Some(fb)) = edge.faces() else {
-                continue;
-            };
-            let ia = island_indices[&self.island_by_face(fa)];
-            let ib = island_indices[&self.island_by_face(fb)];
-            if ia != ib {
-                island_neighbors[ia].push(ib);
-                island_neighbors[ib].push(ia);
-            }
-        }
-        let start_index = island_indices[&start];
+        let island_keys = self.island_order.clone();
+        let mut visited = FxHashSet::default();
         let mut island_order = Vec::with_capacity(island_keys.len());
-        let mut visited = vec![false; island_keys.len()];
-        visited[start_index] = true;
-        island_order.push(start);
-        //store index of each ordered island
-        let mut visit_order = vec![0; island_keys.len()];
-        visit_order[start_index] = 0;
-
-        for order_idx in 1..island_keys.len() {
-            let next = (0..island_keys.len())
-                // ignore visited islands
-                .filter(|&i_island| !visited[i_island])
-                .max_by_key(|&i_island| {
-                    // count visited neighbor islands
-                    let visited_edges = island_neighbors[i_island]
-                        .iter()
-                        .filter(|&&neighbor| visited[neighbor])
-                        .count();
-                    // break tie by finding island with most recently added neighbor
-                    let most_recent_neighbor = island_neighbors[i_island]
-                        .iter()
-                        .filter(|&&neighbor| visited[neighbor])
-                        .map(|&neighbor| visit_order[neighbor])
-                        .max()
-                        .unwrap_or(0);
-                    (visited_edges, most_recent_neighbor)
-                })
-                .unwrap();
-            visited[next] = true;
-            visit_order[next] = order_idx;
-            island_order.push(island_keys[next]);
+        // order contour edges from the island's winding
+        let ordered_edges =
+            |papercraft: &Papercraft, island: IslandKey, entry_edge: Option<EdgeIndex>| {
+                let mut edges: Vec<_> = papercraft
+                    .island_contour(island)
+                    .into_iter()
+                    .map(|(i_edge, _)| i_edge)
+                    .collect();
+                let contour_edges: FxHashSet<_> = edges.iter().copied().collect();
+                // append non-contour edges afterward so every cut edge is considered
+                let mut extra_edges: Vec<_> = papercraft
+                    .island_edges(papercraft.island_by_key(island).unwrap())
+                    .into_iter()
+                    .filter(|i_edge| !contour_edges.contains(i_edge))
+                    .collect();
+                // sort extra edges to keep traversal deterministic
+                extra_edges.sort_by_key(|&i_edge| usize::from(i_edge));
+                edges.extend(extra_edges);
+                // find edge used to enter island
+                let start = entry_edge
+                    .and_then(|i_edge| edges.iter().position(|&edge| edge == i_edge))
+                    .map_or(0, |index| (index + 1) % edges.len().max(1));
+                // set starting point of edge list to one next to entry edge
+                edges
+                    .iter()
+                    .cycle()
+                    .skip(start)
+                    .take(edges.len())
+                    .copied()
+                    .collect()
+            };
+        // start the walk at given island
+        for component_start in std::iter::once(start).chain(island_keys.iter().copied()) {
+            if !visited.insert(component_start) {
+                continue;
+            }
+            island_order.push(component_start);
+            // keep the current island and its next edge for backtracking
+            let mut stack = vec![Frame {
+                island: component_start,
+                edges: ordered_edges(self, component_start, None),
+                next_edge: 0,
+            }];
+            while let Some(frame) = stack.last_mut() {
+                // pop the island when all of its edges have been checked
+                let Some(&i_edge) = frame.edges.get(frame.next_edge) else {
+                    stack.pop();
+                    continue;
+                };
+                frame.next_edge += 1;
+                // ignore edges that do not connect two faces
+                let (face_a, Some(face_b)) = self.model[i_edge].faces() else {
+                    continue;
+                };
+                let island_a = self.island_by_face(face_a);
+                let island_b = self.island_by_face(face_b);
+                let next_island = if island_a == frame.island {
+                    island_b
+                } else if island_b == frame.island {
+                    island_a
+                } else {
+                    continue;
+                };
+                if !visited.insert(next_island) {
+                    continue;
+                }
+                // list new island and continue walking from the entry edge
+                island_order.push(next_island);
+                stack.push(Frame {
+                    island: next_island,
+                    edges: ordered_edges(self, next_island, Some(i_edge)),
+                    next_edge: 0,
+                });
+            }
         }
         self.island_order = island_order;
     }

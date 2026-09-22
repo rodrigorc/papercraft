@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::io::{BufRead, Read};
 use std::panic::catch_unwind;
 use std::path::Path;
+use tr::tr;
 
 use super::{Island, MaterialIndex, Model, PaperOptions, Texture, Vertex, VertexIndex};
 use crate::paper::{FlapSide, PageOffset, Papercraft, RealEdgeStatus};
@@ -107,14 +108,11 @@ pub fn import_model_file(file_name: &Path) -> Result<(Papercraft, bool)> {
     match catch_unwind(|| import_model_file_priv(file_name)) {
         Ok(res) => res,
         Err(err) => {
-            if let Some(msg) = err.downcast_ref::<&str>() {
-                bail!(
-                    "Panic importing the model '{}'!\n{}",
-                    file_name.display(),
-                    msg
-                );
+            let msg = tr!("Error importing the model '{}'!", file_name.display());
+            if let Some(panic_msg) = err.downcast_ref::<&str>() {
+                bail!(msg + "\n" + panic_msg);
             } else {
-                bail!("Panic importing the model '{}'!", file_name.display());
+                bail!(msg);
             }
         }
     }
@@ -131,7 +129,7 @@ fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
     };
 
     let f = std::fs::File::open(file_name)
-        .with_context(|| format!("Error opening file {}", file_name.display()))?;
+        .with_context(|| tr!("Error opening file {}", file_name.display()))?;
     let f = std::io::BufReader::new(f);
     let mut is_native = false;
 
@@ -139,32 +137,32 @@ fn import_model_file_priv(file_name: &Path) -> Result<(Papercraft, bool)> {
         "craft" => {
             is_native = true;
             Papercraft::load(f)
-                .with_context(|| format!("Error reading Papercraft file {}", file_name.display()))?
+                .with_context(|| tr!("Error reading Papercraft file {}", file_name.display()))?
         }
         "pdo" => {
             let importer = pepakura::PepakuraImporter::new(f)
-                .with_context(|| format!("Error reading Pepakura file {}", file_name.display()))?;
+                .with_context(|| tr!("Error reading Pepakura file {}", file_name.display()))?;
             Papercraft::import(importer)
         }
         "stl" => {
             let importer = stl::StlImporter::new(f)
-                .with_context(|| format!("Error reading STL file {}", file_name.display()))?;
+                .with_context(|| tr!("Error reading STL file {}", file_name.display()))?;
             Papercraft::import(importer)
         }
         "mtl" => {
-            anyhow::bail!(
-                "MTL are material files for OBJ models. Try opening the OBJ file instead."
-            );
+            anyhow::bail!(tr!(
+                "MTL files are material libraries for OBJ models. Try opening the OBJ file instead."
+            ));
         }
         "glb" | "gltf" => {
             let importer = gltf::GltfImporter::new(f, file_name)
-                .with_context(|| format!("Error reading glTF file {}", file_name.display()))?;
+                .with_context(|| tr!("Error reading glTF file {}", file_name.display()))?;
             Papercraft::import(importer)
         }
         // "obj" plus unknown extensions are tried as obj, that was the default previously
         _ => {
             let importer = waveobj::WaveObjImporter::new(f, file_name)
-                .with_context(|| format!("Error reading Wavefront file {}", file_name.display()))?;
+                .with_context(|| tr!("Error reading Wavefront file {}", file_name.display()))?;
             Papercraft::import(importer)
         }
     };

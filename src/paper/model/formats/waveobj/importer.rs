@@ -5,6 +5,7 @@ use super::data;
 use cgmath::Zero;
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
+use tr::tr;
 
 pub struct WaveObjImporter {
     obj: data::Model,
@@ -18,8 +19,12 @@ impl WaveObjImporter {
         let (matlib, obj) = data::Model::from_reader(f)?;
         let matlib = match matlib {
             Some(matlib) => Some(
-                data::solve_find_matlib_file(matlib.as_ref(), file_name)
-                    .ok_or_else(|| anyhow!("{} matlib not found", matlib))?,
+                data::solve_find_matlib_file(matlib.as_ref(), file_name).ok_or_else(|| {
+                    anyhow!(tr!(
+                        "The material file '{}' was not found. Copy it along with the OBJ file.",
+                        matlib
+                    ))
+                })?,
             ),
             None => None,
         };
@@ -27,13 +32,13 @@ impl WaveObjImporter {
 
         if let Some(matlib) = matlib {
             // Textures are read from the .mtl file
-            let err_mtl = || format!("Error reading matlib file {}", matlib.display());
+            let err_mtl = || tr!("Error reading the material file {}", matlib.display());
             let f = std::fs::File::open(&matlib).with_context(err_mtl)?;
             let f = std::io::BufReader::new(f);
 
             for lib in data::Material::from_reader(f).with_context(err_mtl)? {
                 if let Some(map) = lib.map() {
-                    let err_map = || format!("Error reading texture file {map}");
+                    let err_map = || tr!("Error reading the texture file {}", map);
                     if let Some(map) = data::solve_find_matlib_file(map.as_ref(), &matlib) {
                         let img = image::ImageReader::open(&map)
                             .with_context(err_map)?
@@ -44,11 +49,15 @@ impl WaveObjImporter {
                         let map_name = map
                             .file_name()
                             .and_then(|f| f.to_str())
-                            .ok_or_else(|| anyhow!("Invalid texture name"))?;
+                            .ok_or_else(|| anyhow!(tr!("Invalid texture name")))?;
                         texture_map
                             .insert(lib.name().to_owned(), Cell::new((map_name.to_owned(), img)));
                     } else {
-                        anyhow::bail!("{} texture from {} matlib not found", map, matlib.display());
+                        anyhow::bail!(tr!(
+                            "The texture file '{}' referenced by the material file '{}' was not found.",
+                            map,
+                            matlib.display()
+                        ));
                     }
                 }
             }

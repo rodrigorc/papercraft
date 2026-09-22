@@ -845,7 +845,11 @@ impl GlobalContext {
                     }
                 }
 
-                center_text(ui, env!("CARGO_PKG_DESCRIPTION"), sz_full.x);
+                center_text(
+                    ui,
+                    &tr!("Papercraft is a tool to unwrap 3D models"),
+                    sz_full.x,
+                );
                 advance_cursor(ui, 0.0, 0.5);
                 center_url(ui, env!("CARGO_PKG_REPOSITORY"), "url", None, sz_full.x);
                 advance_cursor(ui, 0.0, 0.5);
@@ -1831,7 +1835,7 @@ impl GlobalContext {
                                         );
 
                                         ui.align_text_to_frame_padding();
-                                        ui.text("Margins");
+                                        ui.text(&tr!("Margins"));
                                         ui.with_push(imgui::Indent(1.0 * font_sz), || {
                                             build_length(
                                                 ui,
@@ -4287,17 +4291,22 @@ fn check_version() -> Result<(Version, String)> {
         .build()?;
     let res = cli.execute(req)?.error_for_status()?;
     if !res.status().is_redirection() {
-        anyhow::bail!("no redirection");
+        log::warn!("Version check: expected a redirect, got {}", res.status());
+        anyhow::bail!(tr!("Unknown version"));
     }
     let location = res
         .headers()
         .get(&reqwest::header::LOCATION)
-        .ok_or_else(|| anyhow::anyhow!("missing location header"))?
+        .ok_or_else(|| {
+            log::warn!("Version check: no location header");
+            anyhow::anyhow!(tr!("Unknown version"))
+        })?
         .to_str()?;
     log::info!("Latest release at {location}");
-    let slash = location
-        .rfind('/')
-        .ok_or_else(|| anyhow::anyhow!("Unknown version"))?;
+    let slash = location.rfind('/').ok_or_else(|| {
+        log::warn!("Version check: no version in '{location}'");
+        anyhow::anyhow!(tr!("Unknown version"))
+    })?;
     let version = &location[slash + 1..];
     let version = version.strip_prefix("v").unwrap_or(version);
     Ok((Version::new(version), String::from(location)))

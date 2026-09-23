@@ -64,7 +64,10 @@ use util_gl::{UniformQuad, Uniforms2D, Uniforms2DDash, Uniforms3D};
 
 use clap::Parser;
 
-use crate::{paper::LineConfig, util_3d::TotalF32};
+use crate::{
+    paper::{LineConfig, MoveInOrderDirection},
+    util_3d::TotalF32,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -672,6 +675,8 @@ struct MenuActions {
     quit: BoolWithConfirm,
     reset_views: bool,
     undo: bool,
+    move_labels: Option<MoveInOrderDirection>,
+    reorder_labels: bool,
 }
 
 // Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
@@ -2073,6 +2078,11 @@ impl GlobalContext {
                     {
                         self.pack_islands();
                     }
+                    ui.separator();
+
+                    if ui.menu_item_config(lbl(tr!("Reorder labels"))).build() {
+                        menu_actions.reorder_labels = true;
+                    }
                 }
             });
             ui.menu_config(lbl(tr!("View"))).with(|| {
@@ -2186,6 +2196,20 @@ impl GlobalContext {
                     imgui::InputFlags::RouteGlobal,
                 ) {
                     menu_actions.undo = true;
+                }
+                // in/decrease island labels
+                if ui.shortcut_ex(imgui::Key::PageUp, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Backward);
+                }
+                if ui.shortcut_ex(imgui::Key::PageDown, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Forward);
+                }
+                // move islands to front/back of order
+                if ui.shortcut_ex(imgui::Key::Home, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Start);
+                }
+                if ui.shortcut_ex(imgui::Key::End, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::End);
                 }
                 // toggle snap mode
                 if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
@@ -2479,7 +2503,27 @@ impl GlobalContext {
                 UndoResult::False => {}
             }
         }
-
+        if let Some(direction) = menu_actions.move_labels {
+            //move islands down: towards A, up: towards Z+
+            //move islands to front: A, back: Z+
+            let undo = self.data.move_selected_islands(direction);
+            if !undo.is_empty() {
+                self.data.push_undo_action(undo);
+                self.add_rebuild(
+                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                );
+            }
+        }
+        if menu_actions.reorder_labels {
+            let undo = self.data.reorder_islands();
+            if !undo.is_empty() {
+                self.data.push_undo_action(undo);
+                self.add_rebuild(
+                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                );
+            }
+            //TODO show warning popup if more !1 island was selected?
+        }
         let mut save_as = false;
         let mut open_file_dialog = false;
 

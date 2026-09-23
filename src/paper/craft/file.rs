@@ -193,6 +193,7 @@ impl Papercraft {
                     loc: Vector2::zero(),
                     rot: Rad::zero(),
                     mx: Matrix3::one(),
+                    order: 1_000_000,
                     name: String::new(),
                 });
                 self.memo = Memoization::default();
@@ -292,6 +293,7 @@ impl Papercraft {
             model.faces().map(|(i_face, _face)| i_face).collect();
 
         let mut islands = SlotMap::with_key();
+        let mut first_island = None;
         while let Some(root) = pending_faces.iter().copied().next() {
             pending_faces.remove(&root);
 
@@ -311,11 +313,14 @@ impl Papercraft {
                 loc: Vector2::zero(),
                 rot: Rad::zero(),
                 mx: Matrix3::one(),
+                order: 0,
                 name: String::new(),
             };
-            islands.insert(island);
+            let i_island = islands.insert(island);
+            if first_island.is_none() {
+                first_island = Some(i_island);
+            }
         }
-
         let need_packing = !importer.relocate_islands(&model, islands.values_mut());
 
         let mut need_fix_options = false;
@@ -326,7 +331,6 @@ impl Papercraft {
         if !model.has_textures() {
             options.texture = false;
         }
-
         let mut papercraft = Papercraft {
             model,
             options,
@@ -335,6 +339,9 @@ impl Papercraft {
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         };
+        if let Some(first_island) = first_island {
+            papercraft.adjacency_order_islands(first_island);
+        }
         if need_fix_options {
             let (v_min, v_max) = papercraft.model().bounding_box();
             let size = (v_max.x - v_min.x)

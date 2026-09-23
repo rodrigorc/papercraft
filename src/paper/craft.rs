@@ -109,6 +109,14 @@ pub enum EdgeIdPosition {
     Inside,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum MoveInOrderDirection {
+    Forward,
+    Backward,
+    Start,
+    End,
+}
+
 new_key_type! {
     pub struct IslandKey;
 }
@@ -627,6 +635,155 @@ impl Papercraft {
     pub fn num_islands(&self) -> usize {
         self.islands.len()
     }
+
+    /// orders islands by following their cut edges with a right-hand walk.
+    /// scans each island's contour in stored winding order, backtracking when
+    /// no unvisited neighboring island remains.
+    /// * `start` - island to start ordering from
+    pub fn adjacency_order_islands(
+        &mut self,
+        start: IslandKey,
+    ) -> Option<FxHashMap<FaceIndex, i32>> {
+        if !self.islands.contains_key(start) {
+            return None;
+        }
+        // helper to store island edge data for backtracking
+        struct Frame {
+            island: IslandKey,
+            edges: Vec<EdgeIndex>,
+            next_edge: usize,
+        }
+        let island_keys: Vec<IslandKey> = self.islands.keys().collect();
+
+        let mut visited = FxHashSet::default();
+        let mut island_order = Vec::with_capacity(island_keys.len());
+        // order contour edges from the island's winding
+        let ordered_edges =
+            |papercraft: &Papercraft, island: IslandKey, entry_edge: Option<EdgeIndex>| {
+                let mut edges: Vec<_> = papercraft
+                    .island_contour(island)
+                    .into_iter()
+                    .map(|(i_edge, _)| i_edge)
+                    .collect();
+                let contour_edges: FxHashSet<_> = edges.iter().copied().collect();
+                // append non-contour edges afterward so every cut edge is considered
+                let mut extra_edges: Vec<_> = papercraft
+                    .island_edges(papercraft.island_by_key(island).unwrap())
+                    .into_iter()
+                    .filter(|i_edge| !contour_edges.contains(i_edge))
+                    .collect();
+                // sort extra edges to keep traversal deterministic
+                extra_edges.sort_by_key(|&i_edge| usize::from(i_edge));
+                edges.extend(extra_edges);
+                // find edge used to enter island
+                let start = entry_edge
+                    .and_then(|i_edge| edges.iter().position(|&edge| edge == i_edge))
+                    .map_or(0, |index| (index + 1) % edges.len().max(1));
+                // set starting point of edge list to one next to entry edge
+                edges
+                    .iter()
+                    .cycle()
+                    .skip(start)
+                    .take(edges.len())
+                    .copied()
+                    .collect()
+            };
+        // start the walk at given island
+        for component_start in std::iter::once(start).chain(island_keys.iter().copied()) {
+            if !visited.insert(component_start) {
+                continue;
+            }
+            island_order.push(component_start);
+            // keep the current island and its next edge for backtracking
+            let mut stack = vec![Frame {
+                island: component_start,
+                edges: ordered_edges(self, component_start, None),
+                next_edge: 0,
+            }];
+            while let Some(frame) = stack.last_mut() {
+                // pop the island when all of its edges have been checked
+                let Some(&i_edge) = frame.edges.get(frame.next_edge) else {
+                    stack.pop();
+                    continue;
+                };
+                frame.next_edge += 1;
+                // ignore edges that do not connect two faces
+                let (face_a, Some(face_b)) = self.model[i_edge].faces() else {
+                    continue;
+                };
+                let island_a = self.island_by_face(face_a);
+                let island_b = self.island_by_face(face_b);
+                let next_island = if island_a == frame.island {
+                    island_b
+                } else if island_b == frame.island {
+                    island_a
+                } else {
+                    continue;
+                };
+                if !visited.insert(next_island) {
+                    continue;
+                }
+                // list new island and continue walking from the entry edge
+                island_order.push(next_island);
+                stack.push(Frame {
+                    island: next_island,
+                    edges: ordered_edges(self, next_island, Some(i_edge)),
+                    next_edge: 0,
+                });
+            }
+        }
+
+        let prev_order = self.gather_current_island_order();
+        let mut order = 0;
+        for island in island_order {
+            self.island_by_key_mut(island).unwrap().order = order;
+            order += 2;
+        }
+        Some(prev_order)
+    }
+
+    fn gather_current_island_order(&self) -> FxHashMap<FaceIndex, i32> {
+        // Return all the orders, not just the changes, because when one changes all are all reindexed
+        let mut res = FxHashMap::default();
+        for island in self.islands.values() {
+            let k = island.root;
+            let v = island.order;
+            res.insert(k, v);
+        }
+        res
+    }
+
+    pub fn move_islands_in_order(
+        &mut self,
+        i_islands: &[IslandKey],
+        direction: MoveInOrderDirection,
+    ) -> Option<FxHashMap<FaceIndex, i32>> {
+        if i_islands.is_empty() {
+            return None;
+        }
+
+        let delta = match direction {
+            MoveInOrderDirection::Forward => 3,
+            MoveInOrderDirection::Backward => -3,
+            MoveInOrderDirection::Start => -1_000_000,
+            MoveInOrderDirection::End => 1_000_000,
+        };
+        let prev_order = self.gather_current_island_order();
+        for i in i_islands {
+            let Some(island) = self.island_by_key_mut(*i) else {
+                continue;
+            };
+            island.order += delta;
+        }
+        Some(prev_order)
+    }
+
+    pub fn restore_island_order(&mut self, prev_order: FxHashMap<FaceIndex, i32>) {
+        for (i_root, order) in prev_order {
+            self.island_by_face_key_mut(IslandFaceKey(i_root)).order = order;
+        }
+    }
+
     pub fn island_bounding_box_angle(
         &self,
         island: &Island,
@@ -734,16 +891,8 @@ impl Papercraft {
     pub fn island_by_key_mut(&mut self, key: IslandKey) -> Option<&mut Island> {
         self.islands.get_mut(key)
     }
-    pub fn rebuild_island_names(&mut self) {
-        // To get somewhat predictable names try to sort the islands before naming them.
-        // For now, sort them by area.
-        let mut islands: Vec<_> = self
-            .islands
-            .iter()
-            .map(|(i_island, island)| (i_island, self.island_area(island)))
-            .collect();
-        islands.sort_by_key(|(_, n)| TotalF32(*n));
 
+    pub fn rebuild_island_names(&mut self) {
         // A, B, ... Z, AA, ... AZ, BA, .... ZZ, AAA, AAB, ...
         fn next_name(name: &mut Vec<u8>) {
             for ch in name.iter_mut().rev() {
@@ -758,10 +907,17 @@ impl Papercraft {
             name.push(b'A');
         }
 
+        let mut islands: Vec<_> = self.islands.values_mut().collect();
+        islands.sort_by_key(|island| island.order); //TODO
+
         let mut island_name = Vec::new();
-        for (i_island, _) in &islands {
+        // assign labels in the order islands are indexed as
+        let mut order = 0;
+        for island in islands {
             next_name(&mut island_name);
-            self.islands[*i_island].name = String::from_utf8(island_name.clone()).unwrap();
+            island.name = String::from_utf8(island_name.clone()).unwrap();
+            island.order = order;
+            order += 2;
         }
     }
 
@@ -842,6 +998,7 @@ impl Papercraft {
             loc: Vector2::new(mx[2][0], mx[2][1]),
             rot: Rad(mx[0][1].atan2(mx[0][0])),
             mx: Matrix3::one(),
+            order: self.island_by_key(i_island).unwrap().order + 1,
             name: String::new(),
         };
         new_island.recompute_matrix();
@@ -964,14 +1121,7 @@ impl Papercraft {
         });
         count
     }
-    pub fn island_area(&self, island: &Island) -> f32 {
-        let mut area = 0.0;
-        let _ = self.traverse_faces_no_matrix(island, |face| {
-            area += self.model().face_area(face);
-            ControlFlow::Continue(())
-        });
-        area
-    }
+
     pub fn get_real_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
         let mut res = FxHashSet::default();
         let _ = traverse_faces_ex(
@@ -2020,7 +2170,20 @@ pub struct Island {
     rot: Rad<f32>,
     loc: Vector2,
     mx: Matrix3,
+    order: i32,
     name: String,
+}
+
+impl ser::slot_map::SlotMapKeyOrder for Island {
+    type OrderKey = i32;
+
+    fn slot_map_key_order(&self) -> Self::OrderKey {
+        self.order
+    }
+
+    fn slot_map_set_key_index(&mut self, index: usize) {
+        self.order = 2 * (index as i32);
+    }
 }
 
 impl Island {
@@ -2177,6 +2340,7 @@ impl<'de> Deserialize<'de> for Island {
             loc: Vector2::new(d.x, d.y),
             rot: Rad(d.r),
             mx: Matrix3::one(),
+            order: 0,
             name: String::new(),
         };
         island.recompute_matrix();

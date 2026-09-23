@@ -64,7 +64,10 @@ use util_gl::{UniformQuad, Uniforms2D, Uniforms2DDash, Uniforms3D};
 
 use clap::Parser;
 
-use crate::{paper::LineConfig, util_3d::TotalF32};
+use crate::{
+    paper::{LineConfig, MoveInOrderDirection},
+    util_3d::TotalF32,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -672,10 +675,7 @@ struct MenuActions {
     quit: BoolWithConfirm,
     reset_views: bool,
     undo: bool,
-    increase_labels: bool,
-    decrease_labels: bool,
-    labels_to_front: bool,
-    labels_to_back: bool,
+    move_labels: Option<MoveInOrderDirection>,
     reorder_labels: bool,
 }
 
@@ -2195,17 +2195,17 @@ impl GlobalContext {
                 }
                 // in/decrease island labels
                 if ui.shortcut_ex(imgui::Key::PageUp, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.increase_labels = true;
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Backward);
                 }
                 if ui.shortcut_ex(imgui::Key::PageDown, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.decrease_labels = true;
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Forward);
                 }
                 // move islands to front/back of order
                 if ui.shortcut_ex(imgui::Key::Home, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.labels_to_front = true;
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Start);
                 }
                 if ui.shortcut_ex(imgui::Key::End, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.labels_to_back = true;
+                    menu_actions.move_labels = Some(MoveInOrderDirection::End);
                 }
                 // toggle snap mode
                 if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
@@ -2499,23 +2499,10 @@ impl GlobalContext {
                 UndoResult::False => {}
             }
         }
-        if menu_actions.increase_labels || menu_actions.decrease_labels {
+        if let Some(direction) = menu_actions.move_labels {
             //move islands down: towards A, up: towards Z+
-            let undo = self
-                .data
-                .move_selected_islands(menu_actions.increase_labels);
-            if !undo.is_empty() {
-                self.data.push_undo_action(undo);
-                self.add_rebuild(
-                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
-                );
-            }
-        }
-        if menu_actions.labels_to_front || menu_actions.labels_to_back {
             //move islands to front: A, back: Z+
-            let undo = self
-                .data
-                .move_selected_islands_to_end(menu_actions.labels_to_back);
+            let undo = self.data.move_selected_islands(direction);
             if !undo.is_empty() {
                 self.data.push_undo_action(undo);
                 self.add_rebuild(

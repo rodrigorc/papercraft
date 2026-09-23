@@ -109,6 +109,14 @@ pub enum EdgeIdPosition {
     Inside,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum MoveInOrderDirection {
+    Forward,
+    Backward,
+    Start,
+    End,
+}
+
 new_key_type! {
     pub struct IslandKey;
 }
@@ -451,10 +459,6 @@ pub struct Papercraft {
     edges: Vec<RealEdgeStatus>, // parallel to `EdgeIndex`
     #[serde(with = "super::ser::slot_map")]
     islands: SlotMap<IslandKey, Island>,
-    #[serde(skip)]
-    island_order: Vec<IslandKey>,
-    #[serde(rename = "island_order", default, skip_serializing)]
-    saved_island_order: Option<Vec<FaceIndex>>,
 
     #[serde(skip)]
     memo: Memoization,
@@ -568,8 +572,6 @@ impl Papercraft {
             options: PaperOptions::default(),
             edges: Vec::new(),
             islands: SlotMap::with_key(),
-            island_order: Vec::new(),
-            saved_island_order: None,
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         }
@@ -628,9 +630,7 @@ impl Papercraft {
     }
 
     pub fn islands(&self) -> impl Iterator<Item = (IslandKey, &Island)> + '_ {
-        self.island_order
-            .iter()
-            .filter_map(|&i_island| self.islands.get(i_island).map(|island| (i_island, island)))
+        self.islands.iter()
     }
     pub fn num_islands(&self) -> usize {
         self.islands.len()
@@ -640,9 +640,12 @@ impl Papercraft {
     /// scans each island's contour in stored winding order, backtracking when
     /// no unvisited neighboring island remains.
     /// * `start` - island to start ordering from
-    pub fn adjacency_order_islands(&mut self, start: IslandKey) {
+    pub fn adjacency_order_islands(
+        &mut self,
+        start: IslandKey,
+    ) -> Option<FxHashMap<FaceIndex, i32>> {
         if !self.islands.contains_key(start) {
-            return;
+            return None;
         }
         // helper to store island edge data for backtracking
         struct Frame {
@@ -650,7 +653,8 @@ impl Papercraft {
             edges: Vec<EdgeIndex>,
             next_edge: usize,
         }
-        let island_keys = self.island_order.clone();
+        let island_keys: Vec<IslandKey> = self.islands.keys().collect();
+
         let mut visited = FxHashSet::default();
         let mut island_order = Vec::with_capacity(island_keys.len());
         // order contour edges from the island's winding
@@ -728,109 +732,56 @@ impl Papercraft {
                 });
             }
         }
-        self.island_order = island_order;
+
+        let prev_order = self.gather_current_island_order();
+        let mut order = 0;
+        for island in island_order {
+            self.island_by_key_mut(island).unwrap().order = order;
+            order += 2;
+        }
+        Some(prev_order)
     }
 
-    pub fn move_islands_in_order(&mut self, selected: &[IslandKey], toward_back: bool) -> bool {
-        let selected: FxHashSet<_> = selected.iter().copied().collect();
-        if selected.is_empty() || selected.len() == self.island_order.len() {
-            return false;
+    fn gather_current_island_order(&self) -> FxHashMap<FaceIndex, i32> {
+        // Return all the orders, not just the changes, because when one changes all are all reindexed
+        let mut res = FxHashMap::default();
+        for island in self.islands.values() {
+            let k = island.root;
+            let v = island.order;
+            res.insert(k, v);
         }
-        //grab island order indices of selected islands
-        let selected_positions: Vec<_> = self
-            .island_order
-            .iter()
-            .enumerate()
-            .filter_map(|(index, key)| selected.contains(key).then_some(index))
-            .collect();
-        if selected_positions.is_empty() {
-            return false;
-        }
-        if toward_back {
-            //stop if any selected island reached last letter
-            if selected_positions.last() == Some(&(self.island_order.len() - 1)) {
-                return false;
-            }
-            //start swapping at tail to let unselected islands trickle down 1 step at a time
-            for index in (0..self.island_order.len() - 1).rev() {
-                if selected.contains(&self.island_order[index])
-                    && !selected.contains(&self.island_order[index + 1])
-                {
-                    self.island_order.swap(index, index + 1);
-                }
-            }
-        } else {
-            //stop if any selected island reached first letter 'A'
-            if selected_positions.first() == Some(&0) {
-                return false;
-            }
-            //start swapping at head to make unselected islands bubble up 1 step at a time
-            for index in 1..self.island_order.len() {
-                if selected.contains(&self.island_order[index])
-                    && !selected.contains(&self.island_order[index - 1])
-                {
-                    self.island_order.swap(index, index - 1);
-                }
-            }
-        }
-        true
+        res
     }
 
-    /// creates island order with selected islands all moved to front / back of order
-    pub fn move_islands_in_order_to_end(
+    pub fn move_islands_in_order(
         &mut self,
-        selected: &[IslandKey],
-        toward_back: bool,
-    ) -> bool {
-        let mut selected_islands = Vec::new();
-        let mut unselected_islands = Vec::new();
+        i_islands: &[IslandKey],
+        direction: MoveInOrderDirection,
+    ) -> Option<FxHashMap<FaceIndex, i32>> {
+        if i_islands.is_empty() {
+            return None;
+        }
 
-        for island in self.island_order.drain(..) {
-            if selected.contains(&island) {
-                selected_islands.push(island);
-            } else {
-                unselected_islands.push(island);
-            }
+        let delta = match direction {
+            MoveInOrderDirection::Forward => 3,
+            MoveInOrderDirection::Backward => -3,
+            MoveInOrderDirection::Start => -1_000_000,
+            MoveInOrderDirection::End => 1_000_000,
+        };
+        let prev_order = self.gather_current_island_order();
+        for i in i_islands {
+            let Some(island) = self.island_by_key_mut(*i) else {
+                continue;
+            };
+            island.order += delta;
         }
-        if toward_back {
-            unselected_islands.extend(selected_islands);
-            self.island_order = unselected_islands;
-        } else {
-            selected_islands.extend(unselected_islands);
-            self.island_order = selected_islands;
-        }
-        true
+        Some(prev_order)
     }
 
-    pub fn restore_island_order(&mut self, roots_prev_order: &[FaceIndex]) {
-        let current: FxHashMap<FaceIndex, IslandKey> = self
-            .islands
-            .iter()
-            .map(|(key, island)| (island.root_face(), key))
-            .collect();
-        let mut restored = Vec::with_capacity(self.islands.len());
-        let mut restored_keys = FxHashSet::default();
-        //list previously existing islands
-        for root in roots_prev_order {
-            if let Some(&key) = current.get(root) {
-                restored.push(key);
-                restored_keys.insert(key);
-            }
+    pub fn restore_island_order(&mut self, prev_order: FxHashMap<FaceIndex, i32>) {
+        for (i_root, order) in prev_order {
+            self.island_by_face_key_mut(IslandFaceKey(i_root)).order = order;
         }
-        //list any newly spawned islands (should not happen)
-        let current_order = self.island_order.clone();
-        for key in current_order {
-            if restored_keys.insert(key) {
-                restored.push(key);
-            }
-        }
-        //list any still unlisted islands (should also not happen)
-        for key in self.islands.keys() {
-            if restored_keys.insert(key) {
-                restored.push(key);
-            }
-        }
-        self.island_order = restored;
     }
 
     pub fn island_bounding_box_angle(
@@ -940,16 +891,7 @@ impl Papercraft {
     pub fn island_by_key_mut(&mut self, key: IslandKey) -> Option<&mut Island> {
         self.islands.get_mut(key)
     }
-    fn rebuild_island_order(&mut self) {
-        if self.island_order.is_empty() {
-            self.island_order = self.islands.keys().collect();
-        }
-    }
-    fn remove_island(&mut self, i_island: IslandKey) -> Option<Island> {
-        let island = self.islands.remove(i_island)?;
-        self.island_order.retain(|&key| key != i_island);
-        Some(island)
-    }
+
     pub fn rebuild_island_names(&mut self) {
         // A, B, ... Z, AA, ... AZ, BA, .... ZZ, AAA, AAB, ...
         fn next_name(name: &mut Vec<u8>) {
@@ -964,11 +906,18 @@ impl Papercraft {
             // doesn't matter.
             name.push(b'A');
         }
+
+        let mut islands: Vec<_> = self.islands.values_mut().collect();
+        islands.sort_by_key(|island| island.order); //TODO
+
         let mut island_name = Vec::new();
         // assign labels in the order islands are indexed as
-        for &i_island in &self.island_order {
+        let mut order = 0;
+        for island in islands {
             next_name(&mut island_name);
-            self.islands[i_island].name = String::from_utf8(island_name.clone()).unwrap();
+            island.name = String::from_utf8(island_name.clone()).unwrap();
+            island.order = order;
+            order += 2;
         }
     }
 
@@ -1049,6 +998,7 @@ impl Papercraft {
             loc: Vector2::new(mx[2][0], mx[2][1]),
             rot: Rad(mx[0][1].atan2(mx[0][0])),
             mx: Matrix3::one(),
+            order: self.island_by_key(i_island).unwrap().order + 1,
             name: String::new(),
         };
         new_island.recompute_matrix();
@@ -1074,12 +1024,6 @@ impl Papercraft {
             }
         }
         let i_new_island = self.islands.insert(new_island);
-        let island_index = self
-            .island_order
-            .iter()
-            .position(|&key| key == i_island)
-            .unwrap();
-        self.island_order.insert(island_index + 1, i_new_island);
         self.memo.invalidate_islands(&[i_island, i_new_island]);
         Some((i_island, i_new_island))
     }
@@ -1110,25 +1054,10 @@ impl Papercraft {
         // Join both islands
         let i_island_a = self.island_by_face(i_face_a);
         self.memo.invalidate_islands(&[i_island_a, i_island_b]);
-        let index_a = self
-            .island_order
-            .iter()
-            .position(|&key| key == i_island_a)
-            .unwrap();
-        let index_b = self
-            .island_order
-            .iter()
-            .position(|&key| key == i_island_b)
-            .unwrap();
-        let remove_key = if index_a < index_b {
-            i_island_b
-        } else {
-            i_island_a
-        };
-        let mut island_b = self.remove_island(remove_key).unwrap();
-        if remove_key == i_island_b
-            && self.compare_islands(&self.islands[i_island_a], &island_b, priority_face)
-        {
+        let mut island_b = self.islands.remove(i_island_b).unwrap();
+
+        // Keep position of a or b?
+        if self.compare_islands(&self.islands[i_island_a], &island_b, priority_face) {
             std::mem::swap(&mut self.islands[i_island_a], &mut island_b);
         }
         self.edges[usize::from(i_edge)] = RealEdgeStatus::Joined;
@@ -1192,14 +1121,7 @@ impl Papercraft {
         });
         count
     }
-    pub fn island_area(&self, island: &Island) -> f32 {
-        let mut area = 0.0;
-        let _ = self.traverse_faces_no_matrix(island, |face| {
-            area += self.model().face_area(face);
-            ControlFlow::Continue(())
-        });
-        area
-    }
+
     pub fn get_real_flat_faces(&self, i_face: FaceIndex) -> FxHashSet<FaceIndex> {
         let mut res = FxHashSet::default();
         let _ = traverse_faces_ex(
@@ -2248,7 +2170,20 @@ pub struct Island {
     rot: Rad<f32>,
     loc: Vector2,
     mx: Matrix3,
+    order: i32,
     name: String,
+}
+
+impl ser::slot_map::SlotMapKeyOrder for Island {
+    type OrderKey = i32;
+
+    fn slot_map_key_order(&self) -> Self::OrderKey {
+        self.order
+    }
+
+    fn slot_map_set_key_index(&mut self, index: usize) {
+        self.order = 2 * (index as i32);
+    }
 }
 
 impl Island {
@@ -2405,6 +2340,7 @@ impl<'de> Deserialize<'de> for Island {
             loc: Vector2::new(d.x, d.y),
             rot: Rad(d.r),
             mx: Matrix3::one(),
+            order: 0,
             name: String::new(),
         };
         island.recompute_matrix();

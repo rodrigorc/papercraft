@@ -50,8 +50,14 @@ mod ser {
             Ok(Vector3::from(data))
         }
     }
-    // Beware! This serializes pnly the values, not the keys.
+    // Beware! This serializes only the values, not the keys.
     pub mod slot_map {
+        pub trait SlotMapKeyOrder {
+            type OrderKey: Ord;
+            fn slot_map_key_order(&self) -> Self::OrderKey;
+            fn slot_map_set_key_index(&mut self, index: usize);
+        }
+
         use super::*;
         pub fn serialize<K, V, S>(
             data: &slotmap::SlotMap<K, V>,
@@ -60,10 +66,12 @@ mod ser {
         where
             S: serde::Serializer,
             K: slotmap::Key,
-            V: Serialize,
+            V: Serialize + SlotMapKeyOrder,
         {
             let mut seq = serializer.serialize_seq(Some(data.len()))?;
-            for (_, d) in data {
+            let mut values = data.values().collect::<Vec<&V>>();
+            values.sort_by_key(|v| v.slot_map_key_order());
+            for d in values {
                 seq.serialize_element(d)?;
             }
             seq.end()
@@ -74,11 +82,12 @@ mod ser {
         where
             D: serde::Deserializer<'de>,
             K: slotmap::Key,
-            V: Deserialize<'de>,
+            V: Deserialize<'de> + SlotMapKeyOrder,
         {
             let data = <Vec<V>>::deserialize(deserializer)?;
             let mut map = slotmap::SlotMap::with_key();
-            for d in data {
+            for (i, mut d) in data.into_iter().enumerate() {
+                d.slot_map_set_key_index(i);
                 map.insert(d);
             }
             Ok(map)

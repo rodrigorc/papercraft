@@ -29,13 +29,7 @@ impl Papercraft {
         write!(zip, "{CURRENT_CRAFT_FILE_FORMAT}")?;
 
         zip.start_file("model.json", options)?;
-        let mut model = serde_json::to_value(self)?;
-        let order = self.island_order_as_root_faces();
-        let serde_json::Value::Object(ref mut object) = model else {
-            anyhow::bail!("Papercraft model did not serialize as a JSON object");
-        };
-        object.insert("island_order".to_owned(), serde_json::to_value(order)?);
-        serde_json::to_writer(&mut zip, &model)?;
+        serde_json::to_writer(&mut zip, self)?;
 
         for tex in self.model.textures() {
             if let Some(pixbuf) = tex.pixbuf() {
@@ -61,14 +55,6 @@ impl Papercraft {
 
         zip.finish()?;
         Ok(())
-    }
-
-    fn island_order_as_root_faces(&self) -> Vec<usize> {
-        self.island_order
-            .iter()
-            .filter_map(|&key| self.islands.get(key))
-            .map(|island| usize::from(island.root_face()))
-            .collect()
     }
 
     pub fn load<R: Read + Seek>(r: R) -> Result<Papercraft> {
@@ -120,11 +106,7 @@ impl Papercraft {
         Ok(papercraft)
     }
     pub fn post_create(&mut self) {
-        self.rebuild_island_order();
         self.sanitize();
-        if let Some(saved_order) = self.saved_island_order.take() {
-            self.restore_island_order(&saved_order);
-        }
         self.recompute_edge_ids();
     }
     pub fn sanitize(&mut self) {
@@ -183,7 +165,7 @@ impl Papercraft {
                         i_island,
                         i_owner
                     );
-                    self.remove_island(i_island);
+                    self.islands.remove(i_island);
                     self.memo = Memoization::default();
                     changed = true;
                     break; // restart loop
@@ -203,17 +185,17 @@ impl Papercraft {
                 });
             }
             // Create just one island, just in case it has some connected
-            if let Some(&root) = all_faces.iter().min_by_key(|face| usize::from(**face)) {
+            if let Some(&root) = all_faces.iter().next() {
                 log::warn!("Creating missing island for face {root:?}");
                 // Any coordinates are good enough, we are on emergency mode
-                let i_island = self.islands.insert(Island {
+                self.islands.insert(Island {
                     root,
                     loc: Vector2::zero(),
                     rot: Rad::zero(),
                     mx: Matrix3::one(),
+                    order: 1_000_000,
                     name: String::new(),
                 });
-                self.island_order.push(i_island);
                 self.memo = Memoization::default();
                 changed = true;
             }
@@ -311,12 +293,8 @@ impl Papercraft {
             model.faces().map(|(i_face, _face)| i_face).collect();
 
         let mut islands = SlotMap::with_key();
-        let mut island_size_order = Vec::new();
-        while let Some(root) = pending_faces
-            .iter()
-            .copied()
-            .min_by_key(|face| usize::from(*face))
-        {
+        let mut first_island = None;
+        while let Some(root) = pending_faces.iter().copied().next() {
             pending_faces.remove(&root);
 
             let _ = traverse_faces_ex(
@@ -335,12 +313,14 @@ impl Papercraft {
                 loc: Vector2::zero(),
                 rot: Rad::zero(),
                 mx: Matrix3::one(),
+                order: 0,
                 name: String::new(),
             };
             let i_island = islands.insert(island);
-            island_size_order.push(i_island);
+            if first_island.is_none() {
+                first_island = Some(i_island);
+            }
         }
-        let start_island = island_size_order[0];
         let need_packing = !importer.relocate_islands(&model, islands.values_mut());
 
         let mut need_fix_options = false;
@@ -356,12 +336,12 @@ impl Papercraft {
             options,
             edges,
             islands,
-            island_order: island_size_order,
-            saved_island_order: None,
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         };
-        papercraft.adjacency_order_islands(start_island);
+        if let Some(first_island) = first_island {
+            papercraft.adjacency_order_islands(first_island);
+        }
         if need_fix_options {
             let (v_min, v_max) = papercraft.model().bounding_box();
             let size = (v_max.x - v_min.x)

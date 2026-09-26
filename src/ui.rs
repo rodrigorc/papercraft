@@ -2626,7 +2626,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    pub fn pack_islands(&mut self) -> Vec<UndoAction> {
+    pub fn pack_islands_sorted(&mut self, alphabetically: bool) -> Vec<UndoAction> {
         let undo_actions = self
             .papercraft
             .islands()
@@ -2636,7 +2636,7 @@ impl PapercraftContext {
                 prev_loc: island.location(),
             })
             .collect();
-        self.papercraft.pack_islands();
+        self.papercraft.pack_islands_sorted(alphabetically);
         undo_actions
     }
 

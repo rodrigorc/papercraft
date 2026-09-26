@@ -1685,6 +1685,10 @@ impl Papercraft {
     }
 
     pub fn pack_islands(&mut self) -> u32 {
+        self.pack_islands_sorted(false)
+    }
+
+    pub fn pack_islands_sorted(&mut self, alphabetically: bool) -> u32 {
         let mut row_height = 0.0f32;
         let mut pos_x = 0.0;
         let mut pos_y = 0.0;
@@ -1709,12 +1713,16 @@ impl Papercraft {
                 (i_island, angle, bbox)
             })
             .collect();
-        ordered_islands.sort_by_key(|(_, _, bbox)| {
-            let w = bbox.1.x - bbox.0.x;
-            let h = bbox.1.y - bbox.0.y;
-            -(w * h) as i64
-        });
 
+        if alphabetically {
+            ordered_islands.sort_by_key(|(key, _, _)| self.islands[*key].order);
+        } else {
+            ordered_islands.sort_by_key(|(_, _, bbox)| {
+                let w = bbox.1.x - bbox.0.x;
+                let h = bbox.1.y - bbox.0.y;
+                -(w * h) as i64
+            });
+        }
         for (i_island, angle, bbox) in ordered_islands {
             let mut next_pos_x = pos_x + bbox.1.x - bbox.0.x;
             if next_pos_x > page_size.x && num_in_row > 0 {

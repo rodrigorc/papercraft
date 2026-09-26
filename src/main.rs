@@ -2074,6 +2074,13 @@ impl GlobalContext {
                     {
                         self.pack_islands();
                     }
+                    if ui
+                        .menu_item_config(lbl(tr!("Repack pieces alphabetically")))
+                        .build()
+                    {
+                        self.pack_islands_sorted(true);
+                    }
+
                     ui.separator();
 
                     if ui.menu_item_config(lbl(tr!("Reorder labels"))).build() {
@@ -3449,7 +3456,11 @@ impl GlobalContext {
     }
 
     fn pack_islands(&mut self) {
-        let undo = self.data.pack_islands();
+        self.pack_islands_sorted(false);
+    }
+
+    fn pack_islands_sorted(&mut self, alphabetically: bool) {
+        let undo = self.data.pack_islands_sorted(alphabetically);
         self.data.push_undo_action(undo);
         self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
     }

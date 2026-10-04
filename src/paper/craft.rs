@@ -643,7 +643,7 @@ impl Papercraft {
     pub fn adjacency_order_islands(
         &mut self,
         start: IslandKey,
-    ) -> Option<FxHashMap<FaceIndex, i32>> {
+    ) -> Option<FxHashMap<FaceIndex, IslandOrder>> {
         if !self.islands.contains_key(start) {
             return None;
         }
@@ -736,13 +736,13 @@ impl Papercraft {
         let prev_order = self.gather_current_island_order();
         let mut order = 0;
         for island in island_order {
-            self.island_by_key_mut(island).unwrap().order = order;
-            order += 2;
+            self.island_by_key_mut(island).unwrap().order = IslandOrder(order, 0);
+            order += 1;
         }
         Some(prev_order)
     }
 
-    fn gather_current_island_order(&self) -> FxHashMap<FaceIndex, i32> {
+    fn gather_current_island_order(&self) -> FxHashMap<FaceIndex, IslandOrder> {
         // Return all the orders, not just the changes, because when one changes all are all reindexed
         let mut res = FxHashMap::default();
         for island in self.islands.values() {
@@ -757,28 +757,68 @@ impl Papercraft {
         &mut self,
         i_islands: &[IslandKey],
         direction: MoveInOrderDirection,
-    ) -> Option<FxHashMap<FaceIndex, i32>> {
+    ) -> Option<FxHashMap<FaceIndex, IslandOrder>> {
         if i_islands.is_empty() {
             return None;
         }
 
-        let delta = match direction {
-            MoveInOrderDirection::Forward => 3,
-            MoveInOrderDirection::Backward => -3,
-            MoveInOrderDirection::Start => -1_000_000,
-            MoveInOrderDirection::End => 1_000_000,
-        };
+        // Movements by-one should keep the separation between selected islands.
+        // That is, if some of the islands is the first/last, don't move past the end.
+        match direction {
+            MoveInOrderDirection::Backward => {
+                if i_islands.iter().any(|i| {
+                    let Some(island) = self.island_by_key(*i) else {
+                        return false;
+                    };
+                    island.order.0 == 0
+                }) {
+                    return None;
+                }
+            }
+            MoveInOrderDirection::Forward => {
+                let last_order = self.num_islands() as i32 - 1;
+
+                if i_islands.iter().any(|i| {
+                    let Some(island) = self.island_by_key(*i) else {
+                        return false;
+                    };
+                    island.order.0 == last_order
+                }) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+
         let prev_order = self.gather_current_island_order();
-        for i in i_islands {
-            let Some(island) = self.island_by_key_mut(*i) else {
+        for (idx, i_island) in i_islands.iter().enumerate() {
+            let Some(island) = self.island_by_key_mut(*i_island) else {
                 continue;
             };
-            island.order += delta;
+
+            match direction {
+                MoveInOrderDirection::Forward => {
+                    island.order.0 += 1;
+                    island.order.1 += 1;
+                }
+                MoveInOrderDirection::Backward => {
+                    island.order.0 -= 1;
+                    island.order.1 -= 1;
+                }
+                MoveInOrderDirection::Start => {
+                    island.order.0 = i32::MIN;
+                    island.order.1 = idx as i32 + 1;
+                }
+                MoveInOrderDirection::End => {
+                    island.order.0 = i32::MAX;
+                    island.order.1 = idx as i32 + 1;
+                }
+            };
         }
         Some(prev_order)
     }
 
-    pub fn restore_island_order(&mut self, prev_order: FxHashMap<FaceIndex, i32>) {
+    pub fn restore_island_order(&mut self, prev_order: FxHashMap<FaceIndex, IslandOrder>) {
         for (i_root, order) in prev_order {
             self.island_by_face_key_mut(IslandFaceKey(i_root)).order = order;
         }
@@ -912,12 +952,10 @@ impl Papercraft {
 
         let mut island_name = Vec::new();
         // assign labels in the order islands are indexed as
-        let mut order = 0;
-        for island in islands {
+        for (idx, island) in islands.into_iter().enumerate() {
             next_name(&mut island_name);
             island.name = String::from_utf8(island_name.clone()).unwrap();
-            island.order = order;
-            order += 2;
+            island.order = IslandOrder(idx as i32, 0);
         }
     }
 
@@ -992,13 +1030,13 @@ impl Papercraft {
         let medge =
             self.face_to_face_edge_matrix(edge, &self.model[i_face_old], &self.model[new_root]);
         let mx = face_mx * medge;
-
+        let order = self.island_by_key(i_island).unwrap().order;
         let mut new_island = Island {
             root: new_root,
             loc: Vector2::new(mx[2][0], mx[2][1]),
             rot: Rad(mx[0][1].atan2(mx[0][0])),
             mx: Matrix3::one(),
-            order: self.island_by_key(i_island).unwrap().order + 1,
+            order: IslandOrder(order.0, order.1 + 1),
             name: String::new(),
         };
         new_island.recompute_matrix();
@@ -2171,6 +2209,10 @@ impl TraverseFacePolicy for BodyTraverse {
     }
 }
 
+// Intead of a plain number, use a pair to be able to put a value in between two consecutive numbers.
+#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+pub struct IslandOrder(pub i32, pub i32);
+
 #[derive(Debug)]
 pub struct Island {
     root: FaceIndex,
@@ -2178,19 +2220,19 @@ pub struct Island {
     rot: Rad<f32>,
     loc: Vector2,
     mx: Matrix3,
-    order: i32,
+    order: IslandOrder,
     name: String,
 }
 
 impl ser::slot_map::SlotMapKeyOrder for Island {
-    type OrderKey = i32;
+    type OrderKey = IslandOrder;
 
     fn slot_map_key_order(&self) -> Self::OrderKey {
         self.order
     }
 
     fn slot_map_set_key_index(&mut self, index: usize) {
-        self.order = 2 * (index as i32);
+        self.order = IslandOrder(index as i32, 0);
     }
 }
 
@@ -2348,7 +2390,7 @@ impl<'de> Deserialize<'de> for Island {
             loc: Vector2::new(d.x, d.y),
             rot: Rad(d.r),
             mx: Matrix3::one(),
-            order: 0,
+            order: IslandOrder(0, 0),
             name: String::new(),
         };
         island.recompute_matrix();

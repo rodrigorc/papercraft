@@ -193,7 +193,7 @@ impl Papercraft {
                     loc: Vector2::zero(),
                     rot: Rad::zero(),
                     mx: Matrix3::one(),
-                    order: 1_000_000,
+                    order: IslandOrder(i32::MAX, 0),
                     name: String::new(),
                 });
                 self.memo = Memoization::default();
@@ -313,7 +313,7 @@ impl Papercraft {
                 loc: Vector2::zero(),
                 rot: Rad::zero(),
                 mx: Matrix3::one(),
-                order: 0,
+                order: IslandOrder(0, 0),
                 name: String::new(),
             };
             let i_island = islands.insert(island);

@@ -14,7 +14,10 @@ use easy_imgui_window::{
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
-use crate::{FONT_SIZE, TextBuilder, paper::MoveInOrderDirection};
+use crate::{
+    FONT_SIZE, TextBuilder,
+    paper::{IslandOrder, MoveInOrderDirection},
+};
 use crate::{
     PrintableText, TextAlign,
     glr::{self, Rgba},
@@ -117,7 +120,7 @@ pub enum UndoAction {
     },
     Modified,
     IslandOrder {
-        prev_order: FxHashMap<FaceIndex, i32>,
+        prev_order: FxHashMap<FaceIndex, IslandOrder>,
     },
 }
 

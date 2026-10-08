@@ -7,7 +7,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: src/paper/craft/file.rs:79
+#: src/paper/craft/file.rs:80
 msgid ""
 "This .craft file is too new and can't be read. Please update your Papercraft "
 "version."
@@ -15,33 +15,36 @@ msgstr ""
 "この .craft ファイルは新しすぎて読み込めません。Papercraft のバージョンを更新"
 "してください。"
 
-#: src/paper/model/formats/waveobj/importer.rs:25
+#: src/paper/model/formats/waveobj/importer.rs:24
 msgid "The material file '{}' was not found. Copy it along with the OBJ file."
-msgstr "マテリアルファイル '{}' が見つかりません。OBJファイルと一緒にコピーしてください。"
+msgstr ""
+"マテリアルファイル '{}' が見つかりません。OBJファイルと一緒にコピーしてくださ"
+"い。"
 
 #. Textures are read from the .mtl file
-#: src/paper/model/formats/waveobj/importer.rs:36
+#: src/paper/model/formats/waveobj/importer.rs:35
 msgid "Error reading the material file {}"
 msgstr "マテリアルファイル {} を読み込む際のエラー"
 
-#: src/paper/model/formats/waveobj/importer.rs:42
+#: src/paper/model/formats/waveobj/importer.rs:41
 msgid "Error reading the texture file {}"
 msgstr "テクスチャファイル {} を読み込む際のエラー"
 
-#: src/paper/model/formats/waveobj/importer.rs:53
+#: src/paper/model/formats/waveobj/importer.rs:52
 msgid "Invalid texture name"
 msgstr "無効なテクスチャ名"
 
-#: src/paper/model/formats/waveobj/importer.rs:58
+#: src/paper/model/formats/waveobj/importer.rs:57
 msgid ""
 "The texture file '{}' referenced by the material file '{}' was not found."
-msgstr "マテリアルファイル '{}' が参照するテクスチャファイル '{}' が見つかりません。"
+msgstr ""
+"マテリアルファイル '{}' が参照するテクスチャファイル '{}' が見つかりません。"
 
 #: src/paper/model/formats.rs:111
 msgid "Error importing the model '{}'!"
 msgstr "モデル '{}' のインポートエラー"
 
-#: src/paper/model/formats.rs:132 src/main.rs:3234
+#: src/paper/model/formats.rs:132 src/main.rs:3332
 msgid "Error opening file {}"
 msgstr "ファイル {} を開く際のエラー"
 
@@ -61,7 +64,9 @@ msgstr "STLファイル {} を読み込む際のエラー"
 msgid ""
 "MTL files are material libraries for OBJ models. Try opening the OBJ file "
 "instead."
-msgstr "MTLファイルはOBJモデル用のマテリアルライブラリです。代わりにOBJファイルを開いてください。"
+msgstr ""
+"MTLファイルはOBJモデル用のマテリアルライブラリです。代わりにOBJファイルを開い"
+"てください。"
 
 #: src/paper/model/formats.rs:159
 msgid "Error reading glTF file {}"
@@ -75,104 +80,104 @@ msgstr "Wavefrontファイル {} を読み込む際のエラー"
 msgid "Don't know how to write the format of {}"
 msgstr "{}の書き込みフォーマットが不明です"
 
-#: src/printable.rs:53 src/main.rs:3403
+#: src/printable.rs:53 src/main.rs:3501
 msgid "Error exporting to {}"
 msgstr "{}へのエクスポートエラー"
 
-#: src/printable.rs:380 src/printable.rs:711 src/main.rs:3371
+#: src/printable.rs:380 src/printable.rs:711 src/main.rs:3469
 msgid "Error saving file {}"
 msgstr "ファイル{}の保存エラー"
 
-#: src/printable.rs:1029 src/ui.rs:1294
+#: src/printable.rs:1029 src/ui.rs:1300
 msgid "Page {}/{}"
 msgstr "ページ {}/{}"
 
-#: src/ui.rs:3077
+#: src/ui.rs:3122
 msgid "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 msgstr "Created with Papercraft. https://github.com/rodrigorc/papercraft"
 
-#: src/main.rs:79
+#: src/main.rs:82
 msgid ""
 "Prevents editing of the model, useful as reference to build a real model"
 msgstr "モデルの編集を禁止します。実物モデルを構築する際の参照として便利です"
 
-#: src/main.rs:126 src/main.rs:786 src/main.rs:3163 src/main.rs:4136
+#: src/main.rs:129 src/main.rs:791 src/main.rs:3261 src/main.rs:4238
 msgid "Papercraft"
 msgstr "Papercraft"
 
-#: src/main.rs:460
+#: src/main.rs:463
 msgid "Opening..."
 msgstr "開いています..."
 
-#: src/main.rs:461
+#: src/main.rs:464
 msgid "Saving..."
 msgstr "保存しています..."
 
-#: src/main.rs:462
+#: src/main.rs:465
 msgid "Importing..."
 msgstr "インポートしています..."
 
-#: src/main.rs:463
+#: src/main.rs:466
 msgid "Updating..."
 msgstr "更新しています..."
 
-#: src/main.rs:464
+#: src/main.rs:467
 msgid "Exporting..."
 msgstr "エクスポートしています..."
 
-#: src/main.rs:465
+#: src/main.rs:468
 msgid "Generating..."
 msgstr "生成しています..."
 
-#: src/main.rs:739
+#: src/main.rs:744
 msgid "Error"
 msgstr "エラー"
 
-#: src/main.rs:743 src/main.rs:1893 src/main.rs:2716
+#: src/main.rs:748 src/main.rs:1902 src/main.rs:2814
 msgid "OK"
 msgstr "OK"
 
-#: src/main.rs:757 src/main.rs:1901 src/main.rs:2709
+#: src/main.rs:762 src/main.rs:1910 src/main.rs:2807
 msgid "Cancel"
 msgstr "キャンセル"
 
-#: src/main.rs:758 src/main.rs:2710
+#: src/main.rs:763 src/main.rs:2808
 msgid "Continue"
 msgstr "続行"
 
-#: src/main.rs:772 src/main.rs:2149
+#: src/main.rs:777 src/main.rs:2213
 msgid "About..."
 msgstr "バージョン情報..."
 
-#: src/main.rs:793
+#: src/main.rs:798
 msgid "Version {}"
 msgstr "バージョン {}"
 
-#: src/main.rs:799
+#: src/main.rs:804
 msgid "Checking..."
 msgstr "確認中..."
 
-#: src/main.rs:805
+#: src/main.rs:810
 msgid "Check for new version"
 msgstr "新しいバージョンを確認"
 
-#: src/main.rs:831
+#: src/main.rs:836
 msgid "Already using latest version"
 msgstr "最新バージョンを使用中です"
 
-#: src/main.rs:837
+#: src/main.rs:842
 msgid "New version {} available!"
 msgstr "新しいバージョン {} が利用可能です！"
 
-#: src/main.rs:848
+#: src/main.rs:855
 msgid "Papercraft is a tool to unwrap 3D models"
 msgstr "Papercraftは3Dモデルを展開するためのツールです"
 
-#: src/main.rs:900
+#: src/main.rs:909
 msgid "Please, wait..."
 msgstr "お待ちください..."
 
-#: src/main.rs:1083
+#: src/main.rs:1092
 msgid ""
 "Face mode. Click to select a piece. Drag on paper to move it. Shift-drag on "
 "paper to rotate it."
@@ -180,7 +185,7 @@ msgstr ""
 "面モード。クリックしてピースを選択。紙の上でドラッグして移動。Shiftキーを押し"
 "ながらドラッグして回転。"
 
-#: src/main.rs:1086
+#: src/main.rs:1095
 msgid ""
 "Edge mode. Click on an edge to split/join pieces. Shift-click to join a full "
 "strip of quads. Alt-click to auto-join pieces."
@@ -188,7 +193,7 @@ msgstr ""
 "辺モード。辺をクリックしてピースを分割/結合。Shift+クリックでクワッドのスト"
 "リップ全体を結合。Alt+クリックでピースを自動結合。"
 
-#: src/main.rs:1089
+#: src/main.rs:1098
 msgid ""
 "Flap mode. Click on an edge to swap the side of a flap. Shift-click to hide "
 "a flap."
@@ -196,7 +201,7 @@ msgstr ""
 "フラップモード。辺をクリックしてフラップの側を入れ替え。Shift+クリックでフ"
 "ラップを非表示。"
 
-#: src/main.rs:1092
+#: src/main.rs:1101
 msgid ""
 "View mode. Click to highlight a piece. Move the mouse over an edge to "
 "highlight the matching pair."
@@ -204,33 +209,33 @@ msgstr ""
 "ビューモード。クリックしてピースを強調表示。辺の上にマウスを移動して、対応す"
 "るペアを強調表示。"
 
-#: src/main.rs:1114
+#: src/main.rs:1123
 msgid "Settings"
 msgstr "設定"
 
-#: src/main.rs:1123
+#: src/main.rs:1132
 msgid "Language"
 msgstr "言語"
 
-#: src/main.rs:1130
+#: src/main.rs:1139
 msgid "Theme"
 msgstr "テーマ"
 
-#: src/main.rs:1137
+#: src/main.rs:1146
 msgctxt "Theme"
 msgid "Light"
 msgstr "ライト"
 
-#: src/main.rs:1139
+#: src/main.rs:1148
 msgctxt "Theme"
 msgid "Dark"
 msgstr "ダーク"
 
-#: src/main.rs:1168 src/main.rs:2013
+#: src/main.rs:1177 src/main.rs:2022
 msgid "Document properties"
 msgstr "ドキュメントプロパティ"
 
-#: src/main.rs:1216
+#: src/main.rs:1225
 msgid ""
 "Number of pieces: {0}\n"
 "Number of flaps: {1}\n"
@@ -240,127 +245,127 @@ msgstr ""
 "フラップ数: {1}\n"
 "実寸 (mm): {2}"
 
-#: src/main.rs:1234
+#: src/main.rs:1243
 msgid "Model"
 msgstr "モデル"
 
-#: src/main.rs:1241
+#: src/main.rs:1250
 msgid "Scale"
 msgstr "スケール"
 
-#: src/main.rs:1258
+#: src/main.rs:1267
 msgid "Real size (mm)"
 msgstr "実寸 (mm)"
 
-#: src/main.rs:1313
+#: src/main.rs:1322
 msgid "Textured"
 msgstr "テクスチャ付き"
 
-#: src/main.rs:1316
+#: src/main.rs:1325
 msgid "Texture filter"
 msgstr "テクスチャフィルタ"
 
-#: src/main.rs:1321 src/main.rs:2044 src/main.rs:2095
+#: src/main.rs:1330 src/main.rs:2053 src/main.rs:2159
 msgid "Flaps"
 msgstr "フラップ"
 
-#: src/main.rs:1330
+#: src/main.rs:1339
 msgctxt "FlapStyle"
 msgid "Textured"
 msgstr "テクスチャ付き"
 
-#: src/main.rs:1331
+#: src/main.rs:1340
 msgctxt "FlapStyle"
 msgid "Half textured"
 msgstr "半分テクスチャ付き"
 
-#: src/main.rs:1332
+#: src/main.rs:1341
 msgctxt "FlapStyle"
 msgid "White"
 msgstr "白"
 
-#: src/main.rs:1333
+#: src/main.rs:1342
 msgctxt "FlapStyle"
 msgid "None"
 msgstr "なし"
 
-#: src/main.rs:1338 src/main.rs:1418
+#: src/main.rs:1347 src/main.rs:1427
 msgid "Style"
 msgstr "スタイル"
 
-#: src/main.rs:1351
+#: src/main.rs:1360
 msgid "Shadow"
 msgstr "影"
 
-#: src/main.rs:1365
+#: src/main.rs:1374
 msgid "Double flap"
 msgstr "ダブルフラップ"
 
-#: src/main.rs:1372 src/main.rs:1636
+#: src/main.rs:1381 src/main.rs:1645
 msgid "Width"
 msgstr "幅"
 
-#: src/main.rs:1373 src/main.rs:1439 src/main.rs:1458 src/main.rs:1522
-#: src/main.rs:1539 src/main.rs:1637 src/main.rs:1648 src/main.rs:1840
-#: src/main.rs:1849 src/main.rs:1858 src/main.rs:1867
+#: src/main.rs:1382 src/main.rs:1448 src/main.rs:1467 src/main.rs:1531
+#: src/main.rs:1548 src/main.rs:1646 src/main.rs:1657 src/main.rs:1849
+#: src/main.rs:1858 src/main.rs:1867 src/main.rs:1876
 msgid "mm"
 msgstr "mm"
 
-#: src/main.rs:1387
+#: src/main.rs:1396
 msgid "Angle"
 msgstr "角度"
 
-#: src/main.rs:1388 src/main.rs:1505
+#: src/main.rs:1397 src/main.rs:1514
 msgid "deg"
 msgstr "度"
 
-#: src/main.rs:1395 src/main.rs:1759
+#: src/main.rs:1404 src/main.rs:1768
 msgid "Folds"
 msgstr "折り目"
 
-#: src/main.rs:1406
+#: src/main.rs:1415
 msgctxt "FoldStyle"
 msgid "Full line"
 msgstr "完全な線"
 
-#: src/main.rs:1408
+#: src/main.rs:1417
 msgctxt "FoldStyle"
 msgid "Full & out segment"
 msgstr "完全な線＆外側セグメント"
 
-#: src/main.rs:1410
+#: src/main.rs:1419
 msgctxt "FoldStyle"
 msgid "Out segment"
 msgstr "外側セグメント"
 
-#: src/main.rs:1411
+#: src/main.rs:1420
 msgctxt "FoldStyle"
 msgid "In segment"
 msgstr "内側セグメント"
 
-#: src/main.rs:1412
+#: src/main.rs:1421
 msgctxt "FoldStyle"
 msgid "Out & in segment"
 msgstr "外側＆内側セグメント"
 
-#: src/main.rs:1413
+#: src/main.rs:1422
 msgctxt "FoldStyle"
 msgid "None"
 msgstr "なし"
 
-#: src/main.rs:1438
+#: src/main.rs:1447
 msgid "Length"
 msgstr "長さ"
 
-#: src/main.rs:1457
+#: src/main.rs:1466
 msgid "Line"
 msgstr "線"
 
-#: src/main.rs:1467
+#: src/main.rs:1476
 msgid "Patterns:"
 msgstr "パターン："
 
-#: src/main.rs:1472
+#: src/main.rs:1481
 msgid ""
 "Patterns are written as a list of numbers, each a length in millimeters "
 "(with 0.1 mm precision) representing the lengths of \"dash-space-dash-"
@@ -369,282 +374,310 @@ msgstr ""
 "パターンは数値のリストとして記述します。各数値はミリメートル単位の長さ（0.1mm"
 "精度）で、「ダッシュ-スペース-ダッシュ-スペース」の長さを表します。"
 
-#: src/main.rs:1476
+#: src/main.rs:1485
 msgid "Mountains"
 msgstr "山折り"
 
-#: src/main.rs:1488
+#: src/main.rs:1497
 msgid "Valleys"
 msgstr "谷折り"
 
-#: src/main.rs:1504
+#: src/main.rs:1513
 msgid "Hidden fold angle"
 msgstr "隠れた折り目の角度"
 
-#: src/main.rs:1512 src/main.rs:1786
+#: src/main.rs:1521 src/main.rs:1795
 msgid "Cuts"
 msgstr "カット"
 
-#: src/main.rs:1521 src/main.rs:1768
+#: src/main.rs:1530 src/main.rs:1777
 msgid "Rims"
 msgstr "縁"
 
-#: src/main.rs:1538
+#: src/main.rs:1547
 msgid "Tabs"
 msgstr "タブ"
 
-#: src/main.rs:1548
+#: src/main.rs:1557
 msgid "Information"
 msgstr "情報"
 
-#: src/main.rs:1553
+#: src/main.rs:1562
 msgid "Layout"
 msgstr "レイアウト"
 
-#: src/main.rs:1558
+#: src/main.rs:1567
 msgid "Pages"
 msgstr "ページ"
 
-#: src/main.rs:1568
+#: src/main.rs:1577
 msgid "Columns"
 msgstr "列"
 
-#: src/main.rs:1576
+#: src/main.rs:1585
 msgid "Print Papercraft signature"
 msgstr "Papercraftの署名を印刷"
 
-#: src/main.rs:1583
+#: src/main.rs:1592
 msgid "Print page number"
 msgstr "ページ番号を印刷"
 
-#: src/main.rs:1594
+#: src/main.rs:1603
 msgctxt "EdgeIdPos"
 msgid "None"
 msgstr "なし"
 
-#: src/main.rs:1595
+#: src/main.rs:1604
 msgctxt "EdgeIdPos"
 msgid "Outside"
 msgstr "外側"
 
-#: src/main.rs:1596
+#: src/main.rs:1605
 msgctxt "EdgeIdPos"
 msgid "Inside"
 msgstr "内側"
 
-#: src/main.rs:1600
+#: src/main.rs:1609
 msgid "Edge id position"
 msgstr "辺IDの位置"
 
-#: src/main.rs:1616
+#: src/main.rs:1625
 msgid "Edge id font size"
 msgstr "辺IDフォントサイズ"
 
-#: src/main.rs:1617
+#: src/main.rs:1626
 msgid "pt"
 msgstr "pt"
 
-#: src/main.rs:1626
+#: src/main.rs:1635
 msgid "Piece names only"
 msgstr "ピース名のみ"
 
-#: src/main.rs:1630
+#: src/main.rs:1639
 msgid "Paper size"
 msgstr "用紙サイズ"
 
-#: src/main.rs:1647
+#: src/main.rs:1656
 msgid "Height"
 msgstr "高さ"
 
-#: src/main.rs:1659
+#: src/main.rs:1668
 msgid "Resolution"
 msgstr "解像度"
 
-#: src/main.rs:1660
+#: src/main.rs:1669
 msgid "dpi"
 msgstr "dpi"
 
-#: src/main.rs:1718
+#: src/main.rs:1727
 msgid "Portrait"
 msgstr "縦"
 
-#: src/main.rs:1724
+#: src/main.rs:1733
 msgid "Landscape"
 msgstr "横"
 
-#: src/main.rs:1734
+#: src/main.rs:1743
 msgid "User interface"
 msgstr "ユーザーインターフェース"
 
-#: src/main.rs:1742
+#: src/main.rs:1751
 msgid "3D view"
 msgstr "3Dビュー"
 
-#: src/main.rs:1751 src/main.rs:1811
+#: src/main.rs:1760 src/main.rs:1820
 msgid "Background"
 msgstr "背景"
 
-#: src/main.rs:1760 src/main.rs:1769 src/main.rs:1778 src/main.rs:1787
+#: src/main.rs:1769 src/main.rs:1778 src/main.rs:1787 src/main.rs:1796
 msgid "px"
 msgstr "px"
 
-#: src/main.rs:1777
+#: src/main.rs:1786
 msgid "Rims with tab"
 msgstr "タブ付きの縁"
 
-#: src/main.rs:1802
+#: src/main.rs:1811
 msgid "Paper view"
 msgstr "紙ビュー"
 
-#: src/main.rs:1819 src/main.rs:2125
+#: src/main.rs:1828 src/main.rs:2189
 msgid "Paper"
 msgstr "紙"
 
-#: src/main.rs:1827
+#: src/main.rs:1836
 msgid "Highlight"
 msgstr "強調表示"
 
-#: src/main.rs:1834
+#: src/main.rs:1843
 msgid "Margins"
 msgstr "余白"
 
-#: src/main.rs:1839
+#: src/main.rs:1848
 msgid "top"
 msgstr "上"
 
-#: src/main.rs:1848
+#: src/main.rs:1857
 msgid "left"
 msgstr "左"
 
-#: src/main.rs:1857
+#: src/main.rs:1866
 msgid "right"
 msgstr "右"
 
-#: src/main.rs:1866
+#: src/main.rs:1875
 msgid "bottom"
 msgstr "下"
 
-#: src/main.rs:1878
+#: src/main.rs:1887
 msgid "Reset to UI defaults"
 msgstr "UIのデフォルトにリセット"
 
-#: src/main.rs:1909
+#: src/main.rs:1918
 msgid "Apply"
 msgstr "適用"
 
-#: src/main.rs:1933
+#: src/main.rs:1942
 msgid "File"
 msgstr "ファイル"
 
-#: src/main.rs:1935 src/main.rs:2500
+#: src/main.rs:1944 src/main.rs:2598
 msgid "Open..."
 msgstr "開く..."
 
-#: src/main.rs:1943
+#: src/main.rs:1952
 msgid "Save"
 msgstr "保存"
 
-#: src/main.rs:1950 src/main.rs:2522
+#: src/main.rs:1959 src/main.rs:2620
 msgid "Save as..."
 msgstr "名前を付けて保存..."
 
-#: src/main.rs:1958 src/main.rs:2548
+#: src/main.rs:1967 src/main.rs:2646
 msgid "Import model..."
 msgstr "モデルをインポート..."
 
-#: src/main.rs:1962 src/main.rs:2575
+#: src/main.rs:1971 src/main.rs:2673
 msgid "Update with new model..."
 msgstr "新しいモデルで更新..."
 
-#: src/main.rs:1969 src/main.rs:2590
+#: src/main.rs:1978 src/main.rs:2688
 msgid "Export model..."
 msgstr "モデルをエクスポート..."
 
-#: src/main.rs:1973 src/main.rs:2618
+#: src/main.rs:1982 src/main.rs:2716
 msgid "Generate Printable..."
 msgstr "印刷用データを生成..."
 
-#: src/main.rs:1981
+#: src/main.rs:1990
 msgid "Settings..."
 msgstr "設定..."
 
-#: src/main.rs:1992
+#: src/main.rs:2001
 msgid "Quit"
 msgstr "終了"
 
-#: src/main.rs:1999
+#: src/main.rs:2008
 msgid "Edit"
 msgstr "編集"
 
-#: src/main.rs:2002
+#: src/main.rs:2011
 msgid "Undo"
 msgstr "元に戻す"
 
-#: src/main.rs:2028
+#: src/main.rs:2037
 msgid "Face/Island"
 msgstr "面/島"
 
-#: src/main.rs:2036
+#: src/main.rs:2045
 msgid "Split/Join edge"
 msgstr "辺を分割/結合"
 
-#: src/main.rs:2055
+#: src/main.rs:2064
 msgid "Snap"
 msgstr "スナップ"
 
-#: src/main.rs:2066
+#: src/main.rs:2074
+msgid "Pieces"
+msgstr "ピース"
+
+#: src/main.rs:2078
+msgid "Rename to previous label"
+msgstr "前のラベルに変更"
+
+#: src/main.rs:2086
+msgid "Rename to next label"
+msgstr "次のラベルに変更"
+
+#: src/main.rs:2094
+msgid "Rename to first label"
+msgstr "先頭のラベルに変更"
+
+#: src/main.rs:2102
+msgid "Rename to last label"
+msgstr "末尾のラベルに変更"
+
+#: src/main.rs:2113
 msgid "Repack pieces"
 msgstr "ピースを再配置"
 
-#: src/main.rs:2074
+#: src/main.rs:2120
+msgid "Repack pieces alphabetically"
+msgstr "ピースをアルファベット順に再配置"
+
+#: src/main.rs:2129
+msgid "Relabel from selection"
+msgstr "選択中のピースからラベルを振り直す"
+
+#: src/main.rs:2138
 msgid "View"
 msgstr "表示"
 
-#: src/main.rs:2076
+#: src/main.rs:2140
 msgid "Textures"
 msgstr "テクスチャ"
 
-#: src/main.rs:2086
+#: src/main.rs:2150
 msgid "3D lines"
 msgstr "3D線"
 
-#: src/main.rs:2104
+#: src/main.rs:2168
 msgid "X-ray selection"
 msgstr "X線選択"
 
-#: src/main.rs:2113
+#: src/main.rs:2177
 msgid "Texts"
 msgstr "テキスト"
 
-#: src/main.rs:2134
+#: src/main.rs:2198
 msgid "Highlight overlaps"
 msgstr "重なりを強調表示"
 
-#: src/main.rs:2142
+#: src/main.rs:2206
 msgid "Reset views"
 msgstr "ビューをリセット"
 
-#: src/main.rs:2147
+#: src/main.rs:2211
 msgid "Help"
 msgstr "ヘルプ"
 
-#: src/main.rs:2486
+#: src/main.rs:2584
 msgid "Load model"
 msgstr "モデルを読み込む"
 
-#: src/main.rs:2487 src/main.rs:2532 src/main.rs:3838
+#: src/main.rs:2585 src/main.rs:2630 src/main.rs:3940
 msgid "The model has not been saved, continue anyway?"
 msgstr "モデルが保存されていません。続行しますか？"
 
-#: src/main.rs:2531
+#: src/main.rs:2629
 msgid "Import model"
 msgstr "モデルをインポート"
 
-#: src/main.rs:2558
+#: src/main.rs:2656
 msgid "Update model"
 msgstr "モデルを更新"
 
-#: src/main.rs:2559
+#: src/main.rs:2657
 msgid ""
 "This model is not saved and this operation cannot be undone.\n"
 "Continue anyway?"
@@ -652,11 +685,11 @@ msgstr ""
 "このモデルは保存されておらず、この操作は取り消せません。\n"
 "続行しますか？"
 
-#: src/main.rs:2707
+#: src/main.rs:2805
 msgid "Overwrite?"
 msgstr "上書きしますか？"
 
-#: src/main.rs:2708
+#: src/main.rs:2806
 msgid ""
 "The file '{}' already exists!\n"
 "Would you like to overwrite it?"
@@ -664,66 +697,66 @@ msgstr ""
 "ファイル '{}' は既に存在します！\n"
 "上書きしますか？"
 
-#: src/main.rs:2714
+#: src/main.rs:2812
 msgid "Error!"
 msgstr "エラー！"
 
-#: src/main.rs:2715
+#: src/main.rs:2813
 msgid "The file '{}' doesn't exist!"
 msgstr "ファイル '{}' は存在しません！"
 
-#: src/main.rs:3237
+#: src/main.rs:3335
 msgid "Error loading file {}"
 msgstr "ファイル {} を読み込む際のエラー"
 
-#: src/main.rs:3366
+#: src/main.rs:3464
 msgid "Error creating file {}"
 msgstr "ファイル {} を作成する際のエラー"
 
-#: src/main.rs:3837
+#: src/main.rs:3939
 msgid "Quit?"
 msgstr "終了しますか？"
 
-#: src/main.rs:4144
+#: src/main.rs:4246
 msgid "All models"
 msgstr "すべてのモデル"
 
-#: src/main.rs:4158
+#: src/main.rs:4260
 msgid "Wavefront"
 msgstr "Wavefront"
 
-#: src/main.rs:4166
+#: src/main.rs:4268
 msgid "Pepakura"
 msgstr "Pepakura"
 
-#: src/main.rs:4174
+#: src/main.rs:4276
 msgid "Stl"
 msgstr "Stl"
 
-#: src/main.rs:4182
+#: src/main.rs:4284
 msgid "glTF"
 msgstr "glTF"
 
-#: src/main.rs:4193
+#: src/main.rs:4295
 msgid "PDF documents"
 msgstr "PDFドキュメント"
 
-#: src/main.rs:4201
+#: src/main.rs:4303
 msgid "SVG images"
 msgstr "SVG画像"
 
-#: src/main.rs:4209
+#: src/main.rs:4311
 msgid "Inkscape SVG multipage"
 msgstr "Inkscape SVGマルチページ"
 
-#: src/main.rs:4217
+#: src/main.rs:4319
 msgid "PNG images"
 msgstr "PNG画像"
 
-#: src/main.rs:4225
+#: src/main.rs:4327
 msgid "All files"
 msgstr "すべてのファイル"
 
-#: src/main.rs:4291 src/main.rs:4298 src/main.rs:4306
+#: src/main.rs:4393 src/main.rs:4400 src/main.rs:4406
 msgid "Unknown version"
 msgstr "不明なバージョン"

@@ -64,7 +64,10 @@ use util_gl::{UniformQuad, Uniforms2D, Uniforms2DDash, Uniforms3D};
 
 use clap::Parser;
 
-use crate::{paper::LineConfig, util_3d::TotalF32};
+use crate::{
+    paper::{LineConfig, MoveInOrderDirection},
+    util_3d::TotalF32,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -672,6 +675,8 @@ struct MenuActions {
     quit: BoolWithConfirm,
     reset_views: bool,
     undo: bool,
+    move_labels: Option<MoveInOrderDirection>,
+    reorder_labels: bool,
 }
 
 // Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
@@ -2066,13 +2071,68 @@ impl GlobalContext {
 
                     ui.separator();
 
-                    if ui
-                        .menu_item_config(lbl(tr!("Repack pieces")))
-                        .shortcut("Ctrl+R")
-                        .build()
-                    {
-                        self.pack_islands();
-                    }
+                    ui.menu_config(lbl(tr!("Pieces"))).with(|| {
+                        let selection = self.data.has_selected_islands();
+
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to previous label")))
+                            .shortcut("PageUp")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::Backward);
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to next label")))
+                            .shortcut("PageDown")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::Forward);
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to first label")))
+                            .shortcut("Home")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::Start);
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to last label")))
+                            .shortcut("End")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::End);
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .menu_item_config(lbl(tr!("Repack pieces")))
+                            .shortcut("Ctrl+R")
+                            .build()
+                        {
+                            self.pack_islands();
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Repack pieces alphabetically")))
+                            .build()
+                        {
+                            self.pack_islands_sorted(true);
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .menu_item_config(lbl(tr!("Relabel from selection")))
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.reorder_labels = true;
+                        }
+                    });
                 }
             });
             ui.menu_config(lbl(tr!("View"))).with(|| {
@@ -2186,6 +2246,20 @@ impl GlobalContext {
                     imgui::InputFlags::RouteGlobal,
                 ) {
                     menu_actions.undo = true;
+                }
+                // in/decrease island labels
+                if ui.shortcut_ex(imgui::Key::PageUp, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Backward);
+                }
+                if ui.shortcut_ex(imgui::Key::PageDown, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Forward);
+                }
+                // move islands to front/back of order
+                if ui.shortcut_ex(imgui::Key::Home, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::Start);
+                }
+                if ui.shortcut_ex(imgui::Key::End, imgui::InputFlags::RouteGlobal) {
+                    menu_actions.move_labels = Some(MoveInOrderDirection::End);
                 }
                 // toggle snap mode
                 if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
@@ -2479,7 +2553,27 @@ impl GlobalContext {
                 UndoResult::False => {}
             }
         }
-
+        if let Some(direction) = menu_actions.move_labels {
+            //move islands down: towards A, up: towards Z+
+            //move islands to front: A, back: Z+
+            let undo = self.data.move_selected_islands(direction);
+            if !undo.is_empty() {
+                self.data.push_undo_action(undo);
+                self.add_rebuild(
+                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                );
+            }
+        }
+        if menu_actions.reorder_labels {
+            let undo = self.data.reorder_islands();
+            if !undo.is_empty() {
+                self.data.push_undo_action(undo);
+                self.add_rebuild(
+                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                );
+            }
+            //TODO show warning popup if more !1 island was selected?
+        }
         let mut save_as = false;
         let mut open_file_dialog = false;
 
@@ -3409,7 +3503,11 @@ impl GlobalContext {
     }
 
     fn pack_islands(&mut self) {
-        let undo = self.data.pack_islands();
+        self.pack_islands_sorted(false);
+    }
+
+    fn pack_islands_sorted(&mut self, alphabetically: bool) {
+        let undo = self.data.pack_islands_sorted(alphabetically);
         self.data.push_undo_action(undo);
         self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
     }

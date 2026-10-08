@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::io::{Read, Seek, Write};
 
 use crate::version::Version;
@@ -193,6 +194,7 @@ impl Papercraft {
                     loc: Vector2::zero(),
                     rot: Rad::zero(),
                     mx: Matrix3::one(),
+                    order: IslandOrder(i32::MAX, 0),
                     name: String::new(),
                 });
                 self.memo = Memoization::default();
@@ -215,7 +217,7 @@ impl Papercraft {
         }
     }
 
-    fn recompute_edge_ids(&mut self) {
+    pub fn recompute_edge_ids(&mut self) {
         let mut next_edge_id = 0;
         let mut edge_ids: Vec<Option<EdgeId>> = vec![None; self.model.num_edges()];
 
@@ -225,22 +227,39 @@ impl Papercraft {
             .zip(&self.edges)
             .zip(&mut edge_ids)
             .map(|(((_, edge), edge_status), edge_id)| {
-                let (p0, p1) = self.model.edge_pos(edge);
-                let c = (p0 + p1) / 2.0;
-                (c, edge, edge_status, edge_id)
+                let (face_a, face_b) = edge.faces();
+                let island_a = self
+                    .island_by_key(self.island_by_face(face_a))
+                    .unwrap()
+                    .order;
+                let island_b = face_b.map_or(island_a, |face| {
+                    self.island_by_key(self.island_by_face(face)).unwrap().order
+                });
+                (island_a, island_b, edge, edge_status, edge_id)
             })
             .collect();
 
-        edge_collection.sort_by_key(|(c, _, _, _)| (TotalF32(c.y), TotalF32(c.z), TotalF32(c.x)));
+        edge_collection.sort_by_key(|(island_a, island_b, _, _, _)| {
+            let island_index_a = island_a.0;
+            let island_index_b = island_b.0;
+            let min_index = island_index_a.min(island_index_b);
+            let max_index = island_index_a.max(island_index_b);
+            (
+                max_index,                                  //e.g. glue island C after B
+                u8::from(island_index_a != island_index_b), //if C has a self connecting edge, glue it before C to B
+                Reverse(min_index),                         //but glue island C to B before C to A
+            )
+        });
 
-        for (_, edge, edge_status, edge_id) in edge_collection {
+        for (_, _, edge, edge_status, edge_id) in edge_collection {
             match (edge.faces(), edge_status) {
                 // edges from tessellations or rims don't have ids
-                (_, RealEdgeStatus::Hidden) | ((_, None), _) => {}
-                _ => {
+                // two self connecting flaps share an id
+                ((_, Some(_)), RealEdgeStatus::Cut(_)) => {
                     next_edge_id += 1;
                     *edge_id = Some(EdgeId::new(next_edge_id));
                 }
+                _ => {}
             }
         }
         self.edge_ids = edge_ids;
@@ -292,6 +311,7 @@ impl Papercraft {
             model.faces().map(|(i_face, _face)| i_face).collect();
 
         let mut islands = SlotMap::with_key();
+        let mut first_island = None;
         while let Some(root) = pending_faces.iter().copied().next() {
             pending_faces.remove(&root);
 
@@ -311,11 +331,14 @@ impl Papercraft {
                 loc: Vector2::zero(),
                 rot: Rad::zero(),
                 mx: Matrix3::one(),
+                order: IslandOrder(0, 0),
                 name: String::new(),
             };
-            islands.insert(island);
+            let i_island = islands.insert(island);
+            if first_island.is_none() {
+                first_island = Some(i_island);
+            }
         }
-
         let need_packing = !importer.relocate_islands(&model, islands.values_mut());
 
         let mut need_fix_options = false;
@@ -326,7 +349,6 @@ impl Papercraft {
         if !model.has_textures() {
             options.texture = false;
         }
-
         let mut papercraft = Papercraft {
             model,
             options,
@@ -335,6 +357,9 @@ impl Papercraft {
             memo: Memoization::default(),
             edge_ids: Vec::new(),
         };
+        if let Some(first_island) = first_island {
+            papercraft.adjacency_order_islands(first_island);
+        }
         if need_fix_options {
             let (v_min, v_max) = papercraft.model().bounding_box();
             let size = (v_max.x - v_min.x)

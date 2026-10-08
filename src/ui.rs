@@ -14,7 +14,10 @@ use easy_imgui_window::{
 use fxhash::{FxHashMap, FxHashSet};
 use image::DynamicImage;
 
-use crate::{FONT_SIZE, TextBuilder};
+use crate::{
+    FONT_SIZE, TextBuilder,
+    paper::{IslandOrder, MoveInOrderDirection},
+};
 use crate::{
     PrintableText, TextAlign,
     glr::{self, Rgba},
@@ -116,6 +119,9 @@ pub enum UndoAction {
         island_pos: FxHashMap<FaceIndex, (Rad<f32>, Vector2)>,
     },
     Modified,
+    IslandOrder {
+        prev_order: FxHashMap<FaceIndex, IslandOrder>,
+    },
 }
 
 bitflags::bitflags! {
@@ -2623,7 +2629,7 @@ impl PapercraftContext {
     }
 
     #[must_use]
-    pub fn pack_islands(&mut self) -> Vec<UndoAction> {
+    pub fn pack_islands_sorted(&mut self, alphabetically: bool) -> Vec<UndoAction> {
         let undo_actions = self
             .papercraft
             .islands()
@@ -2633,13 +2639,44 @@ impl PapercraftContext {
                 prev_loc: island.location(),
             })
             .collect();
-        self.papercraft.pack_islands();
+        self.papercraft.pack_islands_sorted(alphabetically);
         undo_actions
+    }
+
+    /// in-/decrements labels of selected islands by 1 letter
+    pub fn move_selected_islands(&mut self, direction: MoveInOrderDirection) -> Vec<UndoAction> {
+        let selected: Vec<_> = self
+            .selected_islands
+            .iter()
+            .map(|&key| self.papercraft.island_by_face(key.0))
+            .collect();
+        if let Some(prev_order) = self.papercraft.move_islands_in_order(&selected, direction) {
+            vec![UndoAction::IslandOrder { prev_order }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn reorder_islands(&mut self) -> Vec<UndoAction> {
+        if self.selected_islands.len() != 1 {
+            return Vec::new();
+        }
+        let selected: Vec<_> = self
+            .selected_islands
+            .iter()
+            .map(|&key| self.papercraft.island_key_by_face_key(key))
+            .collect();
+        if let Some(prev_order) = self.papercraft.adjacency_order_islands(selected[0]) {
+            vec![UndoAction::IslandOrder { prev_order }]
+        } else {
+            vec![]
+        }
     }
 
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
+
     pub fn undo_action(&mut self) -> UndoResult {
         //Do not undo while grabbing or the stack will be messed up
         if self.grabbed_island.is_some() {
@@ -2664,6 +2701,10 @@ impl PapercraftContext {
 
     fn undo_single_action(&mut self, action: UndoAction) -> Option<UndoResult> {
         match action {
+            UndoAction::IslandOrder { prev_order } => {
+                self.papercraft.restore_island_order(prev_order);
+                None
+            }
             UndoAction::IslandMove {
                 i_root,
                 prev_rot,
@@ -2719,6 +2760,10 @@ impl PapercraftContext {
 
     pub fn has_selected_edge(&self) -> bool {
         self.selected_edges.is_some()
+    }
+
+    pub fn has_selected_islands(&self) -> bool {
+        !self.selected_islands.is_empty()
     }
 
     /// Check for duplicates in `selected_islands`: must call this after every possible join.

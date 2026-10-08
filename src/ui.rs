@@ -2762,6 +2762,10 @@ impl PapercraftContext {
         self.selected_edges.is_some()
     }
 
+    pub fn has_selected_islands(&self) -> bool {
+        !self.selected_islands.is_empty()
+    }
+
     /// Check for duplicates in `selected_islands`: must call this after every possible join.
     fn check_selection(&mut self) {
         self.selected_islands

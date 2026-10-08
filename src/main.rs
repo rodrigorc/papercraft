@@ -2067,25 +2067,68 @@ impl GlobalContext {
 
                     ui.separator();
 
-                    if ui
-                        .menu_item_config(lbl(tr!("Repack pieces")))
-                        .shortcut("Ctrl+R")
-                        .build()
-                    {
-                        self.pack_islands();
-                    }
-                    if ui
-                        .menu_item_config(lbl(tr!("Repack pieces alphabetically")))
-                        .build()
-                    {
-                        self.pack_islands_sorted(true);
-                    }
+                    ui.menu_config(lbl(tr!("Pieces"))).with(|| {
+                        let selection = self.data.has_selected_islands();
 
-                    ui.separator();
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to previous label")))
+                            .shortcut("PageUp")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::Backward);
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to next label")))
+                            .shortcut("PageDown")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::Forward);
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to first label")))
+                            .shortcut("Home")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::Start);
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Rename to last label")))
+                            .shortcut("End")
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.move_labels = Some(MoveInOrderDirection::End);
+                        }
 
-                    if ui.menu_item_config(lbl(tr!("Reorder labels"))).build() {
-                        menu_actions.reorder_labels = true;
-                    }
+                        ui.separator();
+
+                        if ui
+                            .menu_item_config(lbl(tr!("Repack pieces")))
+                            .shortcut("Ctrl+R")
+                            .build()
+                        {
+                            self.pack_islands();
+                        }
+                        if ui
+                            .menu_item_config(lbl(tr!("Repack pieces alphabetically")))
+                            .build()
+                        {
+                            self.pack_islands_sorted(true);
+                        }
+
+                        ui.separator();
+
+                        if ui
+                            .menu_item_config(lbl(tr!("Relabel from selection")))
+                            .enabled(selection)
+                            .build()
+                        {
+                            menu_actions.reorder_labels = true;
+                        }
+                    });
                 }
             });
             ui.menu_config(lbl(tr!("View"))).with(|| {

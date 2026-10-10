@@ -248,7 +248,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             last_export_filter: None,
             error_message: None,
             confirmable_action: None,
-            quit_requested: BoolWithConfirm::None,
+            quit_requested: None,
             title: String::new(),
             textures_to_delete: Vec::new(),
             proxy: local_proxy,
@@ -310,14 +310,15 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             window.ping_user_input();
         }
 
-        if res.window_closed && self.quit_requested == BoolWithConfirm::None {
-            let quit = self.check_modified();
-            self.quit_requested = quit;
+        if res.window_closed && self.quit_requested.is_none() {
+            self.quit_requested = Some(self.check_modified());
+            window.ping_user_input();
         }
-        if self.quit_requested == BoolWithConfirm::Confirmed {
+        if self.quit_requested == Some(WithConfirm::Confirmed) {
             event_loop.exit();
         }
     }
+
     fn user_event(&mut self, _args: easy_imgui_window::Args<Self>, ev: MainLoopEvent) {
         match ev {
             MainLoopEvent::Crash => {
@@ -516,7 +517,7 @@ impl FileOperation {
 struct ConfirmableAction {
     title: String,
     message: String,
-    action: Box<dyn Fn(&mut MenuActions)>,
+    action: MenuAction,
 }
 
 struct GlobalContext {
@@ -561,7 +562,7 @@ struct GlobalContext {
     last_export_filter: Option<easy_imgui_filechooser::FilterId>,
     error_message: Option<String>,
     confirmable_action: Option<ConfirmableAction>,
-    quit_requested: BoolWithConfirm,
+    quit_requested: Option<WithConfirm>,
     title: String,
     // If a texture is added to a window-list, but then deleted, it should be kept alive until after the render.
     textures_to_delete: Vec<glr::Texture>,
@@ -655,28 +656,41 @@ enum CheckVersionStatus {
     Error(String),
 }
 
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-enum BoolWithConfirm {
-    #[default]
-    None,
+#[derive(Debug)]
+enum ViewSetting {
+    ShowTextures,
+    Show3dLines,
+    ShowFlaps,
+    XraySelection,
+    ShowTexts,
+    DrawPaper,
+    HighlightOverlaps,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum WithConfirm {
     Requested,
     Confirmed,
 }
 
-#[derive(Debug, Default)]
-struct MenuActions {
-    open: BoolWithConfirm,
-    save: bool,
-    save_as: bool,
-    import_model: BoolWithConfirm,
-    update_model: BoolWithConfirm,
-    export_obj: bool,
-    generate_printable: bool,
-    quit: BoolWithConfirm,
-    reset_views: bool,
-    undo: bool,
-    move_labels: Option<MoveInOrderDirection>,
-    reorder_labels: bool,
+#[derive(Debug)]
+enum MenuAction {
+    Open(WithConfirm),
+    Save,
+    SaveAs,
+    ImportModel(WithConfirm),
+    UpdateModel(WithConfirm),
+    ExportObj,
+    GeneratePrintable,
+    Quit(WithConfirm),
+    ResetViews,
+    Undo,
+    MoveLabels(MoveInOrderDirection),
+    ReorderLabels,
+    ToggleSettings,
+    ToggleDocProperties { ignore_changes: bool },
+    RepackIslands { alphabetically: bool },
+    ToggleViewSetting(ViewSetting),
 }
 
 // Returns `Some(true)` if "OK", `Some(false)`, if "Cancel" or not opened, `None` if opened.
@@ -752,7 +766,9 @@ impl GlobalContext {
             }
         }
     }
-    fn build_confirm_message(&mut self, ui: &Ui, menu_actions: &mut MenuActions) {
+
+    // Clicking Ok in a confirmable_action may trigget a MenuAction
+    fn build_confirm_message(&mut self, ui: &Ui, menu_action: &mut Option<MenuAction>) {
         if let Some(action) = self.confirmable_action.take() {
             let reply = do_modal_dialog(
                 ui,
@@ -763,7 +779,7 @@ impl GlobalContext {
                 Some(&tr!("Continue")),
             );
             match reply {
-                Some(true) => (action.action)(menu_actions),
+                Some(true) => *menu_action = Some(action.action),
                 Some(false) => (),
                 None => self.confirmable_action = Some(action),
             }
@@ -927,8 +943,8 @@ impl GlobalContext {
         }
     }
 
-    fn build_ui(&mut self, ui: &Ui) -> MenuActions {
-        let mut menu_actions = self.build_menu_and_file_dialog(ui);
+    fn build_ui(&mut self, ui: &Ui) -> Option<MenuAction> {
+        let mut menu_action = self.build_menu_and_shortcuts(ui);
         let font_sz = ui.get_font_size();
 
         // Toolbar is not needed in read-only mode
@@ -1107,10 +1123,10 @@ impl GlobalContext {
         self.build_options_dialog(ui);
         self.build_modal_error_message(ui);
         self.build_modal_file_action(ui);
-        self.build_confirm_message(ui, &mut menu_actions);
+        self.build_confirm_message(ui, &mut menu_action);
         self.build_about(ui);
 
-        menu_actions
+        menu_action
     }
 
     fn build_config_dialog(&mut self, ui: &Ui) {
@@ -1928,15 +1944,16 @@ impl GlobalContext {
         (options_opened, apply_options)
     }
 
-    fn check_modified(&self) -> BoolWithConfirm {
+    fn check_modified(&self) -> WithConfirm {
         if self.data.modified {
-            BoolWithConfirm::Requested
+            WithConfirm::Requested
         } else {
-            BoolWithConfirm::Confirmed
+            WithConfirm::Confirmed
         }
     }
-    fn build_menu_and_file_dialog(&mut self, ui: &Ui) -> MenuActions {
-        let mut menu_actions = MenuActions::default();
+
+    fn build_menu_and_shortcuts(&mut self, ui: &Ui) -> Option<MenuAction> {
+        let mut menu_action = None;
 
         ui.with_menu_bar(|| {
             ui.menu_config(lbl(tr!("File"))).with(|| {
@@ -1945,7 +1962,7 @@ impl GlobalContext {
                     .shortcut("Ctrl+O")
                     .build()
                 {
-                    menu_actions.open = self.check_modified();
+                    menu_action = Some(MenuAction::Open(self.check_modified()));
                 }
                 ui.with_disabled(self.data.papercraft().model().is_empty(), || {
                     if ui
@@ -1953,37 +1970,37 @@ impl GlobalContext {
                         .shortcut("Ctrl+S")
                         .build()
                     {
-                        menu_actions.save = true;
+                        menu_action = Some(MenuAction::Save);
                     }
                     if ui
                         .menu_item_config(lbl(tr!("Save as...")))
                         .shortcut("Ctrl+Shift+S")
                         .build()
                     {
-                        menu_actions.save_as = true;
+                        menu_action = Some(MenuAction::SaveAs);
                     }
                 });
                 if self.modifiable() {
                     if ui.menu_item_config(lbl(tr!("Import model..."))).build() {
-                        menu_actions.import_model = self.check_modified();
+                        menu_action = Some(MenuAction::ImportModel(self.check_modified()));
                     }
                     if ui
                         .menu_item_config(lbl(tr!("Update with new model...")))
                         .shortcut("Ctrl+I")
                         .build()
                     {
-                        menu_actions.update_model = self.check_modified();
+                        menu_action = Some(MenuAction::UpdateModel(self.check_modified()));
                     }
                 }
                 if ui.menu_item_config(lbl(tr!("Export model..."))).build() {
-                    menu_actions.export_obj = true;
+                    menu_action = Some(MenuAction::ExportObj);
                 }
                 if ui
                     .menu_item_config(lbl(tr!("Generate Printable...")))
                     .shortcut("Ctrl+P")
                     .build()
                 {
-                    menu_actions.generate_printable = true;
+                    menu_action = Some(MenuAction::GeneratePrintable);
                 }
                 ui.separator();
                 if ui
@@ -1991,10 +2008,7 @@ impl GlobalContext {
                     .selected(self.config_opened.is_some())
                     .build()
                 {
-                    self.config_opened = match self.config_opened {
-                        Some(_) => None,
-                        None => Some(self.config.clone()),
-                    };
+                    menu_action = Some(MenuAction::ToggleSettings);
                 }
                 ui.separator();
                 if ui
@@ -2002,7 +2016,7 @@ impl GlobalContext {
                     .shortcut("Ctrl+Q")
                     .build()
                 {
-                    menu_actions.quit = self.check_modified();
+                    menu_action = Some(MenuAction::Quit(self.check_modified()));
                 }
             });
             ui.menu_config(lbl(tr!("Edit"))).with(|| {
@@ -2013,7 +2027,7 @@ impl GlobalContext {
                         .enabled(self.data.can_undo())
                         .build()
                     {
-                        menu_actions.undo = true;
+                        menu_action = Some(MenuAction::Undo);
                     }
                     ui.separator();
                 }
@@ -2024,10 +2038,9 @@ impl GlobalContext {
                     .selected(self.options_opened.is_some())
                     .build()
                 {
-                    self.options_opened = match self.options_opened {
-                        Some(_) => None,
-                        None => Some(self.data.papercraft().options().clone()),
-                    }
+                    menu_action = Some(MenuAction::ToggleDocProperties {
+                        ignore_changes: true,
+                    });
                 }
 
                 if self.modifiable() {
@@ -2080,7 +2093,8 @@ impl GlobalContext {
                             .enabled(selection)
                             .build()
                         {
-                            menu_actions.move_labels = Some(MoveInOrderDirection::Backward);
+                            menu_action =
+                                Some(MenuAction::MoveLabels(MoveInOrderDirection::Backward));
                         }
                         if ui
                             .menu_item_config(lbl(tr!("Rename to next label")))
@@ -2088,7 +2102,8 @@ impl GlobalContext {
                             .enabled(selection)
                             .build()
                         {
-                            menu_actions.move_labels = Some(MoveInOrderDirection::Forward);
+                            menu_action =
+                                Some(MenuAction::MoveLabels(MoveInOrderDirection::Forward));
                         }
                         if ui
                             .menu_item_config(lbl(tr!("Rename to first label")))
@@ -2096,7 +2111,7 @@ impl GlobalContext {
                             .enabled(selection)
                             .build()
                         {
-                            menu_actions.move_labels = Some(MoveInOrderDirection::Start);
+                            menu_action = Some(MenuAction::MoveLabels(MoveInOrderDirection::Start));
                         }
                         if ui
                             .menu_item_config(lbl(tr!("Rename to last label")))
@@ -2104,7 +2119,7 @@ impl GlobalContext {
                             .enabled(selection)
                             .build()
                         {
-                            menu_actions.move_labels = Some(MoveInOrderDirection::End);
+                            menu_action = Some(MenuAction::MoveLabels(MoveInOrderDirection::End));
                         }
 
                         ui.separator();
@@ -2114,13 +2129,17 @@ impl GlobalContext {
                             .shortcut("Ctrl+R")
                             .build()
                         {
-                            self.pack_islands();
+                            menu_action = Some(MenuAction::RepackIslands {
+                                alphabetically: false,
+                            });
                         }
                         if ui
                             .menu_item_config(lbl(tr!("Repack pieces alphabetically")))
                             .build()
                         {
-                            self.pack_islands_sorted(true);
+                            menu_action = Some(MenuAction::RepackIslands {
+                                alphabetically: true,
+                            });
                         }
 
                         ui.separator();
@@ -2130,7 +2149,7 @@ impl GlobalContext {
                             .enabled(selection)
                             .build()
                         {
-                            menu_actions.reorder_labels = true;
+                            menu_action = Some(MenuAction::ReorderLabels);
                         }
                     });
                 }
@@ -2143,8 +2162,7 @@ impl GlobalContext {
                     .selected(self.data.ui.show_textures)
                     .build()
                 {
-                    self.data.ui.show_textures ^= true;
-                    self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
+                    menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::ShowTextures));
                 }
                 if ui
                     .menu_item_config(lbl(tr!("3D lines")))
@@ -2152,8 +2170,7 @@ impl GlobalContext {
                     .selected(self.data.ui.show_3d_lines)
                     .build()
                 {
-                    self.data.ui.show_3d_lines ^= true;
-                    self.add_rebuild(RebuildFlags::SCENE_REDRAW | RebuildFlags::SCENE_EDGE);
+                    menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::Show3dLines));
                 }
                 if ui
                     .menu_item_config(lbl(tr!("Flaps")))
@@ -2161,8 +2178,7 @@ impl GlobalContext {
                     .selected(self.data.ui.show_flaps)
                     .build()
                 {
-                    self.data.ui.show_flaps ^= true;
-                    self.add_rebuild(RebuildFlags::PAPER);
+                    menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::ShowFlaps));
                 }
                 if ui
                     .menu_item_config(lbl(tr!("X-ray selection")))
@@ -2170,8 +2186,7 @@ impl GlobalContext {
                     .selected(self.data.ui.xray_selection)
                     .build()
                 {
-                    self.data.ui.xray_selection ^= true;
-                    self.add_rebuild(RebuildFlags::SELECTION);
+                    menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::XraySelection));
                 }
                 if ui
                     .menu_item_config(lbl(tr!("Texts")))
@@ -2179,11 +2194,7 @@ impl GlobalContext {
                     .selected(self.data.ui.show_texts)
                     .build()
                 {
-                    self.data.ui.show_texts ^= true;
-                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
-                    if self.data.ui.show_texts {
-                        self.add_rebuild(RebuildFlags::ISLANDS | RebuildFlags::PAPER);
-                    }
+                    menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::ShowTexts));
                 }
                 if ui
                     .menu_item_config(lbl(tr!("Paper")))
@@ -2191,8 +2202,7 @@ impl GlobalContext {
                     .selected(self.data.ui.draw_paper)
                     .build()
                 {
-                    self.data.ui.draw_paper ^= true;
-                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                    menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::DrawPaper));
                 }
                 if ui
                     .menu_item_config(lbl(tr!("Highlight overlaps")))
@@ -2200,12 +2210,12 @@ impl GlobalContext {
                     .selected(self.data.ui.highlight_overlaps)
                     .build()
                 {
-                    self.data.ui.highlight_overlaps ^= true;
-                    self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                    menu_action = Some(MenuAction::ToggleViewSetting(
+                        ViewSetting::HighlightOverlaps,
+                    ));
                 }
                 if ui.menu_item_config(lbl(tr!("Reset views"))).build() {
-                    menu_actions.reset_views = true;
-                    self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
+                    menu_action = Some(MenuAction::ResetViews);
                 }
             });
             ui.menu_config(lbl(tr!("Help"))).with(|| {
@@ -2245,21 +2255,21 @@ impl GlobalContext {
                     (imgui::KeyMod::Ctrl, imgui::Key::Z),
                     imgui::InputFlags::RouteGlobal,
                 ) {
-                    menu_actions.undo = true;
+                    menu_action = Some(MenuAction::Undo);
                 }
                 // in/decrease island labels
                 if ui.shortcut_ex(imgui::Key::PageUp, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.move_labels = Some(MoveInOrderDirection::Backward);
+                    menu_action = Some(MenuAction::MoveLabels(MoveInOrderDirection::Backward));
                 }
                 if ui.shortcut_ex(imgui::Key::PageDown, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.move_labels = Some(MoveInOrderDirection::Forward);
+                    menu_action = Some(MenuAction::MoveLabels(MoveInOrderDirection::Forward));
                 }
                 // move islands to front/back of order
                 if ui.shortcut_ex(imgui::Key::Home, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.move_labels = Some(MoveInOrderDirection::Start);
+                    menu_action = Some(MenuAction::MoveLabels(MoveInOrderDirection::Start));
                 }
                 if ui.shortcut_ex(imgui::Key::End, imgui::InputFlags::RouteGlobal) {
-                    menu_actions.move_labels = Some(MoveInOrderDirection::End);
+                    menu_action = Some(MenuAction::MoveLabels(MoveInOrderDirection::End));
                 }
                 // toggle snap mode
                 if ui.shortcut_ex(imgui::Key::S, imgui::InputFlags::RouteGlobal) {
@@ -2270,7 +2280,9 @@ impl GlobalContext {
                     (imgui::KeyMod::Ctrl, imgui::Key::R),
                     imgui::InputFlags::RouteGlobal,
                 ) {
-                    self.pack_islands();
+                    menu_action = Some(MenuAction::RepackIslands {
+                        alphabetically: false,
+                    });
                 }
             }
             // quit
@@ -2278,98 +2290,83 @@ impl GlobalContext {
                 (imgui::KeyMod::Ctrl, imgui::Key::Q),
                 imgui::InputFlags::RouteGlobal,
             ) {
-                menu_actions.quit = self.check_modified();
+                menu_action = Some(MenuAction::Quit(self.check_modified()));
             }
             // open
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl, imgui::Key::O),
                 imgui::InputFlags::RouteGlobal,
             ) {
-                menu_actions.open = self.check_modified();
+                menu_action = Some(MenuAction::Open(self.check_modified()));
             }
             // save
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl, imgui::Key::S),
                 imgui::InputFlags::RouteGlobal,
             ) {
-                menu_actions.save = true;
+                menu_action = Some(MenuAction::Save);
             }
             // save as ...
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl | imgui::KeyMod::Shift, imgui::Key::S),
                 imgui::InputFlags::RouteGlobal,
             ) {
-                menu_actions.save_as = true;
+                menu_action = Some(MenuAction::SaveAs);
             }
             // update with new model
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl, imgui::Key::I),
                 imgui::InputFlags::RouteGlobal,
             ) {
-                menu_actions.update_model = self.check_modified();
+                menu_action = Some(MenuAction::UpdateModel(self.check_modified()));
             }
             //generate paper printable
             if ui.shortcut_ex(
                 (imgui::KeyMod::Ctrl, imgui::Key::P),
                 imgui::InputFlags::RouteGlobal,
             ) {
-                menu_actions.generate_printable = true;
+                menu_action = Some(MenuAction::GeneratePrintable);
             }
             // toggle 3D x-ray
             if ui.shortcut_ex(imgui::Key::X, imgui::InputFlags::RouteGlobal) {
-                self.data.ui.xray_selection ^= true;
-                self.add_rebuild(RebuildFlags::SELECTION);
+                menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::XraySelection));
             }
             // toggle paper overlap highlight
             if ui.shortcut_ex(imgui::Key::H, imgui::InputFlags::RouteGlobal) {
-                self.data.ui.highlight_overlaps ^= true;
-                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                menu_action = Some(MenuAction::ToggleViewSetting(
+                    ViewSetting::HighlightOverlaps,
+                ));
             }
             // toggle drawing paper layout
             if ui.shortcut_ex(imgui::Key::P, imgui::InputFlags::RouteGlobal) {
-                self.data.ui.draw_paper ^= true;
-                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::DrawPaper));
             }
             // toggle showing texture
             if self.data.papercraft().options().texture
                 && ui.shortcut_ex(imgui::Key::T, imgui::InputFlags::RouteGlobal)
             {
-                self.data.ui.show_textures ^= true;
-                self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
+                menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::ShowTextures));
             }
             // toggle 3D model edge lines
             if ui.shortcut_ex(imgui::Key::D, imgui::InputFlags::RouteGlobal) {
-                self.data.ui.show_3d_lines ^= true;
-                self.add_rebuild(RebuildFlags::SCENE_REDRAW | RebuildFlags::SCENE_EDGE);
+                menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::Show3dLines));
             }
             // toggle showing paper flaps
             if ui.shortcut_ex(imgui::Key::B, imgui::InputFlags::RouteGlobal) {
-                self.data.ui.show_flaps ^= true;
-                self.add_rebuild(RebuildFlags::PAPER);
+                menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::ShowFlaps));
             }
             // toggle showing paper piece labels
             if ui.shortcut_ex(imgui::Key::E, imgui::InputFlags::RouteGlobal) {
-                self.data.ui.show_texts ^= true;
-                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
-                if self.data.ui.show_texts {
-                    self.add_rebuild(RebuildFlags::ISLANDS | RebuildFlags::PAPER);
-                }
+                menu_action = Some(MenuAction::ToggleViewSetting(ViewSetting::ShowTexts));
             }
             // show/hide document properties
             if ui.shortcut_ex(imgui::Key::Enter, imgui::InputFlags::RouteGlobal) {
-                match &self.options_opened {
-                    None => {
-                        self.options_opened = Some(self.data.papercraft().options().clone());
-                    }
-                    // Pressing enter closes the options only if nothing is changed, else you should press Ok or Cancel
-                    Some(op) if op == self.data.papercraft().options() => {
-                        self.options_opened = None;
-                    }
-                    _ => {}
-                }
+                menu_action = Some(MenuAction::ToggleDocProperties {
+                    ignore_changes: false,
+                });
             }
         }
-        menu_actions
+        menu_action
     }
 
     fn build_scene(&mut self, ui: &Ui, width: f32) {
@@ -2524,69 +2521,36 @@ impl GlobalContext {
         ui: &Ui,
         title: &str,
         message: &str,
-        f: impl Fn(&mut MenuActions) + 'static,
+        action: MenuAction,
     ) {
         self.confirmable_action = Some(ConfirmableAction {
             title: title.to_owned(),
             message: message.to_owned(),
-            action: Box::new(f),
+            action,
         });
         ui.open_popup(id("Confirm"));
     }
 
-    fn run_menu_actions(&mut self, ui: &Ui, menu_actions: &MenuActions) {
-        if menu_actions.reset_views {
-            self.data.reset_views(self.sz_scene, self.sz_paper);
-        }
-        if menu_actions.undo {
-            match self.data.undo_action() {
-                UndoResult::Model => {
-                    self.add_rebuild(RebuildFlags::all());
-                }
-                UndoResult::ModelAndOptions(options) => {
-                    // If the "Options" window is opened, just overwrite the values
-                    if let Some(o) = self.options_opened.as_mut() {
-                        *o = self.data.papercraft().options().clone();
-                    }
-                    self.options_applied = Some((options, false));
-                }
-                UndoResult::False => {}
-            }
-        }
-        if let Some(direction) = menu_actions.move_labels {
-            //move islands down: towards A, up: towards Z+
-            //move islands to front: A, back: Z+
-            let undo = self.data.move_selected_islands(direction);
-            if !undo.is_empty() {
-                self.data.push_undo_action(undo);
-                self.add_rebuild(
-                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
-                );
-            }
-        }
-        if menu_actions.reorder_labels {
-            let undo = self.data.reorder_islands();
-            if !undo.is_empty() {
-                self.data.push_undo_action(undo);
-                self.add_rebuild(
-                    RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
-                );
-            }
-            //TODO show warning popup if more !1 island was selected?
-        }
-        let mut save_as = false;
+    fn run_menu_action(&mut self, ui: &Ui, menu_action: MenuAction) {
         let mut open_file_dialog = false;
 
-        match menu_actions.open {
-            BoolWithConfirm::Requested => {
+        // Preprocess the action:
+        let menu_action = match (menu_action, &self.file_name) {
+            // a Save without a default file name is converted into a SaveAs
+            (MenuAction::Save, None) => MenuAction::SaveAs,
+            (action, _) => action,
+        };
+
+        match menu_action {
+            MenuAction::Open(WithConfirm::Requested) => {
                 self.open_confirmation_dialog(
                     ui,
                     &tr!("Load model"),
                     &tr!("The model has not been saved, continue anyway?"),
-                    |a| a.open = BoolWithConfirm::Confirmed,
+                    MenuAction::Open(WithConfirm::Confirmed),
                 );
             }
-            BoolWithConfirm::Confirmed => {
+            MenuAction::Open(WithConfirm::Confirmed) => {
                 let mut chooser = filechooser::FileChooser::new();
                 let _ = chooser.set_path(&self.last_path);
                 chooser
@@ -2600,38 +2564,33 @@ impl GlobalContext {
                 ));
                 open_file_dialog = true;
             }
-            BoolWithConfirm::None => {}
-        }
-        if menu_actions.save {
-            match &self.file_name {
-                Some(f) => {
+            MenuAction::Save => {
+                // file_name can't be None, filtered before
+                if let Some(f) = &self.file_name {
                     self.file_operation = Some(FileOperation::new(FileAction::SaveAsCraft, f));
                 }
-                None => save_as = true,
             }
-        }
-        if menu_actions.save_as || save_as {
-            let mut chooser = filechooser::FileChooser::new();
-            let _ = chooser.set_path(&self.last_path);
-            chooser.add_filter(filters::craft());
-            chooser.add_filter(filters::all_files());
-            self.file_dialog = Some(FileDialog::new(
-                chooser,
-                tr!("Save as..."),
-                FileAction::SaveAsCraft,
-            ));
-            open_file_dialog = true;
-        }
-        match menu_actions.import_model {
-            BoolWithConfirm::Requested => {
+            MenuAction::SaveAs => {
+                let mut chooser = filechooser::FileChooser::new();
+                let _ = chooser.set_path(&self.last_path);
+                chooser.add_filter(filters::craft());
+                chooser.add_filter(filters::all_files());
+                self.file_dialog = Some(FileDialog::new(
+                    chooser,
+                    tr!("Save as..."),
+                    FileAction::SaveAsCraft,
+                ));
+                open_file_dialog = true;
+            }
+            MenuAction::ImportModel(WithConfirm::Requested) => {
                 self.open_confirmation_dialog(
                     ui,
                     &tr!("Import model"),
                     &tr!("The model has not been saved, continue anyway?"),
-                    |a| a.import_model = BoolWithConfirm::Confirmed,
+                    MenuAction::ImportModel(WithConfirm::Confirmed),
                 );
             }
-            BoolWithConfirm::Confirmed => {
+            MenuAction::ImportModel(WithConfirm::Confirmed) => {
                 let mut chooser = filechooser::FileChooser::new();
                 let _ = chooser.set_path(&self.last_path);
                 chooser.add_flags(filechooser::Flags::MUST_EXIST);
@@ -2648,17 +2607,14 @@ impl GlobalContext {
                 ));
                 open_file_dialog = true;
             }
-            BoolWithConfirm::None => {}
-        }
-        match menu_actions.update_model {
-            BoolWithConfirm::Requested => {
+            MenuAction::UpdateModel(WithConfirm::Requested) => {
                 self.open_confirmation_dialog(ui,
                     &tr!("Update model"),
                     &tr!("This model is not saved and this operation cannot be undone.\nContinue anyway?"),
-                    |a| a.update_model = BoolWithConfirm::Confirmed
+                    MenuAction::UpdateModel(WithConfirm::Confirmed),
                 );
             }
-            BoolWithConfirm::Confirmed => {
+            MenuAction::UpdateModel(WithConfirm::Confirmed) => {
                 let mut chooser = filechooser::FileChooser::new();
                 let _ = chooser.set_path(&self.last_path);
                 chooser.add_flags(filechooser::Flags::MUST_EXIST);
@@ -2675,55 +2631,155 @@ impl GlobalContext {
                 ));
                 open_file_dialog = true;
             }
-            BoolWithConfirm::None => {}
-        }
-        if menu_actions.export_obj {
-            let mut chooser = filechooser::FileChooser::new();
-            let _ = chooser.set_path(&self.last_path);
-            chooser.add_filter(filters::gltf());
-            chooser.add_filter(filters::wavefront());
-            chooser.add_filter(filters::all_files());
-            self.file_dialog = Some(FileDialog::new(
-                chooser,
-                tr!("Export model..."),
-                FileAction::ExportObj,
-            ));
-            open_file_dialog = true;
-        }
-        if menu_actions.generate_printable {
-            use std::ffi::OsStr;
-
-            let (last_path, last_file) = if self.last_export.as_os_str().is_empty() {
-                (self.last_path.as_path(), OsStr::new(""))
-            } else {
-                let last_path = self.last_export.parent().unwrap_or_else(|| Path::new(""));
-                let last_file = self.last_export.file_name().unwrap_or_default();
-                (last_path, last_file)
-            };
-            let mut chooser = filechooser::FileChooser::new();
-            let _ = chooser.set_path(last_path);
-            chooser.set_file_name(last_file);
-            chooser.add_filter(filters::pdf());
-            chooser.add_filter(filters::svg());
-            chooser.add_filter(filters::svg_multipage());
-            chooser.add_filter(filters::png());
-            chooser.add_filter(filters::all_files());
-            if let Some(f) = self.last_export_filter {
-                chooser.set_active_filter(f);
+            MenuAction::ExportObj => {
+                let mut chooser = filechooser::FileChooser::new();
+                let _ = chooser.set_path(&self.last_path);
+                chooser.add_filter(filters::gltf());
+                chooser.add_filter(filters::wavefront());
+                chooser.add_filter(filters::all_files());
+                self.file_dialog = Some(FileDialog::new(
+                    chooser,
+                    tr!("Export model..."),
+                    FileAction::ExportObj,
+                ));
+                open_file_dialog = true;
             }
-            self.file_dialog = Some(FileDialog::new(
-                chooser,
-                tr!("Generate Printable..."),
-                FileAction::GeneratePrintable,
-            ));
-            open_file_dialog = true;
+            MenuAction::GeneratePrintable => {
+                use std::ffi::OsStr;
+
+                let (last_path, last_file) = if self.last_export.as_os_str().is_empty() {
+                    (self.last_path.as_path(), OsStr::new(""))
+                } else {
+                    let last_path = self.last_export.parent().unwrap_or_else(|| Path::new(""));
+                    let last_file = self.last_export.file_name().unwrap_or_default();
+                    (last_path, last_file)
+                };
+                let mut chooser = filechooser::FileChooser::new();
+                let _ = chooser.set_path(last_path);
+                chooser.set_file_name(last_file);
+                chooser.add_filter(filters::pdf());
+                chooser.add_filter(filters::svg());
+                chooser.add_filter(filters::svg_multipage());
+                chooser.add_filter(filters::png());
+                chooser.add_filter(filters::all_files());
+                if let Some(f) = self.last_export_filter {
+                    chooser.set_active_filter(f);
+                }
+                self.file_dialog = Some(FileDialog::new(
+                    chooser,
+                    tr!("Generate Printable..."),
+                    FileAction::GeneratePrintable,
+                ));
+                open_file_dialog = true;
+            }
+            MenuAction::ResetViews => {
+                self.data.reset_views(self.sz_scene, self.sz_paper);
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
+            }
+            MenuAction::Undo => {
+                match self.data.undo_action() {
+                    UndoResult::Model => {
+                        self.add_rebuild(RebuildFlags::all());
+                    }
+                    UndoResult::ModelAndOptions(options) => {
+                        // If the "Options" window is opened, just overwrite the values
+                        if let Some(o) = self.options_opened.as_mut() {
+                            *o = self.data.papercraft().options().clone();
+                        }
+                        self.options_applied = Some((options, false));
+                    }
+                    UndoResult::False => {}
+                }
+            }
+            MenuAction::MoveLabels(direction) => {
+                //move islands down: towards A, up: towards Z+
+                //move islands to front: A, back: Z+
+                let undo = self.data.move_selected_islands(direction);
+                if !undo.is_empty() {
+                    self.data.push_undo_action(undo);
+                    self.add_rebuild(
+                        RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                    );
+                }
+            }
+            MenuAction::ReorderLabels => {
+                let undo = self.data.reorder_islands();
+                if !undo.is_empty() {
+                    self.data.push_undo_action(undo);
+                    self.add_rebuild(
+                        RebuildFlags::PAPER | RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS,
+                    );
+                }
+            }
+            MenuAction::Quit(confirm) => {
+                // This is handled in the main loop
+                self.quit_requested = Some(confirm);
+            }
+            MenuAction::ToggleSettings => {
+                self.config_opened = match self.config_opened {
+                    Some(_) => None,
+                    None => Some(self.config.clone()),
+                };
+            }
+            MenuAction::ToggleDocProperties { ignore_changes } => {
+                match &self.options_opened {
+                    // Open properties
+                    None => {
+                        self.options_opened = Some(self.data.papercraft().options().clone());
+                    }
+                    // Selecting the menu discards the changes, as if Cancel is pressed.
+                    // The hotkey closes the options only if nothing was changed, else you
+                    // should press Ok or Cancel.
+                    Some(op) if ignore_changes || op == self.data.papercraft().options() => {
+                        self.options_opened = None;
+                    }
+                    // keep as is
+                    _ => {}
+                }
+            }
+            MenuAction::RepackIslands { alphabetically } => {
+                self.pack_islands(alphabetically);
+            }
+            MenuAction::ToggleViewSetting(ViewSetting::ShowTextures) => {
+                self.data.ui.show_textures ^= true;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW | RebuildFlags::SCENE_REDRAW);
+            }
+            MenuAction::ToggleViewSetting(ViewSetting::Show3dLines) => {
+                self.data.ui.show_3d_lines ^= true;
+                self.add_rebuild(RebuildFlags::SCENE_REDRAW | RebuildFlags::SCENE_EDGE);
+            }
+            MenuAction::ToggleViewSetting(ViewSetting::ShowFlaps) => {
+                self.data.ui.show_flaps ^= true;
+                self.add_rebuild(RebuildFlags::PAPER);
+            }
+            MenuAction::ToggleViewSetting(ViewSetting::XraySelection) => {
+                self.data.ui.xray_selection ^= true;
+                self.add_rebuild(RebuildFlags::SELECTION);
+            }
+            MenuAction::ToggleViewSetting(ViewSetting::ShowTexts) => {
+                self.data.ui.show_texts ^= true;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+                if self.data.ui.show_texts {
+                    self.add_rebuild(RebuildFlags::ISLANDS | RebuildFlags::PAPER);
+                }
+            }
+            MenuAction::ToggleViewSetting(ViewSetting::DrawPaper) => {
+                self.data.ui.draw_paper ^= true;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+            }
+            MenuAction::ToggleViewSetting(ViewSetting::HighlightOverlaps) => {
+                self.data.ui.highlight_overlaps ^= true;
+                self.add_rebuild(RebuildFlags::PAPER_REDRAW);
+            }
         }
 
         // There are two Wait modals and two Error modals. One pair over the FileDialog, the other to be opened directly ("Save").
-
         if open_file_dialog {
             ui.open_popup(id("file_dialog_modal"));
         }
+    }
+
+    fn run_file_dialog_modal(&mut self, ui: &Ui) {
         if let Some(mut fd) = self.file_dialog.take() {
             let dsp_size = ui.io().display_size();
             let min_size = 0.25 * dsp_size;
@@ -2739,8 +2795,6 @@ impl GlobalContext {
                     if fd.preview_file != full_path {
                         // Cancel the previous load, if any
                         fd.thumbnail_cancellation_guard = None;
-                        // Discard texture
-                        //fd.tex = None;
                         // Prepare the new file
                         fd.preview_file = full_path;
 
@@ -3502,11 +3556,7 @@ impl GlobalContext {
         Ok(())
     }
 
-    fn pack_islands(&mut self) {
-        self.pack_islands_sorted(false);
-    }
-
-    fn pack_islands_sorted(&mut self, alphabetically: bool) {
+    fn pack_islands(&mut self, alphabetically: bool) {
         let undo = self.data.pack_islands_sorted(alphabetically);
         self.data.push_undo_action(undo);
         self.add_rebuild(RebuildFlags::PAPER | RebuildFlags::SELECTION);
@@ -3924,21 +3974,21 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                     self.file_operation = Some(cmd_file_operation);
                 }
 
-                let menu_actions = self.build_ui(ui);
-                self.run_menu_actions(ui, &menu_actions);
+                let menu_action = self.build_ui(ui);
+                if let Some(menu_action) = menu_action {
+                    self.run_menu_action(ui, menu_action);
+                }
                 self.run_mouse_actions(ui);
+                self.run_file_dialog_modal(ui);
 
-                match (menu_actions.quit, self.quit_requested) {
-                    (BoolWithConfirm::Confirmed, _) | (_, BoolWithConfirm::Confirmed) => {
-                        self.quit_requested = BoolWithConfirm::Confirmed;
-                    }
-                    (BoolWithConfirm::Requested, _) | (_, BoolWithConfirm::Requested) => {
-                        self.quit_requested = BoolWithConfirm::None;
+                match self.quit_requested {
+                    Some(WithConfirm::Requested) => {
+                        self.quit_requested = None;
                         self.open_confirmation_dialog(
                             ui,
                             &tr!("Quit?"),
                             &tr!("The model has not been saved, continue anyway?"),
-                            |a| a.quit = BoolWithConfirm::Confirmed,
+                            MenuAction::Quit(WithConfirm::Confirmed),
                         );
                     }
                     _ => (),

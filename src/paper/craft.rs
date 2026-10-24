@@ -168,7 +168,7 @@ fn default_edge_id_font_size() -> f32 {
 }
 
 fn default_scene_bg_color() -> MyColor {
-    MyColor(Color::new(0.2, 0.2, 0.4, 1.0))
+    MyColor(Color::new(0.21, 0.35, 0.29, 1.0))
 }
 
 fn default_paper_color() -> MyColor {

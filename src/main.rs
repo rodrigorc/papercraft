@@ -3011,6 +3011,7 @@ impl GlobalContext {
                 self.data.paper_button1_grab_event(
                     self.sz_paper,
                     mouse_pos,
+                    None,
                     mods,
                     /*dragging*/ false,
                 )
@@ -3019,6 +3020,7 @@ impl GlobalContext {
                 self.data.paper_button1_grab_event(
                     self.sz_paper,
                     mouse_pos,
+                    Some(self.paper_ui_status.mouse_pos_on_drag),
                     mods,
                     /*dragging*/ true,
                 )
@@ -3596,6 +3598,8 @@ impl GlobalContext {
 #[derive(Debug)]
 struct Canvas3dStatus {
     mouse_pos: Vector2,
+    // When a dragging action, the position of the first click
+    mouse_pos_on_drag: Vector2,
     action: Canvas3dAction,
 }
 
@@ -3603,6 +3607,7 @@ impl Default for Canvas3dStatus {
     fn default() -> Self {
         Self {
             mouse_pos: Vector2::zero(),
+            mouse_pos_on_drag: Vector2::zero(),
             action: Canvas3dAction::None,
         }
     }
@@ -3635,6 +3640,7 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
     let pos = ui.get_item_rect_min();
     let scale = ui.io().display_scale();
     let mouse_pos = scale * (ui.get_mouse_pos() - pos);
+    let mut mouse_pos_on_drag = mouse_pos;
 
     let action = match &st.action {
         Canvas3dAction::Dragging(bt) => {
@@ -3687,7 +3693,16 @@ fn canvas3d(ui: &Ui, st: &mut Canvas3dStatus) {
         }
     };
 
-    *st = Canvas3dStatus { mouse_pos, action };
+    if let Canvas3dAction::Dragging(bt) | Canvas3dAction::DragEnd(bt) = action {
+        mouse_pos_on_drag =
+            scale * (imgui::im_to_v2(ui.io().MouseClickedPos[bt.bits() as usize]) - pos);
+    }
+
+    *st = Canvas3dStatus {
+        mouse_pos,
+        mouse_pos_on_drag,
+        action,
+    };
 }
 
 fn premultiply_image(img: &mut image::RgbaImage) {

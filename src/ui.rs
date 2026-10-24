@@ -2264,6 +2264,7 @@ impl PapercraftContext {
         &mut self,
         size: Vector2,
         pos: Vector2,
+        pos_on_drag: Option<Vector2>,
         mods: KeyMod,
         dragging: bool,
     ) -> RebuildFlags {
@@ -2290,7 +2291,7 @@ impl PapercraftContext {
                     && let ClickResult::Edge(i_edge, Some(i_face)) = self.paper_analyze_click(
                         MouseMode::Edge,
                         size,
-                        pos,
+                        pos_on_drag.unwrap_or(pos),
                         PaperAnalyzeClickFlags::UNLIMITED_EDGE_DISTANCE,
                     )
                 {

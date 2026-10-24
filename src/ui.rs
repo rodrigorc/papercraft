@@ -2398,10 +2398,7 @@ impl PapercraftContext {
             // Snap the movement?
             if let Some((p0, p1, sel0)) = snap_grabbed_edge_pos {
                 let p0 = if sel0 { p0 } else { p1 };
-                let mut p0_next = p0 + delta_scaled;
-                p0_next.x = (p0_next.x / 10.0).round() * 10.0;
-                p0_next.y = (p0_next.y / 10.0).round() * 10.0;
-                //self.paper_last_cursor_pos -= delta;
+                let p0_next = self.snap_nearest_position(p0 + delta_scaled);
                 if p0_next.distance2(p0) < 1.0 {
                     self.paper_last_cursor_pos = original_pos;
                     return RebuildFlags::empty();
@@ -2836,6 +2833,22 @@ impl PapercraftContext {
         self.selected_face = td.selected_face;
         self.selected_edges = td.selected_edges;
         self.selected_islands = td.selected_islands;
+    }
+
+    fn snap_nearest_position(&self, pos: Vector2) -> Vector2 {
+        // Snapping to the neares grid position, but relative to the containing page.
+        let grid = vec2(10.0, 10.0);
+
+        // Rounding the position may switch pages, so compute the page from an offset
+        // point of half a grid, this make the page stable.
+        let delta = grid / 2.0;
+
+        let options = self.papercraft.options();
+        let mut page_offs = options.global_to_page(pos + delta);
+        page_offs.offset -= delta;
+        page_offs.offset.x = (page_offs.offset.x / grid.x).round() * grid.x;
+        page_offs.offset.y = (page_offs.offset.y / grid.y).round() * grid.y;
+        options.page_to_global(page_offs)
     }
 }
 

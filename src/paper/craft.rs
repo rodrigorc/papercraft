@@ -734,10 +734,8 @@ impl Papercraft {
         }
 
         let prev_order = self.gather_current_island_order();
-        let mut order = 0;
-        for island in island_order {
-            self.island_by_key_mut(island).unwrap().order = IslandOrder(order, 0);
-            order += 1;
+        for (order, island) in island_order.into_iter().enumerate() {
+            self.island_by_key_mut(island).unwrap().order = IslandOrder(order as i32, 0);
         }
         Some(prev_order)
     }
@@ -813,7 +811,7 @@ impl Papercraft {
                     island.order.0 = i32::MAX;
                     island.order.1 = idx as i32 + 1;
                 }
-            };
+            }
         }
         Some(prev_order)
     }

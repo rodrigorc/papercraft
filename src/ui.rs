@@ -47,20 +47,35 @@ use tr::tr;
 // In pixels
 const LINE_SEL_WIDTH: f32 = 5.0;
 
-pub struct GLObjects {
+/// GL objects that belong to the model.
+///
+/// They are derived from the model alone and never change while editing (bar
+/// loading another file), so they can be shared by every view that renders that
+/// model (the scene, a thumbnail, the printable pages, ...).
+pub struct ModelGl {
     pub textures: Option<glr::Texture>,
 
     //GL objects that are rebuilt with the model
     pub vertices: glr::DynamicVertexArray<MVertex3D>,
 
+    // For 3D
+    pub scene_vertices_edge: glr::DynamicVertexArray<MVertex3DLine>,
+    // Maps an edge_index into the scene edge vertex arrays (both the geometry
+    // here and the per-view status, which shares the same ordering)
+    pub edge_map: FxHashMap<EdgeIndex, usize>,
+}
+
+/// GL objects that belong to a single view.
+///
+/// They are derived from the paper options (page size, fold patterns, colors,
+/// ...) and from the view state (the selection, the paper layout, ...), so they
+/// are rebuilt whenever those change, and each view owns its own `ViewGl`.
+pub struct ViewGl {
     // Attributes common for 3D/2D
     pub vertices_sel: glr::DynamicVertexArray<MStatus>,
 
     // For 3D
-    pub scene_vertices_edge: glr::DynamicVertexArray<MVertex3DLine>,
     pub scene_vertices_edge_status: glr::DynamicVertexArray<MLine3DStatus>,
-    // Maps an edge_index into the scene_vertices_edge_status
-    pub edge_map: FxHashMap<EdgeIndex, usize>,
 
     // For 2D
     pub tex_fold_valley: glr::Texture,
@@ -180,7 +195,8 @@ pub struct PreSelection {
 pub struct PapercraftContext {
     // The model
     papercraft: Papercraft,
-    gl_objs: GLObjects,
+    model_gl: ModelGl,
+    view_gl: ViewGl,
 
     undo_stack: Vec<Vec<UndoAction>>,
     pub modified: bool,
@@ -618,10 +634,10 @@ enum EdgeAction {
     Reverse,
 }
 
-/// The view/editor state required to rebuild the [`GLObjects`].
+/// The view/editor state required to rebuild a [`ViewGl`].
 ///
 /// It borrows the model and the current selection instead of owning them, so the
-/// rebuild logic can fill any `GLObjects`, not only the one owned by
+/// rebuild logic can fill any `ViewGl`, not only the one owned by
 /// `PapercraftContext`.
 pub struct RenderInputs<'a> {
     pub papercraft: &'a Papercraft,
@@ -653,8 +669,11 @@ impl PapercraftContext {
     pub fn papercraft(&self) -> &Papercraft {
         &self.papercraft
     }
-    pub fn gl_objs(&self) -> &GLObjects {
-        &self.gl_objs
+    pub fn model_gl(&self) -> &ModelGl {
+        &self.model_gl
+    }
+    pub fn view_gl(&self) -> &ViewGl {
+        &self.view_gl
     }
     pub fn set_papercraft_options(&mut self, options: PaperOptions, push_undo_action: bool) {
         let island_pos = push_undo_action.then(|| {
@@ -665,7 +684,7 @@ impl PapercraftContext {
         });
 
         self.ui.show_textures = options.texture;
-        if let Some(tex) = &self.gl_objs.textures {
+        if let Some(tex) = &self.model_gl.textures {
             unsafe {
                 tex.gl().active_texture(glow::TEXTURE0);
                 tex.gl()
@@ -680,14 +699,14 @@ impl PapercraftContext {
 
         let new_options = self.papercraft.options();
         if old_options.fold_pattern_mountain != new_options.fold_pattern_mountain {
-            GLObjects::build_dashed_texture(
-                &self.gl_objs.tex_fold_mountain,
+            build_dashed_texture(
+                &self.view_gl.tex_fold_mountain,
                 &new_options.fold_pattern_mountain,
             );
         }
         if old_options.fold_pattern_valley != new_options.fold_pattern_valley {
-            GLObjects::build_dashed_texture(
-                &self.gl_objs.tex_fold_valley,
+            build_dashed_texture(
+                &self.view_gl.tex_fold_valley,
                 &new_options.fold_pattern_valley,
             );
         }
@@ -714,13 +733,15 @@ impl PapercraftContext {
         let (trans_scene, trans_paper) =
             default_transformations(obj, sz_dummy, sz_dummy, papercraft.options());
         let show_textures = papercraft.options().texture;
-        let gl_objs = GLObjects::new(&papercraft, gl)?;
+        let model_gl = ModelGl::new(&papercraft, gl)?;
+        let view_gl = ViewGl::new(&papercraft, &model_gl, gl)?;
 
         Ok(PapercraftContext {
             papercraft,
             undo_stack: Vec::new(),
             modified: false,
-            gl_objs,
+            model_gl,
+            view_gl,
             selected_face: None,
             selected_edges: None,
             selected_islands: Vec::new(),
@@ -763,20 +784,20 @@ impl PapercraftContext {
             paper_scale: self.ui.trans_paper.mx[0][0],
         };
         if rebuild.contains(RebuildFlags::PAGES) {
-            self.gl_objs.pages_rebuild(&inputs);
+            self.view_gl.pages_rebuild(&inputs);
         }
         if rebuild.contains(RebuildFlags::PAPER) {
-            self.gl_objs.paper_rebuild(
+            self.view_gl.paper_rebuild(
                 &inputs,
                 text_builder,
                 rebuild.contains(RebuildFlags::SHOW_TEXTS),
             );
         }
         if rebuild.contains(RebuildFlags::SELECTION) {
-            self.gl_objs.selection_rebuild(&inputs);
+            self.view_gl.selection_rebuild(&inputs);
         }
         if rebuild.intersects(RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION) {
-            self.gl_objs.scene_edge_rebuild(&inputs);
+            self.view_gl.scene_edge_rebuild(&inputs, &self.model_gl);
         }
     }
 
@@ -1255,7 +1276,60 @@ fn paper_draw_face(
     }
 }
 
-impl GLObjects {
+impl ViewGl {
+    /// Creates the view objects for the given model GL objects, using the paper
+    /// options.
+    ///
+    /// The arrays start filled with the "unselected" values, so a view that
+    /// never calls the rebuild methods still renders a sensible image.
+    fn new(papercraft: &Papercraft, model_gl: &ModelGl, gl: &GlContext) -> Result<ViewGl> {
+        let vertices_sel =
+            glr::DynamicVertexArray::from_data(gl, vec![MSTATUS_UNSEL; model_gl.vertices.len()])?;
+        let scene_vertices_edge_status = glr::DynamicVertexArray::from_data(
+            gl,
+            vec![MLINE3D_HIDDEN; model_gl.scene_vertices_edge.len()],
+        )?;
+
+        let tex_fold_mountain =
+            build_fold_texture(gl, &papercraft.options().fold_pattern_mountain)?;
+        let tex_fold_valley = build_fold_texture(gl, &papercraft.options().fold_pattern_valley)?;
+
+        let paper_vertices = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_edge_crease = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_edge_kind = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_flap = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_flap_edge = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_edge_sel = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_shadow_flap = glr::DynamicVertexArray::new(gl)?;
+
+        let paper_vertices_page = glr::DynamicVertexArray::new(gl)?;
+        let paper_vertices_margin = glr::DynamicVertexArray::new(gl)?;
+
+        let paper_text = Vec::new();
+
+        Ok(ViewGl {
+            vertices_sel,
+
+            scene_vertices_edge_status,
+
+            tex_fold_valley,
+            tex_fold_mountain,
+            paper_vertices,
+            paper_vertices_edge_cut,
+            paper_vertices_edge_crease,
+            paper_vertices_edge_kind,
+            paper_vertices_flap,
+            paper_vertices_flap_edge,
+            paper_vertices_edge_sel,
+            paper_vertices_shadow_flap,
+
+            paper_text,
+            paper_vertices_page,
+            paper_vertices_margin,
+        })
+    }
+
     fn paper_rebuild(
         &mut self,
         inputs: &RenderInputs,
@@ -1520,10 +1594,10 @@ impl GLObjects {
         );
     }
 
-    fn scene_edge_rebuild(&mut self, inputs: &RenderInputs) {
+    fn scene_edge_rebuild(&mut self, inputs: &RenderInputs, model_gl: &ModelGl) {
         let scene_vertices_edge_status = self.scene_vertices_edge_status.data_mut();
 
-        for (&i_edge, &edge_idx) in &self.edge_map {
+        for (&i_edge, &edge_idx) in &model_gl.edge_map {
             let status = inputs.papercraft.edge_status(i_edge);
             let edge = &inputs.papercraft.model()[i_edge];
             let (i_fa, i_fb) = edge.faces();
@@ -2219,7 +2293,7 @@ impl PapercraftContext {
         for i_face in self.papercraft.get_flat_faces(i_face) {
             let idx = 3 * usize::from(i_face);
             for i in idx..idx + 3 {
-                center += self.gl_objs.paper_vertices[i].pos_2d;
+                center += self.view_gl.paper_vertices[i].pos_2d;
                 n += 1.0;
             }
         }
@@ -2408,7 +2482,7 @@ impl PapercraftContext {
                         let _ = self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                             let idx = 3 * usize::from(i_face);
                             for i in idx..idx + 3 {
-                                let pos = self.gl_objs.paper_vertices[i].pos_2d;
+                                let pos = self.view_gl.paper_vertices[i].pos_2d;
                                 if rect.contains(pos) {
                                     let sel =
                                         self.papercraft.island_face_key_by_key(island_key).unwrap();
@@ -2953,8 +3027,8 @@ pub struct ThumbnailData {
     selected_islands: Vec<IslandFaceKey>,
 }
 
-impl GLObjects {
-    fn new(papercraft: &Papercraft, gl: &GlContext) -> Result<GLObjects> {
+impl ModelGl {
+    fn new(papercraft: &Papercraft, gl: &GlContext) -> Result<ModelGl> {
         let model = papercraft.model();
         let images = model.textures().map(|tex| tex.pixbuf()).collect::<Vec<_>>();
 
@@ -3078,7 +3152,6 @@ impl GLObjects {
             }
         }
         let mut edges = Vec::new();
-        let mut edge_status = Vec::new();
         let mut edge_map = FxHashMap::default();
         for (i_edge, edge) in model.edges() {
             let status = papercraft.edge_status(i_edge);
@@ -3107,111 +3180,73 @@ impl GLObjects {
             ];
             edge_map.insert(i_edge, edges.len());
             edges.extend_from_slice(&[vs[0], vs[1], vs[2], vs[2], vs[1], vs[3]]);
-            edge_status.extend_from_slice(&[MLINE3D_HIDDEN; 6]);
         }
 
         let vertices = glr::DynamicVertexArray::from_data(gl, vertices)?;
-        let vertices_sel =
-            glr::DynamicVertexArray::from_data(gl, vec![MSTATUS_UNSEL; 3 * model.num_faces()])?;
 
         let scene_vertices_edge = glr::DynamicVertexArray::from_data(gl, edges)?;
-        let scene_vertices_edge_status = glr::DynamicVertexArray::from_data(gl, edge_status)?;
 
-        let tex_fold_mountain = glr::Texture::generate(gl)?;
-        let tex_fold_valley = glr::Texture::generate(gl)?;
-        for tex_fold in [&tex_fold_mountain, &tex_fold_valley] {
-            unsafe {
-                gl.bind_texture(glow::TEXTURE_1D, Some(tex_fold.id()));
-                gl.tex_parameter_i32(
-                    glow::TEXTURE_1D,
-                    glow::TEXTURE_MIN_FILTER,
-                    glow::NEAREST as i32,
-                );
-                gl.tex_parameter_i32(
-                    glow::TEXTURE_1D,
-                    glow::TEXTURE_MAG_FILTER,
-                    glow::NEAREST as i32,
-                );
-                gl.tex_parameter_i32(glow::TEXTURE_1D, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
-                gl.tex_parameter_i32(glow::TEXTURE_1D, glow::TEXTURE_MAX_LEVEL, 0);
-                gl.bind_texture(glow::TEXTURE_1D, None);
-            }
-        }
-        Self::build_dashed_texture(
-            &tex_fold_mountain,
-            &papercraft.options().fold_pattern_mountain,
-        );
-        Self::build_dashed_texture(&tex_fold_valley, &papercraft.options().fold_pattern_valley);
-
-        let paper_vertices = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_edge_cut = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_edge_crease = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_edge_kind = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_flap = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_flap_edge = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_edge_sel = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_shadow_flap = glr::DynamicVertexArray::new(gl)?;
-
-        let paper_vertices_page = glr::DynamicVertexArray::new(gl)?;
-        let paper_vertices_margin = glr::DynamicVertexArray::new(gl)?;
-
-        let paper_text = Vec::new();
-
-        Ok(GLObjects {
+        Ok(ModelGl {
             textures,
 
             vertices,
-            vertices_sel,
 
             scene_vertices_edge,
-            scene_vertices_edge_status,
             edge_map,
-
-            tex_fold_valley,
-            tex_fold_mountain,
-            paper_vertices,
-            paper_vertices_edge_cut,
-            paper_vertices_edge_crease,
-            paper_vertices_edge_kind,
-            paper_vertices_flap,
-            paper_vertices_flap_edge,
-            paper_vertices_edge_sel,
-            paper_vertices_shadow_flap,
-
-            paper_text,
-            paper_vertices_page,
-            paper_vertices_margin,
         })
     }
+}
 
-    // Builds a 1D texture based on a DashPattern.
-    // The scale is fixed at 10 texel/mm
-    fn build_dashed_texture(tex: &glr::Texture, pattern: &DashPattern) {
-        let gl = tex.gl();
-        let len = pattern.texture_length();
-        let mut dash = vec![0; len];
-        let mut color = 0xff;
-        let mut pos = 0;
-        for d in pattern.iter() {
-            dash[pos..][..d].fill(color);
-            color ^= 0xff;
-            pos += d;
-        }
-        unsafe {
-            gl.bind_texture(glow::TEXTURE_1D, Some(tex.id()));
-            gl.tex_image_1d(
-                glow::TEXTURE_1D,
-                0,
-                glow::R8 as i32,
-                dash.len() as i32,
-                0,
-                glow::RED,
-                glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(&dash)),
-            );
+/// Creates a 1D texture configured for a fold pattern and fills it.
+fn build_fold_texture(gl: &GlContext, pattern: &DashPattern) -> Result<glr::Texture> {
+    let tex = glr::Texture::generate(gl)?;
+    unsafe {
+        gl.bind_texture(glow::TEXTURE_1D, Some(tex.id()));
+        gl.tex_parameter_i32(
+            glow::TEXTURE_1D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::NEAREST as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_1D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::NEAREST as i32,
+        );
+        gl.tex_parameter_i32(glow::TEXTURE_1D, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_1D, glow::TEXTURE_MAX_LEVEL, 0);
+        gl.bind_texture(glow::TEXTURE_1D, None);
+    }
+    build_dashed_texture(&tex, pattern);
+    Ok(tex)
+}
 
-            gl.bind_texture(glow::TEXTURE_1D, None);
-        }
+// Builds a 1D texture based on a DashPattern.
+// The scale is fixed at 10 texel/mm
+fn build_dashed_texture(tex: &glr::Texture, pattern: &DashPattern) {
+    let gl = tex.gl();
+    let len = pattern.texture_length();
+    let mut dash = vec![0; len];
+    let mut color = 0xff;
+    let mut pos = 0;
+    for d in pattern.iter() {
+        dash[pos..][..d].fill(color);
+        color ^= 0xff;
+        pos += d;
+    }
+    unsafe {
+        gl.bind_texture(glow::TEXTURE_1D, Some(tex.id()));
+        gl.tex_image_1d(
+            glow::TEXTURE_1D,
+            0,
+            glow::R8 as i32,
+            dash.len() as i32,
+            0,
+            glow::RED,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(Some(&dash)),
+        );
+
+        gl.bind_texture(glow::TEXTURE_1D, None);
     }
 }
 

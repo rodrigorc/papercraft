@@ -819,7 +819,7 @@ impl GlobalContext {
             let mut texturize = 0;
 
             self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
-            if let (Some(tex), true) = (&self.data.gl_objs().textures, options.texture) {
+            if let (Some(tex), true) = (&self.data.model_gl().textures, options.texture) {
                 self.gl.active_texture(glow::TEXTURE0);
                 self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
                 texturize = 1;
@@ -852,7 +852,7 @@ impl GlobalContext {
                     && options.edge_id_position == EdgeIdPosition::Outside
                 {
                     self.gl.active_texture(glow::TEXTURE0);
-                    for (ut, pt) in &self.data.gl_objs().paper_text {
+                    for (ut, pt) in &self.data.view_gl().paper_text {
                         self.gl.bind_texture(
                             glow::TEXTURE_2D,
                             Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),
@@ -865,7 +865,7 @@ impl GlobalContext {
                 if flap_style != FlapStyle::None {
                     gl_fixs.prg_paper_line.draw(
                         &u,
-                        &self.data.gl_objs().paper_vertices_flap_edge,
+                        &self.data.view_gl().paper_vertices_flap_edge,
                         glow::TRIANGLES,
                     );
                 }
@@ -874,7 +874,7 @@ impl GlobalContext {
                 if flap_style != FlapStyle::None && flap_style != FlapStyle::White {
                     gl_fixs.prg_paper_solid.draw(
                         &u,
-                        &self.data.gl_objs().paper_vertices_flap,
+                        &self.data.view_gl().paper_vertices_flap,
                         glow::TRIANGLES,
                     );
                 }
@@ -882,7 +882,7 @@ impl GlobalContext {
                 // Borders
                 gl_fixs.prg_paper_line.draw(
                     &u,
-                    &self.data.gl_objs().paper_vertices_edge_cut,
+                    &self.data.view_gl().paper_vertices_edge_cut,
                     glow::TRIANGLES,
                 );
 
@@ -901,8 +901,8 @@ impl GlobalContext {
                 gl_fixs.prg_paper_solid.draw(
                     &u,
                     (
-                        &self.data.gl_objs().vertices,
-                        &self.data.gl_objs().paper_vertices,
+                        &self.data.model_gl().vertices,
+                        &self.data.view_gl().paper_vertices,
                     ),
                     glow::TRIANGLES,
                 );
@@ -912,7 +912,7 @@ impl GlobalContext {
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
                 gl_fixs.prg_paper_solid.draw(
                     &u,
-                    &self.data.gl_objs().paper_vertices_shadow_flap,
+                    &self.data.view_gl().paper_vertices_shadow_flap,
                     glow::TRIANGLES,
                 );
                 u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
@@ -921,19 +921,19 @@ impl GlobalContext {
                 self.gl.active_texture(glow::TEXTURE1);
                 self.gl.bind_texture(
                     glow::TEXTURE_1D,
-                    Some(self.data.gl_objs().tex_fold_mountain.id()),
+                    Some(self.data.view_gl().tex_fold_mountain.id()),
                 );
 
                 self.gl.active_texture(glow::TEXTURE0);
                 self.gl.bind_texture(
                     glow::TEXTURE_1D,
-                    Some(self.data.gl_objs().tex_fold_valley.id()),
+                    Some(self.data.view_gl().tex_fold_valley.id()),
                 );
                 gl_fixs.prg_paper_line_dash.draw(
                     (&u, &Uniforms2DDash { tex_2: 1 }),
                     (
-                        &self.data.gl_objs().paper_vertices_edge_crease,
-                        &self.data.gl_objs().paper_vertices_edge_kind,
+                        &self.data.view_gl().paper_vertices_edge_crease,
+                        &self.data.view_gl().paper_vertices_edge_kind,
                     ),
                     glow::TRIANGLES,
                 );
@@ -943,7 +943,7 @@ impl GlobalContext {
                     && options.edge_id_position == EdgeIdPosition::Inside
                 {
                     self.gl.active_texture(glow::TEXTURE0);
-                    for (ut, pt) in &self.data.gl_objs().paper_text {
+                    for (ut, pt) in &self.data.view_gl().paper_text {
                         self.gl.bind_texture(
                             glow::TEXTURE_2D,
                             Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),

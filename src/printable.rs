@@ -86,173 +86,182 @@ impl GlobalContext {
         let sem_results = Semaphore::new_with_n_times_cpu_num(2, Vec::<(ObjectId, Stream)>::new());
 
         thread::scope(|s| {
-            self.generate_pages(None, |page, pixbuf, _, texts, _| {
-                let streams = sem_results.wait_with(2, std::mem::take);
+            generate_pages(
+                &self.gl_fixs,
+                self.data.papercraft(),
+                &self.gl_model,
+                &self.gl_view,
+                None,
+                |page, pixbuf, _, texts, _| {
+                    let streams = sem_results.wait_with(2, std::mem::take);
 
-                // Drain the reuslt streams before posting the new page to avoid having all pages in memory at the same time
-                // The order of the streams in the PDF will be somehow arbitrary, but techically correct... the best kind of correct!
-                for (id, stream) in streams {
-                    log::debug!("Stealing {id:?}");
-                    doc.set_object(id, stream);
-                }
-
-                let mut write_texts = |ops: &mut Vec<Operation>| {
-                    if texts.is_empty() {
-                        return;
+                    // Drain the reuslt streams before posting the new page to avoid having all pages in memory at the same time
+                    // The order of the streams in the PDF will be somehow arbitrary, but techically correct... the best kind of correct!
+                    for (id, stream) in streams {
+                        log::debug!("Stealing {id:?}");
+                        doc.set_object(id, stream);
                     }
-                    // Begin Text
-                    ops.push(Operation::new("BT", Vec::new()));
-                    let mut last_font = None;
-                    for text in texts {
-                        let x = text.pos.x;
-                        // (0,0) is in lower-left
-                        let y = page_size_mm.y - text.pos.y;
 
-                        let (width, op_text) =
-                            ttf_subset.encode_measure_text(&text.text, liga_source);
-                        let scaler = ttf.scaler(text.size);
-                        let width = scaler.scale(width);
-
-                        let dx = match text.align {
-                            TextAlign::Near => 0.0,
-                            TextAlign::Center => -width / 2.0,
-                            TextAlign::Far => -width,
-                        };
-                        let cos = text.angle.cos();
-                        let sin = text.angle.sin();
-                        let x = x + dx * cos;
-                        let y = y - dx * sin;
-
-                        // Set font
-                        // Font size is reported in points
-                        let size_pt = text.size * 72.0 / 25.4;
-
-                        if last_font != Some(size_pt) {
-                            last_font = Some(size_pt);
-                            ops.push(Operation::new(
-                                "Tf",
-                                vec![pdf_font_name.into(), size_pt.into()],
-                            ));
+                    let mut write_texts = |ops: &mut Vec<Operation>| {
+                        if texts.is_empty() {
+                            return;
                         }
+                        // Begin Text
+                        ops.push(Operation::new("BT", Vec::new()));
+                        let mut last_font = None;
+                        for text in texts {
+                            let x = text.pos.x;
+                            // (0,0) is in lower-left
+                            let y = page_size_mm.y - text.pos.y;
 
-                        let mx: Vec<Object> = vec![
-                            cos.into(),
-                            (-sin).into(),
-                            sin.into(),
-                            cos.into(),
-                            (x * 72.0 / 25.4).into(),
-                            (y * 72.0 / 25.4).into(),
-                        ];
-                        ops.push(Operation::new("Tm", mx));
+                            let (width, op_text) =
+                                ttf_subset.encode_measure_text(&text.text, liga_source);
+                            let scaler = ttf.scaler(text.size);
+                            let width = scaler.scale(width);
 
-                        ops.extend(op_text);
+                            let dx = match text.align {
+                                TextAlign::Near => 0.0,
+                                TextAlign::Center => -width / 2.0,
+                                TextAlign::Far => -width,
+                            };
+                            let cos = text.angle.cos();
+                            let sin = text.angle.sin();
+                            let x = x + dx * cos;
+                            let y = y - dx * sin;
+
+                            // Set font
+                            // Font size is reported in points
+                            let size_pt = text.size * 72.0 / 25.4;
+
+                            if last_font != Some(size_pt) {
+                                last_font = Some(size_pt);
+                                ops.push(Operation::new(
+                                    "Tf",
+                                    vec![pdf_font_name.into(), size_pt.into()],
+                                ));
+                            }
+
+                            let mx: Vec<Object> = vec![
+                                cos.into(),
+                                (-sin).into(),
+                                sin.into(),
+                                cos.into(),
+                                (x * 72.0 / 25.4).into(),
+                                (y * 72.0 / 25.4).into(),
+                            ];
+                            ops.push(Operation::new("Tm", mx));
+
+                            ops.extend(op_text);
+                        }
+                        // End Text
+                        ops.push(Operation::new("ET", Vec::new()));
+                    };
+
+                    let mut ops: Vec<Operation> = Vec::new();
+
+                    if edge_id_position != EdgeIdPosition::Inside {
+                        write_texts(&mut ops);
                     }
-                    // End Text
-                    ops.push(Operation::new("ET", Vec::new()));
-                };
 
-                let mut ops: Vec<Operation> = Vec::new();
+                    let img_name = format!("IMG{page}");
 
-                if edge_id_position != EdgeIdPosition::Inside {
-                    write_texts(&mut ops);
-                }
+                    ops.push(Operation::new("q", vec![]));
+                    let mx: Vec<Object> = vec![
+                        (page_size_mm.x * 72.0 / 25.4).into(),
+                        0.into(),
+                        0.into(),
+                        (page_size_mm.y * 72.0 / 25.4).into(),
+                        0.into(),
+                        0.into(),
+                    ];
+                    ops.push(Operation::new("cm", mx));
+                    ops.push(Operation::new("Do", vec![img_name.clone().into()]));
+                    ops.push(Operation::new("Q", vec![]));
 
-                let img_name = format!("IMG{page}");
-
-                ops.push(Operation::new("q", vec![]));
-                let mx: Vec<Object> = vec![
-                    (page_size_mm.x * 72.0 / 25.4).into(),
-                    0.into(),
-                    0.into(),
-                    (page_size_mm.y * 72.0 / 25.4).into(),
-                    0.into(),
-                    0.into(),
-                ];
-                ops.push(Operation::new("cm", mx));
-                ops.push(Operation::new("Do", vec![img_name.clone().into()]));
-                ops.push(Operation::new("Q", vec![]));
-
-                if edge_id_position == EdgeIdPosition::Inside {
-                    write_texts(&mut ops);
-                }
-
-                let content = Content { operations: ops };
-                let id_content =
-                    doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
-
-                let id_mask = doc.new_object_id();
-                let id_image = doc.new_object_id();
-
-                s.spawn({
-                    let sem_results = &sem_results;
-                    move || {
-                        log::debug!("Splitting...");
-                        let (width, height) = pixbuf.dimensions();
-                        let mut rgb = vec![0; (3 * width * height) as usize];
-                        let mut alpha = vec![0; (width * height) as usize];
-                        for (n, px) in pixbuf.pixels().enumerate() {
-                            let c = px.channels();
-                            rgb[3 * n..][..3].copy_from_slice(&c[..3]);
-                            alpha[n] = c[3];
-                        }
-                        let stream_mask = Stream::new(
-                            dictionary! {
-                                "Type" => "XObject",
-                                "Subtype" => "Image",
-                                "Width" => width,
-                                "Height" => height,
-                                "BitsPerComponent" => 8,
-                                "ColorSpace" => "DeviceGray",
-                            },
-                            alpha,
-                        );
-                        let stream_image = Stream::new(
-                            dictionary! {
-                                "Type" => "XObject",
-                                "Subtype" => "Image",
-                                "Width" => width,
-                                "Height" => height,
-                                "BitsPerComponent" => 8,
-                                "ColorSpace" => "DeviceRGB",
-                                "SMask" => id_mask,
-                            },
-                            rgb,
-                        );
-
-                        log::debug!("Split");
-                        for (id, mut stream) in [(id_mask, stream_mask), (id_image, stream_image)] {
-                            s.spawn({
-                                move || {
-                                    log::debug!("Compressing...");
-                                    let _ = stream.compress();
-                                    log::debug!("Compressed");
-
-                                    sem_results
-                                        .signal_with(1, |results| results.push((id, stream)));
-                                }
-                            });
-                        }
+                    if edge_id_position == EdgeIdPosition::Inside {
+                        write_texts(&mut ops);
                     }
-                });
 
-                let id_resources = doc.add_object(dictionary! {
-                    "Font" => dictionary! {
-                        pdf_font_name => ttf_subset.id_font(),
-                    },
-                    "XObject" => dictionary! {
-                        img_name => id_image,
-                    },
-                });
-                let id_page = doc.add_object(dictionary! {
-                    "Type" => "Page",
-                    "Parent" => id_pages,
-                    "Contents" => id_content,
-                    "Resources" => id_resources,
-                });
-                pages.push(id_page.into());
+                    let content = Content { operations: ops };
+                    let id_content =
+                        doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
 
-                Ok(())
-            })
+                    let id_mask = doc.new_object_id();
+                    let id_image = doc.new_object_id();
+
+                    s.spawn({
+                        let sem_results = &sem_results;
+                        move || {
+                            log::debug!("Splitting...");
+                            let (width, height) = pixbuf.dimensions();
+                            let mut rgb = vec![0; (3 * width * height) as usize];
+                            let mut alpha = vec![0; (width * height) as usize];
+                            for (n, px) in pixbuf.pixels().enumerate() {
+                                let c = px.channels();
+                                rgb[3 * n..][..3].copy_from_slice(&c[..3]);
+                                alpha[n] = c[3];
+                            }
+                            let stream_mask = Stream::new(
+                                dictionary! {
+                                    "Type" => "XObject",
+                                    "Subtype" => "Image",
+                                    "Width" => width,
+                                    "Height" => height,
+                                    "BitsPerComponent" => 8,
+                                    "ColorSpace" => "DeviceGray",
+                                },
+                                alpha,
+                            );
+                            let stream_image = Stream::new(
+                                dictionary! {
+                                    "Type" => "XObject",
+                                    "Subtype" => "Image",
+                                    "Width" => width,
+                                    "Height" => height,
+                                    "BitsPerComponent" => 8,
+                                    "ColorSpace" => "DeviceRGB",
+                                    "SMask" => id_mask,
+                                },
+                                rgb,
+                            );
+
+                            log::debug!("Split");
+                            for (id, mut stream) in
+                                [(id_mask, stream_mask), (id_image, stream_image)]
+                            {
+                                s.spawn({
+                                    move || {
+                                        log::debug!("Compressing...");
+                                        let _ = stream.compress();
+                                        log::debug!("Compressed");
+
+                                        sem_results
+                                            .signal_with(1, |results| results.push((id, stream)));
+                                    }
+                                });
+                            }
+                        }
+                    });
+
+                    let id_resources = doc.add_object(dictionary! {
+                        "Font" => dictionary! {
+                            pdf_font_name => ttf_subset.id_font(),
+                        },
+                        "XObject" => dictionary! {
+                            img_name => id_image,
+                        },
+                    });
+                    let id_page = doc.add_object(dictionary! {
+                        "Type" => "Page",
+                        "Parent" => id_pages,
+                        "Contents" => id_content,
+                        "Resources" => id_resources,
+                    });
+                    pages.push(id_page.into());
+
+                    Ok(())
+                },
+            )
         })?;
 
         // Remaining streams
@@ -315,38 +324,47 @@ impl GlobalContext {
         let sem_results = Semaphore::new_with_cpu_num(Vec::<Result<()>>::new());
 
         thread::scope(|s| {
-            self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
-                sem_results.wait(1);
+            generate_pages(
+                &self.gl_fixs,
+                self.data.papercraft(),
+                &self.gl_model,
+                &self.gl_view,
+                None,
+                |page, pixbuf, extra, texts, lines_by_island| {
+                    sem_results.wait(1);
 
-                let mut prefix = Vec::new();
+                    let mut prefix = Vec::new();
 
-                writeln!(&mut prefix, r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#)?;
-                writeln!(
-                    &mut prefix,
-                    r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
-                    page_size.x, page_size.y
-                )?;
+                    writeln!(
+                        &mut prefix,
+                        r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#
+                    )?;
+                    writeln!(
+                        &mut prefix,
+                        r#"<svg width="{0}mm" height="{1}mm" viewBox="0 0 {0} {1}" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:xlink="http://www.w3.org/1999/xlink">"#,
+                        page_size.x, page_size.y
+                    )?;
 
-                if edge_id_position != EdgeIdPosition::Inside {
-                    Self::svg_write_layer_text(&mut prefix, texts)?;
-                }
+                    if edge_id_position != EdgeIdPosition::Inside {
+                        Self::svg_write_layer_text(&mut prefix, texts)?;
+                    }
 
-                let mut suffix = Vec::new();
+                    let mut suffix = Vec::new();
 
-                if edge_id_position == EdgeIdPosition::Inside {
-                    Self::svg_write_layer_text(&mut suffix, texts)?;
-                }
+                    if edge_id_position == EdgeIdPosition::Inside {
+                        Self::svg_write_layer_text(&mut suffix, texts)?;
+                    }
 
-                self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)?;
+                    self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)?;
 
-                writeln!(&mut suffix, r#"</svg>"#)?;
+                    writeln!(&mut suffix, r#"</svg>"#)?;
 
-                let name = file_name_for_page(&file_name, page);
-                s.spawn({
-                    let sem_results = &sem_results;
-                    move || {
-                        // A try block would be nice here
-                        let res = ((|| -> Result<()> {
+                    let name = file_name_for_page(&file_name, page);
+                    s.spawn({
+                        let sem_results = &sem_results;
+                        move || {
+                            // A try block would be nice here
+                            let res = ((|| -> Result<()> {
                                 log::debug!("Saving page {}", name.display());
 
                                 let out = std::fs::File::create(&name)?;
@@ -362,12 +380,12 @@ impl GlobalContext {
                             })())
                             .with_context(|| tr!("Error saving file {}", name.display()));
 
-                        sem_results.signal_with(1, |results| results.push(res));
-
-                    }
-                });
-                Ok(())
-            })
+                            sem_results.signal_with(1, |results| results.push(res));
+                        }
+                    });
+                    Ok(())
+                },
+            )
         })?;
 
         // Forward the error, if any
@@ -613,54 +631,68 @@ impl GlobalContext {
                 Ok(())
             });
 
-            self.generate_pages(None, |page, pixbuf, extra, texts, lines_by_island| {
-                sem_results.wait(1);
+            generate_pages(
+                &self.gl_fixs,
+                self.data.papercraft(),
+                &self.gl_model,
+                &self.gl_view,
+                None,
+                |page, pixbuf, extra, texts, lines_by_island| {
+                    sem_results.wait(1);
 
-                let page_offs = options.page_position(page);
+                    let page_offs = options.page_position(page);
 
-                let mut prefix = Vec::new();
+                    let mut prefix = Vec::new();
 
-                // start layer Page
-                writeln!(&mut prefix, r#"<g inkscape:label="Page_{}" inkscape:groupmode="layer" id="Text" transform="translate({},{})">"#,
-                    page + 1, page_offs.x, page_offs.y)?;
+                    // start layer Page
+                    writeln!(
+                        &mut prefix,
+                        r#"<g inkscape:label="Page_{}" inkscape:groupmode="layer" id="Text" transform="translate({},{})">"#,
+                        page + 1,
+                        page_offs.x,
+                        page_offs.y
+                    )?;
 
-                if edge_id_position != EdgeIdPosition::Inside {
-                    Self::svg_write_layer_text(&mut prefix, texts)?;
-                }
-
-                let mut suffix = Vec::new();
-
-                if edge_id_position == EdgeIdPosition::Inside {
-                    Self::svg_write_layer_text(&mut suffix, texts)?;
-                }
-
-                self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra).unwrap();
-
-                writeln!(&mut suffix, r#"</g>"#)?;
-                // end layer Page
-
-                s.spawn({
-                    let received_pages = &received_pages;
-                    let cvar_data = &cvar_pages;
-                    move || {
-                        log::debug!("SVG page {page}");
-
-                        // Writing on a Vec<u8> can't fail
-                        Self::svg_write_layer_background(&mut prefix, &pixbuf, page_size).unwrap();
-                        prefix.write_all(&suffix).unwrap();
-
-                        log::debug!("Saved page {page}");
-
-                        // Send the page to the writing thread
-                        {
-                            let mut received_pages = received_pages.lock().unwrap();
-                            received_pages[page as usize] = prefix;
-                            cvar_data.notify_one();
-                        }
+                    if edge_id_position != EdgeIdPosition::Inside {
+                        Self::svg_write_layer_text(&mut prefix, texts)?;
                     }
-                });
-                Ok(())
-            })?;
+
+                    let mut suffix = Vec::new();
+
+                    if edge_id_position == EdgeIdPosition::Inside {
+                        Self::svg_write_layer_text(&mut suffix, texts)?;
+                    }
+
+                    self.svg_write_layer_cut_fold(page, &mut suffix, lines_by_island, extra)
+                        .unwrap();
+
+                    writeln!(&mut suffix, r#"</g>"#)?;
+                    // end layer Page
+
+                    s.spawn({
+                        let received_pages = &received_pages;
+                        let cvar_data = &cvar_pages;
+                        move || {
+                            log::debug!("SVG page {page}");
+
+                            // Writing on a Vec<u8> can't fail
+                            Self::svg_write_layer_background(&mut prefix, &pixbuf, page_size)
+                                .unwrap();
+                            prefix.write_all(&suffix).unwrap();
+
+                            log::debug!("Saved page {page}");
+
+                            // Send the page to the writing thread
+                            {
+                                let mut received_pages = received_pages.lock().unwrap();
+                                received_pages[page as usize] = prefix;
+                                cvar_data.notify_one();
+                            }
+                        }
+                    });
+                    Ok(())
+                },
+            )?;
 
             // Wait for the write thread to finish and forward the error if any
             let res: Result<()> = th_write.join().unwrap();
@@ -675,29 +707,36 @@ impl GlobalContext {
         let sem_results = Semaphore::new_with_cpu_num(Vec::<Result<()>>::new());
 
         thread::scope(|s| {
-            self.generate_pages(Some(font_atlas), |page, pixbuf, _, _texts, _| {
-                sem_results.wait(1);
+            generate_pages(
+                &self.gl_fixs,
+                self.data.papercraft(),
+                &self.gl_model,
+                &self.gl_view,
+                Some(font_atlas),
+                |page, pixbuf, _, _texts, _| {
+                    sem_results.wait(1);
 
-                let name = file_name_for_page(&file_name, page);
-                s.spawn({
-                    let sem_results = &sem_results;
-                    move || {
-                        // A try block would be nice here
-                        let res = ((|| -> Result<()> {
-                            log::debug!("Saving page {}", name.display());
-                            let f = std::fs::File::create(&name)?;
-                            let mut f = std::io::BufWriter::new(f);
-                            pixbuf.write_to(&mut f, image::ImageFormat::Png)?;
-                            log::debug!("Saved page {}", name.display());
-                            Ok(())
-                        })())
-                        .with_context(|| tr!("Error saving file {}", name.display()));
+                    let name = file_name_for_page(&file_name, page);
+                    s.spawn({
+                        let sem_results = &sem_results;
+                        move || {
+                            // A try block would be nice here
+                            let res = ((|| -> Result<()> {
+                                log::debug!("Saving page {}", name.display());
+                                let f = std::fs::File::create(&name)?;
+                                let mut f = std::io::BufWriter::new(f);
+                                pixbuf.write_to(&mut f, image::ImageFormat::Png)?;
+                                log::debug!("Saved page {}", name.display());
+                                Ok(())
+                            })())
+                            .with_context(|| tr!("Error saving file {}", name.display()));
 
-                        sem_results.signal_with(1, |results| results.push(res));
-                    }
-                });
-                Ok(())
-            })
+                            sem_results.signal_with(1, |results| results.push(res));
+                        }
+                    });
+                    Ok(())
+                },
+            )
         })?;
 
         // Forward the error, if any
@@ -708,358 +747,345 @@ impl GlobalContext {
 
         Ok(())
     }
+}
 
-    fn generate_pages<F>(
-        &self,
-        font_atlas: Option<&imgui::FontAtlas>,
-        mut do_page_fn: F,
-    ) -> Result<()>
-    where
-        F: FnMut(
-            u32,
-            image::RgbaImage,
-            &PaperDrawFaceArgsExtra,
-            &[PrintableText],
-            &[(IslandKey, PaperDrawFaceArgs)],
-        ) -> Result<()>,
-    {
-        let options = self.data.papercraft().options();
-        let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
-        let resolution = options.resolution as f32;
-        let page_size_mm = Vector2::from(options.page_size);
-        let page_size_inches = page_size_mm / 25.4;
-        let page_size_pixels = page_size_inches * resolution;
-        let page_size_pixels =
-            cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
+fn generate_pages<F>(
+    gl_fixs: &GlFixedObjects,
+    papercraft: &Papercraft,
+    gl_model: &GlModel,
+    gl_view: &GlView,
+    font_atlas: Option<&imgui::FontAtlas>,
+    mut do_page_fn: F,
+) -> Result<()>
+where
+    F: FnMut(
+        u32,
+        image::RgbaImage,
+        &PaperDrawFaceArgsExtra,
+        &[PrintableText],
+        &[(IslandKey, PaperDrawFaceArgs)],
+    ) -> Result<()>,
+{
+    let gl = &gl_fixs.gl;
 
-        unsafe {
-            let fbo = glr::Framebuffer::generate(&self.gl)?;
-            let rbo = glr::Renderbuffer::generate(&self.gl)?;
+    let options = papercraft.options();
+    let (_margin_top, margin_left, margin_right, margin_bottom) = options.margin;
+    let resolution = options.resolution as f32;
+    let page_size_mm = Vector2::from(options.page_size);
+    let page_size_inches = page_size_mm / 25.4;
+    let page_size_pixels = page_size_inches * resolution;
+    let page_size_pixels =
+        cgmath::Vector2::new(page_size_pixels.x as i32, page_size_pixels.y as i32);
 
-            let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
-            let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
-            let rb_binder = BinderRenderbuffer::bind(&rbo);
-            self.gl.framebuffer_renderbuffer(
-                draw_fb_binder.target(),
-                glow::COLOR_ATTACHMENT0,
-                glow::RENDERBUFFER,
-                Some(rbo.id()),
-            );
+    unsafe {
+        let fbo = glr::Framebuffer::generate(gl)?;
+        let rbo = glr::Renderbuffer::generate(gl)?;
 
-            let rbo_fbo_no_aa = 'check_aa: {
-                // multisample buffers cannot be read directly, it has to be copied to a regular one.
-                for samples in MULTISAMPLES {
-                    // check if these many samples are usable
-                    self.gl.renderbuffer_storage_multisample(
-                        rb_binder.target(),
-                        *samples,
-                        glow::RGBA8,
-                        page_size_pixels.x,
-                        page_size_pixels.y,
-                    );
-                    if self.gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER)
-                        != glow::FRAMEBUFFER_COMPLETE
-                    {
-                        continue;
-                    }
+        let draw_fb_binder = BinderDrawFramebuffer::bind(&fbo);
+        let read_fb_binder = BinderReadFramebuffer::bind(&fbo);
+        let rb_binder = BinderRenderbuffer::bind(&rbo);
+        gl.framebuffer_renderbuffer(
+            draw_fb_binder.target(),
+            glow::COLOR_ATTACHMENT0,
+            glow::RENDERBUFFER,
+            Some(rbo.id()),
+        );
 
-                    // If using AA create another FBO/RBO to blit the antialiased image before reading
-                    let rbo2 = glr::Renderbuffer::generate(&self.gl)?;
-                    rb_binder.rebind(&rbo2);
-                    self.gl.renderbuffer_storage(
-                        rb_binder.target(),
-                        glow::RGBA8,
-                        page_size_pixels.x,
-                        page_size_pixels.y,
-                    );
-
-                    let fbo2 = glr::Framebuffer::generate(&self.gl)?;
-                    read_fb_binder.rebind(&fbo2);
-                    self.gl.framebuffer_renderbuffer(
-                        read_fb_binder.target(),
-                        glow::COLOR_ATTACHMENT0,
-                        glow::RENDERBUFFER,
-                        Some(rbo2.id()),
-                    );
-
-                    break 'check_aa Some((rbo2, fbo2));
+        let rbo_fbo_no_aa = 'check_aa: {
+            // multisample buffers cannot be read directly, it has to be copied to a regular one.
+            for samples in MULTISAMPLES {
+                // check if these many samples are usable
+                gl.renderbuffer_storage_multisample(
+                    rb_binder.target(),
+                    *samples,
+                    glow::RGBA8,
+                    page_size_pixels.x,
+                    page_size_pixels.y,
+                );
+                if gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE
+                {
+                    continue;
                 }
-                log::warn!("No multisample!");
-                self.gl.renderbuffer_storage(
+
+                // If using AA create another FBO/RBO to blit the antialiased image before reading
+                let rbo2 = glr::Renderbuffer::generate(gl)?;
+                rb_binder.rebind(&rbo2);
+                gl.renderbuffer_storage(
                     rb_binder.target(),
                     glow::RGBA8,
                     page_size_pixels.x,
                     page_size_pixels.y,
                 );
-                None
-            };
-            // Consume the possible error from the multisample above
-            let _ = self.gl.get_error();
 
-            let _vp =
-                glr::PushViewport::push(&self.gl, 0, 0, page_size_pixels.x, page_size_pixels.y);
+                let fbo2 = glr::Framebuffer::generate(gl)?;
+                read_fb_binder.rebind(&fbo2);
+                gl.framebuffer_renderbuffer(
+                    read_fb_binder.target(),
+                    glow::COLOR_ATTACHMENT0,
+                    glow::RENDERBUFFER,
+                    Some(rbo2.id()),
+                );
 
-            // Our pixbufs are alpha-premultiplied:
-            // * The framebuffer will be premultiplied, but the input fragments are not.
-            // * The clear color is set to transparent (premultiplied).
-            // * In the screen DST_ALPHA does not matter, because the framebuffer is not
-            //   transparent, but here we have to set it to the proper value: use separate blend
-            //   functions or we'll get the alpha squared.
-            self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
-            self.gl.enable(glow::BLEND);
-            self.gl.blend_func_separate(
-                glow::SRC_ALPHA,
-                glow::ONE_MINUS_SRC_ALPHA,
-                glow::ONE,
-                glow::ONE_MINUS_SRC_ALPHA,
+                break 'check_aa Some((rbo2, fbo2));
+            }
+            log::warn!("No multisample!");
+            gl.renderbuffer_storage(
+                rb_binder.target(),
+                glow::RGBA8,
+                page_size_pixels.x,
+                page_size_pixels.y,
             );
+            None
+        };
+        // Consume the possible error from the multisample above
+        let _ = gl.get_error();
 
-            let gl_fixs = &self.gl_fixs;
+        let _vp = glr::PushViewport::push(gl, 0, 0, page_size_pixels.x, page_size_pixels.y);
 
-            let mut texturize = 0;
+        // Our pixbufs are alpha-premultiplied:
+        // * The framebuffer will be premultiplied, but the input fragments are not.
+        // * The clear color is set to transparent (premultiplied).
+        // * In the screen DST_ALPHA does not matter, because the framebuffer is not
+        //   transparent, but here we have to set it to the proper value: use separate blend
+        //   functions or we'll get the alpha squared.
+        gl.clear_color(0.0, 0.0, 0.0, 0.0);
+        gl.enable(glow::BLEND);
+        gl.blend_func_separate(
+            glow::SRC_ALPHA,
+            glow::ONE_MINUS_SRC_ALPHA,
+            glow::ONE,
+            glow::ONE_MINUS_SRC_ALPHA,
+        );
 
-            self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
-            if let (Some(tex), true) = (&self.model_gl.textures, options.texture) {
-                self.gl.active_texture(glow::TEXTURE0);
-                self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
-                texturize = 1;
+        let mut texturize = 0;
+
+        gl.bind_vertex_array(Some(gl_fixs.vao.id()));
+        if let (Some(tex), true) = (&gl_model.textures, options.texture) {
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
+            texturize = 1;
+        }
+
+        let ortho = util_3d::ortho2d_zero(page_size_mm.x, -page_size_mm.y);
+
+        let page_count = options.pages;
+        let flap_style = options.flap_style;
+
+        let mut texts = Vec::new();
+        let (lines_by_island, extra) = lines_by_island(papercraft);
+
+        for page in 0..page_count {
+            log::debug!("Rendering page {}", page + 1);
+
+            // Start render
+            gl.clear(glow::COLOR_BUFFER_BIT);
+            let page_pos = options.page_position(page);
+            let mt = Matrix3::from_translation(-page_pos);
+            let mut u = Uniforms2D {
+                m: ortho * mt,
+                tex: 0,
+                texturize,
+                notex_color: Rgba::new(1.0, 1.0, 1.0, 1.0),
+            };
+
+            // Draw the texts
+            if let Some(font_atlas) = font_atlas.as_ref()
+                && options.edge_id_position == EdgeIdPosition::Outside
+            {
+                gl.active_texture(glow::TEXTURE0);
+                for (ut, pt) in &gl_view.paper_text {
+                    gl.bind_texture(
+                        glow::TEXTURE_2D,
+                        Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),
+                    );
+                    gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
+                }
             }
 
-            let ortho = util_3d::ortho2d_zero(page_size_mm.x, -page_size_mm.y);
+            // Line Flaps
+            if flap_style != FlapStyle::None {
+                gl_fixs
+                    .prg_paper_line
+                    .draw(&u, &gl_view.paper_vertices_flap_edge, glow::TRIANGLES);
+            }
 
-            let page_count = options.pages;
-            let flap_style = options.flap_style;
+            // Solid Flaps
+            if flap_style != FlapStyle::None && flap_style != FlapStyle::White {
+                gl_fixs
+                    .prg_paper_solid
+                    .draw(&u, &gl_view.paper_vertices_flap, glow::TRIANGLES);
+            }
 
-            let mut texts = Vec::new();
-            let (lines_by_island, extra) = self.data.lines_by_island();
+            // Borders
+            gl_fixs
+                .prg_paper_line
+                .draw(&u, &gl_view.paper_vertices_edge_cut, glow::TRIANGLES);
 
-            for page in 0..page_count {
-                log::debug!("Rendering page {}", page + 1);
+            // Textured faces
+            gl.vertex_attrib_4_f32(
+                gl_fixs
+                    .prg_paper_solid
+                    .attrib_by_name("color")
+                    .unwrap()
+                    .location(),
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            );
+            gl_fixs.prg_paper_solid.draw(
+                &u,
+                (&gl_model.vertices, &gl_view.paper_vertices),
+                glow::TRIANGLES,
+            );
 
-                // Start render
-                self.gl.clear(glow::COLOR_BUFFER_BIT);
-                let page_pos = options.page_position(page);
-                let mt = Matrix3::from_translation(-page_pos);
-                let mut u = Uniforms2D {
-                    m: ortho * mt,
-                    tex: 0,
-                    texturize,
-                    notex_color: Rgba::new(1.0, 1.0, 1.0, 1.0),
-                };
+            // Shadow Flaps
+            u.texturize = 0;
+            u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
+            gl_fixs
+                .prg_paper_solid
+                .draw(&u, &gl_view.paper_vertices_shadow_flap, glow::TRIANGLES);
+            u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
 
-                // Draw the texts
-                if let Some(font_atlas) = font_atlas.as_ref()
-                    && options.edge_id_position == EdgeIdPosition::Outside
-                {
-                    self.gl.active_texture(glow::TEXTURE0);
-                    for (ut, pt) in &self.view_gl.paper_text {
-                        self.gl.bind_texture(
-                            glow::TEXTURE_2D,
-                            Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),
-                        );
-                        gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
-                    }
-                }
+            // Creases
+            gl.active_texture(glow::TEXTURE1);
+            gl.bind_texture(glow::TEXTURE_1D, Some(gl_view.tex_fold_mountain.id()));
 
-                // Line Flaps
-                if flap_style != FlapStyle::None {
-                    gl_fixs.prg_paper_line.draw(
-                        &u,
-                        &self.view_gl.paper_vertices_flap_edge,
-                        glow::TRIANGLES,
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_1D, Some(gl_view.tex_fold_valley.id()));
+            gl_fixs.prg_paper_line_dash.draw(
+                (&u, &Uniforms2DDash { tex_2: 1 }),
+                (
+                    &gl_view.paper_vertices_edge_crease,
+                    &gl_view.paper_vertices_edge_kind,
+                ),
+                glow::TRIANGLES,
+            );
+
+            // Draw the texts
+            if let Some(font_atlas) = font_atlas.as_ref()
+                && options.edge_id_position == EdgeIdPosition::Inside
+            {
+                gl.active_texture(glow::TEXTURE0);
+                for (ut, pt) in &gl_view.paper_text {
+                    gl.bind_texture(
+                        glow::TEXTURE_2D,
+                        Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),
                     );
+                    gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
                 }
+            }
 
-                // Solid Flaps
-                if flap_style != FlapStyle::None && flap_style != FlapStyle::White {
-                    gl_fixs.prg_paper_solid.draw(
-                        &u,
-                        &self.view_gl.paper_vertices_flap,
-                        glow::TRIANGLES,
-                    );
-                }
-
-                // Borders
-                gl_fixs.prg_paper_line.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_edge_cut,
-                    glow::TRIANGLES,
-                );
-
-                // Textured faces
-                self.gl.vertex_attrib_4_f32(
-                    gl_fixs
-                        .prg_paper_solid
-                        .attrib_by_name("color")
-                        .unwrap()
-                        .location(),
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                );
-                gl_fixs.prg_paper_solid.draw(
-                    &u,
-                    (&self.model_gl.vertices, &self.view_gl.paper_vertices),
-                    glow::TRIANGLES,
-                );
-
-                // Shadow Flaps
-                u.texturize = 0;
-                u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_shadow_flap,
-                    glow::TRIANGLES,
-                );
-                u.notex_color = Rgba::new(1.0, 1.0, 1.0, 1.0);
-
-                // Creases
-                self.gl.active_texture(glow::TEXTURE1);
-                self.gl
-                    .bind_texture(glow::TEXTURE_1D, Some(self.view_gl.tex_fold_mountain.id()));
-
-                self.gl.active_texture(glow::TEXTURE0);
-                self.gl
-                    .bind_texture(glow::TEXTURE_1D, Some(self.view_gl.tex_fold_valley.id()));
-                gl_fixs.prg_paper_line_dash.draw(
-                    (&u, &Uniforms2DDash { tex_2: 1 }),
-                    (
-                        &self.view_gl.paper_vertices_edge_crease,
-                        &self.view_gl.paper_vertices_edge_kind,
-                    ),
-                    glow::TRIANGLES,
-                );
-
-                // Draw the texts
-                if let Some(font_atlas) = font_atlas.as_ref()
-                    && options.edge_id_position == EdgeIdPosition::Inside
-                {
-                    self.gl.active_texture(glow::TEXTURE0);
-                    for (ut, pt) in &self.view_gl.paper_text {
-                        self.gl.bind_texture(
-                            glow::TEXTURE_2D,
-                            Renderer::unmap_tex(font_atlas.get_texture_by_unique_id(*ut).unwrap()),
-                        );
-                        gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
-                    }
-                }
-
-                // End render
-                if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
-                    read_fb_binder.rebind(&fbo);
-                    draw_fb_binder.rebind(fbo_no_aa);
-                    self.gl.blit_framebuffer(
-                        0,
-                        0,
-                        page_size_pixels.x,
-                        page_size_pixels.y,
-                        0,
-                        0,
-                        page_size_pixels.x,
-                        page_size_pixels.y,
-                        glow::COLOR_BUFFER_BIT,
-                        glow::NEAREST,
-                    );
-                    read_fb_binder.rebind(fbo_no_aa);
-                    draw_fb_binder.rebind(&fbo);
-                }
-
-                self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
-                self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
-
-                let mut pixbuf =
-                    image::RgbaImage::new(page_size_pixels.x as u32, page_size_pixels.y as u32);
-
-                self.gl.read_pixels(
+            // End render
+            if let Some((_, fbo_no_aa)) = &rbo_fbo_no_aa {
+                read_fb_binder.rebind(&fbo);
+                draw_fb_binder.rebind(fbo_no_aa);
+                gl.blit_framebuffer(
                     0,
                     0,
                     page_size_pixels.x,
                     page_size_pixels.y,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelPackData::Slice(Some(&mut pixbuf)),
+                    0,
+                    0,
+                    page_size_pixels.x,
+                    page_size_pixels.y,
+                    glow::COLOR_BUFFER_BIT,
+                    glow::NEAREST,
                 );
-
-                let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
-                let edge_id_position = options.edge_id_position;
-
-                texts.clear();
-                if options.show_self_promotion {
-                    let x = margin_left;
-                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
-                        .min(page_size_mm.y - FONT_SIZE);
-                    let text = signature();
-                    texts.push(PrintableText {
-                        size: FONT_SIZE,
-                        pos: Vector2::new(x, y),
-                        angle: Rad(0.0),
-                        align: TextAlign::Near,
-                        text,
-                    });
-                }
-                if options.show_page_number {
-                    let x = page_size_mm.x - margin_right;
-                    let y = (page_size_mm.y - margin_bottom + FONT_SIZE)
-                        .min(page_size_mm.y - FONT_SIZE);
-                    let text = tr!("Page {}/{}", page + 1, page_count);
-                    texts.push(PrintableText {
-                        size: FONT_SIZE,
-                        pos: Vector2::new(x, y),
-                        angle: Rad(0.0),
-                        align: TextAlign::Far,
-                        text,
-                    });
-                }
-                if edge_id_position != EdgeIdPosition::None {
-                    let in_page = options.is_in_page_fn(page);
-                    for (i_island, lines) in &lines_by_island {
-                        // Island ids
-                        let mut text =
-                            printable_island_name(self.data.papercraft(), *i_island, lines, &extra);
-                        let (is_in_page, pos) = in_page(text.pos);
-                        if is_in_page {
-                            text.pos = pos;
-                            texts.push(text);
-                        }
-                    }
-                    // Edge ids
-                    if !options.island_name_only {
-                        let scaler = MPLUS_FONT_TTF.scaler(edge_id_font_size);
-                        for cut_idx in extra
-                            .cut_info()
-                            .unwrap()
-                            .iter()
-                            .flat_map(|ci| ci.descriptions())
-                        {
-                            let i_island_b =
-                                self.data.papercraft().island_by_face(cut_idx.i_face_b);
-                            let ii = self
-                                .data
-                                .papercraft()
-                                .island_by_key(i_island_b)
-                                .map_or("?", |island_b| island_b.name());
-                            let text = format!("{}:{}", ii, cut_idx.id);
-
-                            let (is_in_page, pos) =
-                                in_page(cut_idx.pos(scaler.scale(MPLUS_FONT_TTF.ascender())));
-                            if is_in_page {
-                                texts.push(PrintableText {
-                                    size: edge_id_font_size,
-                                    pos,
-                                    angle: cut_idx.angle,
-                                    align: TextAlign::Center,
-                                    text,
-                                });
-                            }
-                        }
-                    }
-                }
-                log::debug!("Render {} complete", page + 1);
-                demultiply_image(&mut pixbuf);
-                do_page_fn(page, pixbuf, &extra, &texts, &lines_by_island)?;
+                read_fb_binder.rebind(fbo_no_aa);
+                draw_fb_binder.rebind(&fbo);
             }
+
+            gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
+            gl.read_buffer(glow::COLOR_ATTACHMENT0);
+
+            let mut pixbuf =
+                image::RgbaImage::new(page_size_pixels.x as u32, page_size_pixels.y as u32);
+
+            gl.read_pixels(
+                0,
+                0,
+                page_size_pixels.x,
+                page_size_pixels.y,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut pixbuf)),
+            );
+
+            let edge_id_font_size = options.edge_id_font_size * 25.4 / 72.0; // pt to mm
+            let edge_id_position = options.edge_id_position;
+
+            texts.clear();
+            if options.show_self_promotion {
+                let x = margin_left;
+                let y =
+                    (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                let text = signature();
+                texts.push(PrintableText {
+                    size: FONT_SIZE,
+                    pos: Vector2::new(x, y),
+                    angle: Rad(0.0),
+                    align: TextAlign::Near,
+                    text,
+                });
+            }
+            if options.show_page_number {
+                let x = page_size_mm.x - margin_right;
+                let y =
+                    (page_size_mm.y - margin_bottom + FONT_SIZE).min(page_size_mm.y - FONT_SIZE);
+                let text = tr!("Page {}/{}", page + 1, page_count);
+                texts.push(PrintableText {
+                    size: FONT_SIZE,
+                    pos: Vector2::new(x, y),
+                    angle: Rad(0.0),
+                    align: TextAlign::Far,
+                    text,
+                });
+            }
+            if edge_id_position != EdgeIdPosition::None {
+                let in_page = options.is_in_page_fn(page);
+                for (i_island, lines) in &lines_by_island {
+                    // Island ids
+                    let mut text = printable_island_name(papercraft, *i_island, lines, &extra);
+                    let (is_in_page, pos) = in_page(text.pos);
+                    if is_in_page {
+                        text.pos = pos;
+                        texts.push(text);
+                    }
+                }
+                // Edge ids
+                if !options.island_name_only {
+                    let scaler = MPLUS_FONT_TTF.scaler(edge_id_font_size);
+                    for cut_idx in extra
+                        .cut_info()
+                        .unwrap()
+                        .iter()
+                        .flat_map(|ci| ci.descriptions())
+                    {
+                        let i_island_b = papercraft.island_by_face(cut_idx.i_face_b);
+                        let ii = papercraft
+                            .island_by_key(i_island_b)
+                            .map_or("?", |island_b| island_b.name());
+                        let text = format!("{}:{}", ii, cut_idx.id);
+
+                        let (is_in_page, pos) =
+                            in_page(cut_idx.pos(scaler.scale(MPLUS_FONT_TTF.ascender())));
+                        if is_in_page {
+                            texts.push(PrintableText {
+                                size: edge_id_font_size,
+                                pos,
+                                angle: cut_idx.angle,
+                                align: TextAlign::Center,
+                                text,
+                            });
+                        }
+                    }
+                }
+            }
+            log::debug!("Render {} complete", page + 1);
+            demultiply_image(&mut pixbuf);
+            do_page_fn(page, pixbuf, &extra, &texts, &lines_by_island)?;
         }
-        Ok(())
     }
+    Ok(())
 }

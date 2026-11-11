@@ -52,7 +52,7 @@ const LINE_SEL_WIDTH: f32 = 5.0;
 /// They are derived from the model alone and never change while editing (bar
 /// loading another file), so they can be shared by every view that renders that
 /// model (the scene, a thumbnail, the printable pages, ...).
-pub struct ModelGl {
+pub struct GlModel {
     pub textures: Option<glr::Texture>,
 
     //GL objects that are rebuilt with the model
@@ -70,7 +70,7 @@ pub struct ModelGl {
 /// They are derived from the paper options (page size, fold patterns, colors,
 /// ...) and from the view state (the selection, the paper layout, ...), so they
 /// are rebuilt whenever those change, and each view owns its own `ViewGl`.
-pub struct ViewGl {
+pub struct GlView {
     // Attributes common for 3D/2D
     pub vertices_sel: glr::DynamicVertexArray<MStatus>,
 
@@ -1242,18 +1242,18 @@ fn paper_draw_face(
     }
 }
 
-impl ViewGl {
+impl GlView {
     /// Creates the view objects for the given model GL objects, using the paper
     /// options.
     ///
     /// The arrays start filled with the "unselected" values, so a view that
     /// never calls the rebuild methods still renders a sensible image.
-    pub fn new(papercraft: &Papercraft, model_gl: &ModelGl, gl: &GlContext) -> Result<ViewGl> {
+    pub fn new(papercraft: &Papercraft, gl_model: &GlModel, gl: &GlContext) -> Result<GlView> {
         let vertices_sel =
-            glr::DynamicVertexArray::from_data(gl, vec![MSTATUS_UNSEL; model_gl.vertices.len()])?;
+            glr::DynamicVertexArray::from_data(gl, vec![MSTATUS_UNSEL; gl_model.vertices.len()])?;
         let scene_vertices_edge_status = glr::DynamicVertexArray::from_data(
             gl,
-            vec![MLINE3D_HIDDEN; model_gl.scene_vertices_edge.len()],
+            vec![MLINE3D_HIDDEN; gl_model.scene_vertices_edge.len()],
         )?;
 
         let tex_fold_mountain =
@@ -1274,7 +1274,7 @@ impl ViewGl {
 
         let paper_text = Vec::new();
 
-        Ok(ViewGl {
+        Ok(GlView {
             vertices_sel,
 
             scene_vertices_edge_status,
@@ -1573,10 +1573,10 @@ impl ViewGl {
         );
     }
 
-    pub fn scene_edge_rebuild(&mut self, inputs: &RenderInputs, model_gl: &ModelGl) {
+    pub fn scene_edge_rebuild(&mut self, inputs: &RenderInputs, gl_model: &GlModel) {
         let scene_vertices_edge_status = self.scene_vertices_edge_status.data_mut();
 
-        for (&i_edge, &edge_idx) in &model_gl.edge_map {
+        for (&i_edge, &edge_idx) in &gl_model.edge_map {
             let status = inputs.papercraft.edge_status(i_edge);
             let edge = &inputs.papercraft.model()[i_edge];
             let (i_fa, i_fb) = edge.faces();
@@ -1799,6 +1799,8 @@ impl ViewGl {
                 &edge_sel_2d,
                 color_edge(inputs.mode),
             );
+        } else {
+            self.paper_vertices_edge_sel.data_mut().clear();
         }
     }
 }
@@ -2909,10 +2911,6 @@ impl PapercraftContext {
         self.undo_stack.push(action);
     }
 
-    pub fn has_selected_edge(&self) -> bool {
-        self.selected_edges.is_some()
-    }
-
     pub fn has_selected_islands(&self) -> bool {
         !self.selected_islands.is_empty()
     }
@@ -2923,33 +2921,6 @@ impl PapercraftContext {
             .sort_by_key(|i| self.papercraft.island_key_by_face_key(*i));
         self.selected_islands
             .dedup_by_key(|i| self.papercraft.island_key_by_face_key(*i));
-    }
-
-    pub fn lines_by_island(&self) -> (Vec<(IslandKey, PaperDrawFaceArgs)>, PaperDrawFaceArgsExtra) {
-        let mut extra = PaperDrawFaceArgsExtra::default();
-        extra.add_cut_info(self.papercraft.model());
-
-        let by_island = self
-            .papercraft
-            .islands()
-            .map(|(i_island, island)| {
-                let mut args = PaperDrawFaceArgs::new(self.papercraft.model());
-                let _ = self.papercraft.traverse_faces(island, |i_face, face, mx| {
-                    paper_draw_face(
-                        &self.papercraft,
-                        face,
-                        i_face,
-                        i_island,
-                        mx,
-                        &mut args,
-                        &mut extra,
-                    );
-                    ControlFlow::Continue(())
-                });
-                (i_island, args)
-            })
-            .collect();
-        (by_island, extra)
     }
 
     pub fn prepare_thumbnail(&mut self, sz: Vector2) -> ThumbnailData {
@@ -3001,6 +2972,30 @@ impl PapercraftContext {
     }
 }
 
+/// Computes the `PaperDrawFaceArgs` for each island, used by the printable
+/// generators to draw the cut and fold lines.
+pub fn lines_by_island(
+    papercraft: &Papercraft,
+) -> (Vec<(IslandKey, PaperDrawFaceArgs)>, PaperDrawFaceArgsExtra) {
+    let mut extra = PaperDrawFaceArgsExtra::default();
+    extra.add_cut_info(papercraft.model());
+
+    let by_island = papercraft
+        .islands()
+        .map(|(i_island, island)| {
+            let mut args = PaperDrawFaceArgs::new(papercraft.model());
+            let _ = papercraft.traverse_faces(island, |i_face, face, mx| {
+                paper_draw_face(
+                    papercraft, face, i_face, i_island, mx, &mut args, &mut extra,
+                );
+                ControlFlow::Continue(())
+            });
+            (i_island, args)
+        })
+        .collect();
+    (by_island, extra)
+}
+
 pub struct ThumbnailData {
     ui_settings: UiSettings,
     selected_face: Option<FaceIndex>,
@@ -3008,8 +3003,8 @@ pub struct ThumbnailData {
     selected_islands: Vec<IslandFaceKey>,
 }
 
-impl ModelGl {
-    pub fn new(papercraft: &Papercraft, gl: &GlContext) -> Result<ModelGl> {
+impl GlModel {
+    pub fn new(papercraft: &Papercraft, gl: &GlContext) -> Result<GlModel> {
         let model = papercraft.model();
         let images = model.textures().map(|tex| tex.pixbuf()).collect::<Vec<_>>();
 
@@ -3167,7 +3162,7 @@ impl ModelGl {
 
         let scene_vertices_edge = glr::DynamicVertexArray::from_data(gl, edges)?;
 
-        Ok(ModelGl {
+        Ok(GlModel {
             textures,
 
             vertices,

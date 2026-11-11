@@ -210,16 +210,15 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             PathBuf::new()
         };
 
-        let gl_fixs = build_gl_fixs(&gl).unwrap();
-        let model_gl = ModelGl::new(data.papercraft(), &gl).unwrap();
-        let view_gl = ViewGl::new(data.papercraft(), &model_gl, &gl).unwrap();
+        let gl_model = GlModel::new(data.papercraft(), &gl).unwrap();
+        let gl_view = GlView::new(data.papercraft(), &gl_model, &gl).unwrap();
+        let gl_fixs = build_gl_fixs(gl).unwrap();
 
         let ctx = GlobalContext {
             config: config.clone(),
-            gl,
             gl_fixs,
-            model_gl,
-            view_gl,
+            gl_model,
+            gl_view,
             font_default: imgui::FontId::default(),
             font_default_size: 1.0,
             font_big_size: 1.0,
@@ -340,30 +339,30 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
     }
 }
 
-fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
+fn build_gl_fixs(gl: GlContext) -> Result<GlFixedObjects> {
     let prg_scene_solid =
-        util_gl::program_from_source(gl, include_str!("shaders/scene_solid.glsl"))
+        util_gl::program_from_source(&gl, include_str!("shaders/scene_solid.glsl"))
             .with_context(|| "scene_solid")?;
-    let prg_scene_line = util_gl::program_from_source(gl, include_str!("shaders/scene_line.glsl"))
+    let prg_scene_line = util_gl::program_from_source(&gl, include_str!("shaders/scene_line.glsl"))
         .with_context(|| "scene_line")?;
     let prg_paper_solid =
-        util_gl::program_from_source(gl, include_str!("shaders/paper_solid.glsl"))
+        util_gl::program_from_source(&gl, include_str!("shaders/paper_solid.glsl"))
             .with_context(|| "paper_solid")?;
-    let prg_paper_line = util_gl::program_from_source(gl, include_str!("shaders/paper_line.glsl"))
+    let prg_paper_line = util_gl::program_from_source(&gl, include_str!("shaders/paper_line.glsl"))
         .with_context(|| "paper_line")?;
     let prg_paper_line_dash =
-        util_gl::program_from_source(gl, include_str!("shaders/paper_line_dash.glsl"))
+        util_gl::program_from_source(&gl, include_str!("shaders/paper_line_dash.glsl"))
             .with_context(|| "paper_line_dash")?;
-    let prg_quad = util_gl::program_from_source(gl, include_str!("shaders/quad.glsl"))
+    let prg_quad = util_gl::program_from_source(&gl, include_str!("shaders/quad.glsl"))
         .with_context(|| "quad")?;
-    let prg_text = util_gl::program_from_source(gl, include_str!("shaders/text.glsl"))
+    let prg_text = util_gl::program_from_source(&gl, include_str!("shaders/text.glsl"))
         .with_context(|| "text")?;
 
-    let vao = glr::VertexArray::generate(gl)?;
+    let vao = glr::VertexArray::generate(&gl)?;
 
-    let fbo_scene = glr::Framebuffer::generate(gl)?;
-    let rbo_scene_color = glr::Renderbuffer::generate(gl)?;
-    let rbo_scene_depth = glr::Renderbuffer::generate(gl)?;
+    let fbo_scene = glr::Framebuffer::generate(&gl)?;
+    let rbo_scene_color = glr::Renderbuffer::generate(&gl)?;
+    let rbo_scene_depth = glr::Renderbuffer::generate(&gl)?;
 
     unsafe {
         let fb_binder = BinderFramebuffer::bind(&fbo_scene);
@@ -387,9 +386,9 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
         );
     }
 
-    let fbo_paper = glr::Framebuffer::generate(gl)?;
-    let rbo_paper_color = glr::Renderbuffer::generate(gl)?;
-    let rbo_paper_stencil = glr::Renderbuffer::generate(gl)?;
+    let fbo_paper = glr::Framebuffer::generate(&gl)?;
+    let rbo_paper_color = glr::Renderbuffer::generate(&gl)?;
+    let rbo_paper_stencil = glr::Renderbuffer::generate(&gl)?;
 
     unsafe {
         let fb_binder = BinderFramebuffer::bind(&fbo_paper);
@@ -413,7 +412,8 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
         );
     }
 
-    Ok(GLFixedObjects {
+    Ok(GlFixedObjects {
+        gl,
         vao,
 
         fbo_scene,
@@ -435,7 +435,10 @@ fn build_gl_fixs(gl: &GlContext) -> Result<GLFixedObjects> {
     })
 }
 
-struct GLFixedObjects {
+struct GlFixedObjects {
+    // The GL context is shared by all the GL objects, so it is kept here with
+    // the rest of the fixed, non-model/view GL state.
+    gl: GlContext,
     vao: glr::VertexArray,
 
     fbo_scene: glr::Framebuffer,
@@ -530,10 +533,9 @@ struct ConfirmableAction {
 
 struct GlobalContext {
     config: config::Config,
-    gl: GlContext,
-    gl_fixs: GLFixedObjects,
-    model_gl: ModelGl,
-    view_gl: ViewGl,
+    gl_fixs: GlFixedObjects,
+    gl_model: GlModel,
+    gl_view: GlView,
     font_default: imgui::FontId,
     font_default_size: f32,
     font_big_size: f32,
@@ -2403,7 +2405,7 @@ impl GlobalContext {
 
                             let _read_fb_binder =
                                 BinderReadFramebuffer::bind(&this.gl_fixs.fbo_scene);
-                            this.gl.blit_framebuffer(
+                            this.gl_fixs.gl.blit_framebuffer(
                                 0,
                                 0,
                                 width,
@@ -2447,7 +2449,7 @@ impl GlobalContext {
                             // blit the FBO to the real FB
                             let _read_fb_binder =
                                 BinderReadFramebuffer::bind(&this.gl_fixs.fbo_paper);
-                            this.gl.blit_framebuffer(
+                            this.gl_fixs.gl.blit_framebuffer(
                                 0,
                                 0,
                                 width,
@@ -2918,7 +2920,7 @@ impl GlobalContext {
                 fd.tex = match maybe_img {
                     None => None,
                     Some(img) => {
-                        let gl = &self.gl;
+                        let gl = &self.gl_fixs.gl;
                         let ntex = glr::Texture::generate(gl).unwrap();
                         unsafe {
                             gl.bind_texture(glow::TEXTURE_2D, Some(ntex.id()));
@@ -2981,7 +2983,7 @@ impl GlobalContext {
                     self.sz_scene,
                     mouse_pos,
                     mods,
-                    self.view_gl.paper_vertices.data(),
+                    self.gl_view.paper_vertices.data(),
                 )
             }
             Canvas3dAction::Released(MouseButton::Left) => {
@@ -3025,7 +3027,7 @@ impl GlobalContext {
                     None,
                     mods,
                     /*dragging*/ false,
-                    self.view_gl.paper_vertices.data(),
+                    self.gl_view.paper_vertices.data(),
                 )
             }
             Canvas3dAction::Dragging(MouseButton::Left) => {
@@ -3035,7 +3037,7 @@ impl GlobalContext {
                     Some(self.paper_ui_status.mouse_pos_on_drag),
                     mods,
                     /*dragging*/ true,
-                    self.view_gl.paper_vertices.data(),
+                    self.gl_view.paper_vertices.data(),
                 )
             }
             Canvas3dAction::DragEnd(MouseButton::Left) => {
@@ -3046,265 +3048,6 @@ impl GlobalContext {
         self.add_rebuild(flags);
     }
 
-    fn render_scene(&self, scale: f32) {
-        let gl_fixs = &self.gl_fixs;
-
-        let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
-        let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
-
-        let mut u = Uniforms3D {
-            m: self.data.ui.trans_scene.persp * self.data.ui.trans_scene.view,
-            mnormal: self.data.ui.trans_scene.mnormal, // should be transpose of inverse
-            lights: [light0, light1],
-            tex: 0,
-            texturize: 0,
-            view_size: self.sz_scene / (2.0 * scale),
-        };
-        unsafe {
-            self.gl.enable(glow::BLEND);
-            self.gl.enable(glow::DEPTH_TEST);
-            self.gl.depth_func(glow::LEQUAL);
-            self.gl.blend_func_separate(
-                glow::SRC_ALPHA,
-                glow::ONE_MINUS_SRC_ALPHA,
-                glow::ONE,
-                glow::ONE_MINUS_SRC_ALPHA,
-            );
-
-            self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
-            if let (Some(tex), true) = (&self.model_gl.textures, self.data.ui.show_textures) {
-                self.gl.active_texture(glow::TEXTURE0);
-                self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
-                u.texturize = 1;
-            }
-
-            gl_fixs.prg_scene_solid.draw(
-                &u,
-                (&self.model_gl.vertices, &self.view_gl.vertices_sel),
-                glow::TRIANGLES,
-            );
-
-            gl_fixs.prg_scene_line.draw(
-                &u,
-                (
-                    &self.model_gl.scene_vertices_edge,
-                    &self.view_gl.scene_vertices_edge_status,
-                ),
-                glow::TRIANGLES,
-            );
-            self.gl.bind_vertex_array(None);
-        }
-    }
-    fn render_paper(&mut self, imgui: &mut imgui::CurrentContext<'_>) {
-        let gl_fixs = &self.gl_fixs;
-
-        let mut u = Uniforms2D {
-            m: self.data.ui.trans_paper.ortho * self.data.ui.trans_paper.mx,
-            tex: 0,
-            texturize: 0,
-            notex_color: Rgba::new(0.75, 0.75, 0.75, 1.0),
-        };
-
-        unsafe {
-            if self.data.ui.draw_paper {
-                let bg = self.data.papercraft().options().paper_bg_color.0;
-                self.gl.clear_color(bg.r, bg.g, bg.b, bg.a);
-                // Out-of-paper area counts as a big imaginary piece, for overlapping purposes.
-                // The stencil starts with 1 and is reduced to 0 when drawing the pages.
-                self.gl.clear_stencil(1);
-            } else {
-                let bg = self.data.papercraft().options().paper_color.0;
-                self.gl.clear_color(bg.r, bg.g, bg.b, bg.a);
-                // If pages are not drawn, then out-of-paper doesn't count as an overlap.
-                // The stencil starts with 0 directly
-                self.gl.clear_stencil(0);
-            }
-            self.gl.stencil_mask(0xff);
-            self.gl.stencil_func(glow::ALWAYS, 0, 0);
-            self.gl.disable(glow::STENCIL_TEST);
-
-            self.gl
-                .clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
-
-            self.gl.enable(glow::BLEND);
-            self.gl.blend_func_separate(
-                glow::SRC_ALPHA,
-                glow::ONE_MINUS_SRC_ALPHA,
-                glow::ONE,
-                glow::ONE_MINUS_SRC_ALPHA,
-            );
-
-            self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
-            if let (Some(tex), true) = (&self.model_gl.textures, self.data.ui.show_textures) {
-                self.gl.active_texture(glow::TEXTURE0);
-                self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
-                u.texturize = 1;
-            }
-
-            // The paper
-            if self.data.ui.draw_paper {
-                self.gl.enable(glow::STENCIL_TEST);
-                self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::ZERO);
-
-                gl_fixs.prg_paper_solid.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_page,
-                    glow::TRIANGLES,
-                );
-
-                self.gl.disable(glow::STENCIL_TEST);
-
-                gl_fixs.prg_paper_line.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_margin,
-                    glow::TRIANGLES,
-                );
-            }
-
-            // Line Flaps
-            if self.data.ui.show_flaps {
-                gl_fixs.prg_paper_line.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_flap_edge,
-                    glow::TRIANGLES,
-                );
-            }
-
-            self.gl.enable(glow::STENCIL_TEST);
-            self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::INCR);
-
-            // Solid Flaps
-            if self.data.ui.show_flaps {
-                gl_fixs.prg_paper_solid.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_flap,
-                    glow::TRIANGLES,
-                );
-            }
-            self.gl.disable(glow::STENCIL_TEST);
-
-            // Borders
-            gl_fixs
-                .prg_paper_line
-                .draw(&u, &self.view_gl.paper_vertices_edge_cut, glow::TRIANGLES);
-
-            self.gl.enable(glow::STENCIL_TEST);
-
-            // Textured faces
-            gl_fixs.prg_paper_solid.draw(
-                &u,
-                (
-                    &self.model_gl.vertices,
-                    &self.view_gl.vertices_sel,
-                    &self.view_gl.paper_vertices,
-                ),
-                glow::TRIANGLES,
-            );
-
-            self.gl.disable(glow::STENCIL_TEST);
-
-            // Shadow Flaps
-            u.texturize = 0;
-            if self.data.ui.show_flaps {
-                u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
-                gl_fixs.prg_paper_solid.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_shadow_flap,
-                    glow::TRIANGLES,
-                );
-                u.notex_color = Rgba::new(0.75, 0.75, 0.75, 1.0);
-            }
-
-            // Creases
-            self.gl.active_texture(glow::TEXTURE1);
-            self.gl
-                .bind_texture(glow::TEXTURE_1D, Some(self.view_gl.tex_fold_mountain.id()));
-
-            self.gl.active_texture(glow::TEXTURE0);
-            self.gl
-                .bind_texture(glow::TEXTURE_1D, Some(self.view_gl.tex_fold_valley.id()));
-            gl_fixs.prg_paper_line_dash.draw(
-                (&u, &Uniforms2DDash { tex_2: 1 }),
-                (
-                    &self.view_gl.paper_vertices_edge_crease,
-                    &self.view_gl.paper_vertices_edge_kind,
-                ),
-                glow::TRIANGLES,
-            );
-
-            // Selected edge
-            if self.data.has_selected_edge() {
-                gl_fixs.prg_paper_line.draw(
-                    &u,
-                    &self.view_gl.paper_vertices_edge_sel,
-                    glow::TRIANGLES,
-                );
-            }
-
-            // Draw the highlight overlap if "1 < STENCIL"
-            self.gl.enable(glow::STENCIL_TEST);
-            self.gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
-
-            if self.data.ui.highlight_overlaps {
-                // Draw the overlapped highlight if "1 < STENCIL"
-                let uq = UniformQuad {
-                    color: self
-                        .data
-                        .papercraft()
-                        .options()
-                        .paper_highlight_color
-                        .to_rgba(),
-                };
-                self.gl.stencil_func(glow::LESS, 1, 0xff);
-                gl_fixs
-                    .prg_quad
-                    .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
-
-                // Draw the highlight dim if "1 >= STENCIL"
-                let uq = UniformQuad {
-                    color: Rgba::new(1.0, 1.0, 1.0, 0.9),
-                };
-                self.gl.stencil_func(glow::GEQUAL, 1, 0xff);
-                gl_fixs
-                    .prg_quad
-                    .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
-            } else {
-                // If highlight is disabled draw the overlaps anyway, but dimmer, or else it would be invisible
-                let mut color = self
-                    .data
-                    .papercraft()
-                    .options()
-                    .paper_highlight_color
-                    .to_rgba();
-                color.a /= 2.0;
-                let uq = UniformQuad { color };
-                self.gl.stencil_func(glow::LESS, 1, 0xff);
-                gl_fixs
-                    .prg_quad
-                    .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
-            }
-
-            self.gl.disable(glow::STENCIL_TEST);
-
-            // Draw the texts
-            if self.data.ui.show_texts {
-                self.gl.active_texture(glow::TEXTURE0);
-                for (ut, pt) in &self.view_gl.paper_text {
-                    self.gl.bind_texture(
-                        glow::TEXTURE_2D,
-                        Renderer::unmap_tex(
-                            imgui
-                                .io()
-                                .font_atlas()
-                                .get_texture_by_unique_id(*ut)
-                                .unwrap(),
-                        ),
-                    );
-                    gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
-                }
-            }
-        }
-    }
     fn add_rebuild(&mut self, flags: RebuildFlags) {
         self.rebuild.insert(flags);
     }
@@ -3410,26 +3153,28 @@ impl GlobalContext {
 
         // Render the scene to a new framebuffer. We could just capture the current scene,
         // but then the camera view and render options would be arbitrary.
-        let fbo = glr::Framebuffer::generate(&self.gl).unwrap();
-        let rbo = glr::Renderbuffer::generate(&self.gl).unwrap();
-        let rboz = glr::Renderbuffer::generate(&self.gl).unwrap();
+        let fbo = glr::Framebuffer::generate(&self.gl_fixs.gl).unwrap();
+        let rbo = glr::Renderbuffer::generate(&self.gl_fixs.gl).unwrap();
+        let rboz = glr::Renderbuffer::generate(&self.gl_fixs.gl).unwrap();
 
         let fb_binder = BinderFramebuffer::bind(&fbo);
 
         unsafe {
             let rb_binder = glr::BinderRenderbuffer::bind(&rbo);
-            self.gl
+            self.gl_fixs
+                .gl
                 .renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
-            self.gl.framebuffer_renderbuffer(
+            self.gl_fixs.gl.framebuffer_renderbuffer(
                 fb_binder.target(),
                 glow::COLOR_ATTACHMENT0,
                 glow::RENDERBUFFER,
                 Some(rbo.id()),
             );
             rb_binder.rebind(&rboz);
-            self.gl
+            self.gl_fixs
+                .gl
                 .renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, 1, 1);
-            self.gl.framebuffer_renderbuffer(
+            self.gl_fixs.gl.framebuffer_renderbuffer(
                 fb_binder.target(),
                 glow::DEPTH_ATTACHMENT,
                 glow::RENDERBUFFER,
@@ -3437,7 +3182,7 @@ impl GlobalContext {
             );
 
             let multisample = renderbuffer_storage_antialias(
-                &self.gl,
+                &self.gl_fixs.gl,
                 IMG_WIDTH,
                 IMG_HEIGHT,
                 &fb_binder,
@@ -3451,18 +3196,26 @@ impl GlobalContext {
 
             // Render the scene upside down to make the image easier to export
             self.data.ui.trans_scene.persp.y.y *= -1.0;
-            self.gl.front_face(glow::CW);
+            self.gl_fixs.gl.front_face(glow::CW);
 
             self.rebuild_views(RebuildFlags::all(), &TextBuilderDummy);
-            self.gl.viewport(0, 0, IMG_WIDTH, IMG_HEIGHT);
-            self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
-            self.gl.clear_depth_f32(1.0);
-            self.gl
+            self.gl_fixs.gl.viewport(0, 0, IMG_WIDTH, IMG_HEIGHT);
+            self.gl_fixs.gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            self.gl_fixs.gl.clear_depth_f32(1.0);
+            self.gl_fixs
+                .gl
                 .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-            self.render_scene(1.0);
+            render_scene(
+                &self.gl_fixs,
+                &self.data.ui,
+                self.sz_scene,
+                1.0,
+                &self.gl_model,
+                &self.gl_view,
+            );
 
             // Restore the normal configuration
-            self.gl.front_face(glow::CCW);
+            self.gl_fixs.gl.front_face(glow::CCW);
             self.data.restore_thumbnail(thumb_data);
 
             // Rebuild everything on next render
@@ -3473,24 +3226,24 @@ impl GlobalContext {
             if multisample > 0 {
                 drop(fb_binder);
 
-                fbo_noaa = glr::Framebuffer::generate(&self.gl).unwrap();
-                rbo_noaa = glr::Renderbuffer::generate(&self.gl).unwrap();
+                fbo_noaa = glr::Framebuffer::generate(&self.gl_fixs.gl).unwrap();
+                rbo_noaa = glr::Renderbuffer::generate(&self.gl_fixs.gl).unwrap();
                 fb_binder_read = BinderReadFramebuffer::bind(&fbo);
                 let fb_binder_draw = BinderDrawFramebuffer::bind(&fbo_noaa);
                 let rb_binder = BinderRenderbuffer::bind(&rbo_noaa);
-                self.gl.renderbuffer_storage(
+                self.gl_fixs.gl.renderbuffer_storage(
                     rb_binder.target(),
                     glow::RGBA8,
                     IMG_WIDTH,
                     IMG_HEIGHT,
                 );
-                self.gl.framebuffer_renderbuffer(
+                self.gl_fixs.gl.framebuffer_renderbuffer(
                     fb_binder_draw.target(),
                     glow::COLOR_ATTACHMENT0,
                     glow::RENDERBUFFER,
                     Some(rbo_noaa.id()),
                 );
-                self.gl.blit_framebuffer(
+                self.gl_fixs.gl.blit_framebuffer(
                     0,
                     0,
                     IMG_WIDTH,
@@ -3506,10 +3259,10 @@ impl GlobalContext {
             }
 
             // Read the image
-            self.gl.read_buffer(glow::COLOR_ATTACHMENT0);
-            self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
+            self.gl_fixs.gl.read_buffer(glow::COLOR_ATTACHMENT0);
+            self.gl_fixs.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
             let mut pixbuf = image::RgbaImage::new(IMG_WIDTH as u32, IMG_HEIGHT as u32);
-            self.gl.read_pixels(
+            self.gl_fixs.gl.read_pixels(
                 0,
                 0,
                 IMG_WIDTH,
@@ -3591,8 +3344,8 @@ impl GlobalContext {
     }
     /// Replaces the document, rebuilding the GL objects that belong to it.
     fn load_papercraft(&mut self, papercraft: Papercraft) -> Result<()> {
-        self.model_gl = ModelGl::new(&papercraft, &self.gl)?;
-        self.view_gl = ViewGl::new(&papercraft, &self.model_gl, &self.gl)?;
+        self.gl_model = GlModel::new(&papercraft, &self.gl_fixs.gl)?;
+        self.gl_view = GlView::new(&papercraft, &self.gl_model, &self.gl_fixs.gl)?;
         self.data = PapercraftContext::new(papercraft);
         Ok(())
     }
@@ -3602,8 +3355,8 @@ impl GlobalContext {
     fn set_papercraft_options(&mut self, options: PaperOptions, push_undo_action: bool) {
         let old_options = self.data.set_papercraft_options(options, push_undo_action);
         let new_options = self.data.papercraft().options();
-        self.model_gl.set_options(new_options);
-        self.view_gl.set_options(&old_options, new_options);
+        self.gl_model.set_options(new_options);
+        self.gl_view.set_options(&old_options, new_options);
     }
 
     /// Prepares the document and rebuilds the GL objects for a render.
@@ -3611,20 +3364,20 @@ impl GlobalContext {
         self.data.prepare_render(rebuild);
         let inputs = self.data.render_inputs();
         if rebuild.contains(RebuildFlags::PAGES) {
-            self.view_gl.pages_rebuild(&inputs);
+            self.gl_view.pages_rebuild(&inputs);
         }
         if rebuild.contains(RebuildFlags::PAPER) {
-            self.view_gl.paper_rebuild(
+            self.gl_view.paper_rebuild(
                 &inputs,
                 text_builder,
                 rebuild.contains(RebuildFlags::SHOW_TEXTS),
             );
         }
         if rebuild.contains(RebuildFlags::SELECTION) {
-            self.view_gl.selection_rebuild(&inputs);
+            self.gl_view.selection_rebuild(&inputs);
         }
         if rebuild.intersects(RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION) {
-            self.view_gl.scene_edge_rebuild(&inputs, &self.model_gl);
+            self.gl_view.scene_edge_rebuild(&inputs, &self.gl_model);
         }
     }
 
@@ -3635,6 +3388,256 @@ impl GlobalContext {
             font_render_size: self.font_render_size,
         };
         self.rebuild_views(rebuild, &text_helper);
+    }
+}
+
+fn render_scene(
+    gl_fixs: &GlFixedObjects,
+    ui: &UiSettings,
+    sz_scene: Vector2,
+    scale: f32,
+    gl_model: &GlModel,
+    gl_view: &GlView,
+) {
+    let gl = &gl_fixs.gl;
+
+    let light0 = Vector3::new(-0.5, -0.4, -0.8).normalize() * 0.55;
+    let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
+
+    let mut u = Uniforms3D {
+        m: ui.trans_scene.persp * ui.trans_scene.view,
+        mnormal: ui.trans_scene.mnormal, // should be transpose of inverse
+        lights: [light0, light1],
+        tex: 0,
+        texturize: 0,
+        view_size: sz_scene / (2.0 * scale),
+    };
+    unsafe {
+        gl.enable(glow::BLEND);
+        gl.enable(glow::DEPTH_TEST);
+        gl.depth_func(glow::LEQUAL);
+        gl.blend_func_separate(
+            glow::SRC_ALPHA,
+            glow::ONE_MINUS_SRC_ALPHA,
+            glow::ONE,
+            glow::ONE_MINUS_SRC_ALPHA,
+        );
+
+        gl.bind_vertex_array(Some(gl_fixs.vao.id()));
+        if let (Some(tex), true) = (&gl_model.textures, ui.show_textures) {
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
+            u.texturize = 1;
+        }
+
+        gl_fixs.prg_scene_solid.draw(
+            &u,
+            (&gl_model.vertices, &gl_view.vertices_sel),
+            glow::TRIANGLES,
+        );
+
+        gl_fixs.prg_scene_line.draw(
+            &u,
+            (
+                &gl_model.scene_vertices_edge,
+                &gl_view.scene_vertices_edge_status,
+            ),
+            glow::TRIANGLES,
+        );
+        gl.bind_vertex_array(None);
+    }
+}
+
+fn render_paper(
+    gl_fixs: &GlFixedObjects,
+    imgui: &imgui::RawContext,
+    ui: &UiSettings,
+    options: &PaperOptions,
+    gl_model: &GlModel,
+    gl_view: &GlView,
+) {
+    let gl = &gl_fixs.gl;
+
+    let mut u = Uniforms2D {
+        m: ui.trans_paper.ortho * ui.trans_paper.mx,
+        tex: 0,
+        texturize: 0,
+        notex_color: Rgba::new(0.75, 0.75, 0.75, 1.0),
+    };
+
+    unsafe {
+        if ui.draw_paper {
+            let bg = options.paper_bg_color.0;
+            gl.clear_color(bg.r, bg.g, bg.b, bg.a);
+            // Out-of-paper area counts as a big imaginary piece, for overlapping purposes.
+            // The stencil starts with 1 and is reduced to 0 when drawing the pages.
+            gl.clear_stencil(1);
+        } else {
+            let bg = options.paper_color.0;
+            gl.clear_color(bg.r, bg.g, bg.b, bg.a);
+            // If pages are not drawn, then out-of-paper doesn't count as an overlap.
+            // The stencil starts with 0 directly
+            gl.clear_stencil(0);
+        }
+        gl.stencil_mask(0xff);
+        gl.stencil_func(glow::ALWAYS, 0, 0);
+        gl.disable(glow::STENCIL_TEST);
+
+        gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+
+        gl.enable(glow::BLEND);
+        gl.blend_func_separate(
+            glow::SRC_ALPHA,
+            glow::ONE_MINUS_SRC_ALPHA,
+            glow::ONE,
+            glow::ONE_MINUS_SRC_ALPHA,
+        );
+
+        gl.bind_vertex_array(Some(gl_fixs.vao.id()));
+        if let (Some(tex), true) = (&gl_model.textures, ui.show_textures) {
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
+            u.texturize = 1;
+        }
+
+        // The paper
+        if ui.draw_paper {
+            gl.enable(glow::STENCIL_TEST);
+            gl.stencil_op(glow::KEEP, glow::KEEP, glow::ZERO);
+
+            gl_fixs
+                .prg_paper_solid
+                .draw(&u, &gl_view.paper_vertices_page, glow::TRIANGLES);
+
+            gl.disable(glow::STENCIL_TEST);
+
+            gl_fixs
+                .prg_paper_line
+                .draw(&u, &gl_view.paper_vertices_margin, glow::TRIANGLES);
+        }
+
+        // Line Flaps
+        if ui.show_flaps {
+            gl_fixs
+                .prg_paper_line
+                .draw(&u, &gl_view.paper_vertices_flap_edge, glow::TRIANGLES);
+        }
+
+        gl.enable(glow::STENCIL_TEST);
+        gl.stencil_op(glow::KEEP, glow::KEEP, glow::INCR);
+
+        // Solid Flaps
+        if ui.show_flaps {
+            gl_fixs
+                .prg_paper_solid
+                .draw(&u, &gl_view.paper_vertices_flap, glow::TRIANGLES);
+        }
+        gl.disable(glow::STENCIL_TEST);
+
+        // Borders
+        gl_fixs
+            .prg_paper_line
+            .draw(&u, &gl_view.paper_vertices_edge_cut, glow::TRIANGLES);
+
+        gl.enable(glow::STENCIL_TEST);
+
+        // Textured faces
+        gl_fixs.prg_paper_solid.draw(
+            &u,
+            (
+                &gl_model.vertices,
+                &gl_view.vertices_sel,
+                &gl_view.paper_vertices,
+            ),
+            glow::TRIANGLES,
+        );
+
+        gl.disable(glow::STENCIL_TEST);
+
+        // Shadow Flaps
+        u.texturize = 0;
+        if ui.show_flaps {
+            u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
+            gl_fixs
+                .prg_paper_solid
+                .draw(&u, &gl_view.paper_vertices_shadow_flap, glow::TRIANGLES);
+            u.notex_color = Rgba::new(0.75, 0.75, 0.75, 1.0);
+        }
+
+        // Creases
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_1D, Some(gl_view.tex_fold_mountain.id()));
+
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_1D, Some(gl_view.tex_fold_valley.id()));
+        gl_fixs.prg_paper_line_dash.draw(
+            (&u, &Uniforms2DDash { tex_2: 1 }),
+            (
+                &gl_view.paper_vertices_edge_crease,
+                &gl_view.paper_vertices_edge_kind,
+            ),
+            glow::TRIANGLES,
+        );
+
+        // Selected edge
+        if !gl_view.paper_vertices_edge_sel.is_empty() {
+            gl_fixs
+                .prg_paper_line
+                .draw(&u, &gl_view.paper_vertices_edge_sel, glow::TRIANGLES);
+        }
+
+        // Draw the highlight overlap if "1 < STENCIL"
+        gl.enable(glow::STENCIL_TEST);
+        gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
+
+        if ui.highlight_overlaps {
+            // Draw the overlapped highlight if "1 < STENCIL"
+            let uq = UniformQuad {
+                color: options.paper_highlight_color.to_rgba(),
+            };
+            gl.stencil_func(glow::LESS, 1, 0xff);
+            gl_fixs
+                .prg_quad
+                .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
+
+            // Draw the highlight dim if "1 >= STENCIL"
+            let uq = UniformQuad {
+                color: Rgba::new(1.0, 1.0, 1.0, 0.9),
+            };
+            gl.stencil_func(glow::GEQUAL, 1, 0xff);
+            gl_fixs
+                .prg_quad
+                .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
+        } else {
+            // If highlight is disabled draw the overlaps anyway, but dimmer, or else it would be invisible
+            let mut color = options.paper_highlight_color.to_rgba();
+            color.a /= 2.0;
+            let uq = UniformQuad { color };
+            gl.stencil_func(glow::LESS, 1, 0xff);
+            gl_fixs
+                .prg_quad
+                .draw(&uq, glr::NilVertexAttrib(3), glow::TRIANGLES);
+        }
+
+        gl.disable(glow::STENCIL_TEST);
+
+        // Draw the texts
+        if ui.show_texts {
+            gl.active_texture(glow::TEXTURE0);
+            for (ut, pt) in &gl_view.paper_text {
+                gl.bind_texture(
+                    glow::TEXTURE_2D,
+                    Renderer::unmap_tex(
+                        imgui
+                            .io()
+                            .font_atlas()
+                            .get_texture_by_unique_id(*ut)
+                            .unwrap(),
+                    ),
+                );
+                gl_fixs.prg_text.draw(&u, pt, glow::TRIANGLES);
+            }
+        }
     }
 }
 
@@ -4056,7 +4059,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
 
         // Check if the atlas textures are still valid.
         let text_ok = self
-            .view_gl
+            .gl_view
             .paper_text
             .iter()
             .all(|&(ut, _)| ui.io().font_atlas().check_texture_unique_id(ut));
@@ -4094,7 +4097,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
             if self.rebuild.contains(RebuildFlags::SCENE_FBO) {
                 let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
                 renderbuffer_storage_antialias(
-                    &self.gl,
+                    &self.gl_fixs.gl,
                     self.sz_scene.x as i32,
                     self.sz_scene.y as i32,
                     &fbo,
@@ -4104,24 +4107,32 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                     ],
                 );
             }
-            let vp = glr::PushViewport::new(&self.gl);
+            let vp = glr::PushViewport::new(&self.gl_fixs.gl);
             let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
             vp.viewport(0, 0, self.sz_scene.x as i32, self.sz_scene.y as i32);
             unsafe {
                 let bg = self.data.papercraft().options().scene_bg_color.0;
-                self.gl.clear_color(bg.r, bg.g, bg.b, bg.a);
-                self.gl.clear_depth_f32(1.0);
-                self.gl
+                self.gl_fixs.gl.clear_color(bg.r, bg.g, bg.b, bg.a);
+                self.gl_fixs.gl.clear_depth_f32(1.0);
+                self.gl_fixs
+                    .gl
                     .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
             }
-            self.render_scene(scale);
+            render_scene(
+                &self.gl_fixs,
+                &self.data.ui,
+                self.sz_scene,
+                scale,
+                &self.gl_model,
+                &self.gl_view,
+            );
         }
 
         if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_PAPER) {
             if self.rebuild.contains(RebuildFlags::PAPER_FBO) {
                 let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
                 renderbuffer_storage_antialias(
-                    &self.gl,
+                    &self.gl_fixs.gl,
                     self.sz_paper.x as i32,
                     self.sz_paper.y as i32,
                     &fbo,
@@ -4131,10 +4142,17 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                     ],
                 );
             }
-            let vp = glr::PushViewport::new(&self.gl);
+            let vp = glr::PushViewport::new(&self.gl_fixs.gl);
             let _fb_binder = BinderFramebuffer::bind(&self.gl_fixs.fbo_paper);
             vp.viewport(0, 0, self.sz_paper.x as i32, self.sz_paper.y as i32);
-            self.render_paper(imgui);
+            render_paper(
+                &self.gl_fixs,
+                imgui,
+                &self.data.ui,
+                self.data.papercraft().options(),
+                &self.gl_model,
+                &self.gl_view,
+            );
         }
         self.rebuild = RebuildFlags::empty();
     }

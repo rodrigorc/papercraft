@@ -178,7 +178,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         imgui.io_mut().nav_enable_keyboard(true);
 
         // Initialize papercraft status
-        let mut data = PapercraftContext::from_papercraft(Papercraft::empty(), &gl).unwrap();
+        let mut data = PapercraftContext::new(Papercraft::empty());
         let cmd_file_action = match cli {
             Cli {
                 name: Some(name),
@@ -211,11 +211,15 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
         };
 
         let gl_fixs = build_gl_fixs(&gl).unwrap();
+        let model_gl = ModelGl::new(data.papercraft(), &gl).unwrap();
+        let view_gl = ViewGl::new(data.papercraft(), &model_gl, &gl).unwrap();
 
         let ctx = GlobalContext {
             config: config.clone(),
             gl,
             gl_fixs,
+            model_gl,
+            view_gl,
             font_default: imgui::FontId::default(),
             font_default_size: 1.0,
             font_big_size: 1.0,
@@ -284,7 +288,7 @@ impl easy_imgui_window::Application for Box<GlobalContext> {
             window.main_window().window().set_title(new_title);
         }
         if let Some((options, push_undo)) = self.options_applied.take() {
-            self.data.set_papercraft_options(*options, push_undo);
+            self.set_papercraft_options(*options, push_undo);
             self.add_rebuild(RebuildFlags::all());
         }
         let imgui = window.imgui();
@@ -528,6 +532,8 @@ struct GlobalContext {
     config: config::Config,
     gl: GlContext,
     gl_fixs: GLFixedObjects,
+    model_gl: ModelGl,
+    view_gl: ViewGl,
     font_default: imgui::FontId,
     font_default_size: f32,
     font_big_size: f32,
@@ -2970,9 +2976,14 @@ impl GlobalContext {
             | Canvas3dAction::Dragging(MouseButton::Right) => self
                 .data
                 .scene_button2_click_event(self.sz_scene, mouse_pos),
-            Canvas3dAction::DoubleClicked(MouseButton::Left) => self
-                .data
-                .scene_button1_dblclick_event(self.sz_scene, mouse_pos, mods),
+            Canvas3dAction::DoubleClicked(MouseButton::Left) => {
+                self.data.scene_button1_dblclick_event(
+                    self.sz_scene,
+                    mouse_pos,
+                    mods,
+                    self.view_gl.paper_vertices.data(),
+                )
+            }
             Canvas3dAction::Released(MouseButton::Left) => {
                 self.data
                     .scene_button1_release_event(self.sz_scene, mouse_pos, mods)
@@ -3014,6 +3025,7 @@ impl GlobalContext {
                     None,
                     mods,
                     /*dragging*/ false,
+                    self.view_gl.paper_vertices.data(),
                 )
             }
             Canvas3dAction::Dragging(MouseButton::Left) => {
@@ -3023,6 +3035,7 @@ impl GlobalContext {
                     Some(self.paper_ui_status.mouse_pos_on_drag),
                     mods,
                     /*dragging*/ true,
+                    self.view_gl.paper_vertices.data(),
                 )
             }
             Canvas3dAction::DragEnd(MouseButton::Left) => {
@@ -3059,8 +3072,7 @@ impl GlobalContext {
             );
 
             self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
-            if let (Some(tex), true) = (&self.data.model_gl().textures, self.data.ui.show_textures)
-            {
+            if let (Some(tex), true) = (&self.model_gl.textures, self.data.ui.show_textures) {
                 self.gl.active_texture(glow::TEXTURE0);
                 self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
                 u.texturize = 1;
@@ -3068,18 +3080,15 @@ impl GlobalContext {
 
             gl_fixs.prg_scene_solid.draw(
                 &u,
-                (
-                    &self.data.model_gl().vertices,
-                    &self.data.view_gl().vertices_sel,
-                ),
+                (&self.model_gl.vertices, &self.view_gl.vertices_sel),
                 glow::TRIANGLES,
             );
 
             gl_fixs.prg_scene_line.draw(
                 &u,
                 (
-                    &self.data.model_gl().scene_vertices_edge,
-                    &self.data.view_gl().scene_vertices_edge_status,
+                    &self.model_gl.scene_vertices_edge,
+                    &self.view_gl.scene_vertices_edge_status,
                 ),
                 glow::TRIANGLES,
             );
@@ -3126,8 +3135,7 @@ impl GlobalContext {
             );
 
             self.gl.bind_vertex_array(Some(gl_fixs.vao.id()));
-            if let (Some(tex), true) = (&self.data.model_gl().textures, self.data.ui.show_textures)
-            {
+            if let (Some(tex), true) = (&self.model_gl.textures, self.data.ui.show_textures) {
                 self.gl.active_texture(glow::TEXTURE0);
                 self.gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
                 u.texturize = 1;
@@ -3140,7 +3148,7 @@ impl GlobalContext {
 
                 gl_fixs.prg_paper_solid.draw(
                     &u,
-                    &self.data.view_gl().paper_vertices_page,
+                    &self.view_gl.paper_vertices_page,
                     glow::TRIANGLES,
                 );
 
@@ -3148,7 +3156,7 @@ impl GlobalContext {
 
                 gl_fixs.prg_paper_line.draw(
                     &u,
-                    &self.data.view_gl().paper_vertices_margin,
+                    &self.view_gl.paper_vertices_margin,
                     glow::TRIANGLES,
                 );
             }
@@ -3157,7 +3165,7 @@ impl GlobalContext {
             if self.data.ui.show_flaps {
                 gl_fixs.prg_paper_line.draw(
                     &u,
-                    &self.data.view_gl().paper_vertices_flap_edge,
+                    &self.view_gl.paper_vertices_flap_edge,
                     glow::TRIANGLES,
                 );
             }
@@ -3169,18 +3177,16 @@ impl GlobalContext {
             if self.data.ui.show_flaps {
                 gl_fixs.prg_paper_solid.draw(
                     &u,
-                    &self.data.view_gl().paper_vertices_flap,
+                    &self.view_gl.paper_vertices_flap,
                     glow::TRIANGLES,
                 );
             }
             self.gl.disable(glow::STENCIL_TEST);
 
             // Borders
-            gl_fixs.prg_paper_line.draw(
-                &u,
-                &self.data.view_gl().paper_vertices_edge_cut,
-                glow::TRIANGLES,
-            );
+            gl_fixs
+                .prg_paper_line
+                .draw(&u, &self.view_gl.paper_vertices_edge_cut, glow::TRIANGLES);
 
             self.gl.enable(glow::STENCIL_TEST);
 
@@ -3188,9 +3194,9 @@ impl GlobalContext {
             gl_fixs.prg_paper_solid.draw(
                 &u,
                 (
-                    &self.data.model_gl().vertices,
-                    &self.data.view_gl().vertices_sel,
-                    &self.data.view_gl().paper_vertices,
+                    &self.model_gl.vertices,
+                    &self.view_gl.vertices_sel,
+                    &self.view_gl.paper_vertices,
                 ),
                 glow::TRIANGLES,
             );
@@ -3203,7 +3209,7 @@ impl GlobalContext {
                 u.notex_color = Rgba::new(0.0, 0.0, 0.0, 0.0);
                 gl_fixs.prg_paper_solid.draw(
                     &u,
-                    &self.data.view_gl().paper_vertices_shadow_flap,
+                    &self.view_gl.paper_vertices_shadow_flap,
                     glow::TRIANGLES,
                 );
                 u.notex_color = Rgba::new(0.75, 0.75, 0.75, 1.0);
@@ -3211,21 +3217,17 @@ impl GlobalContext {
 
             // Creases
             self.gl.active_texture(glow::TEXTURE1);
-            self.gl.bind_texture(
-                glow::TEXTURE_1D,
-                Some(self.data.view_gl().tex_fold_mountain.id()),
-            );
+            self.gl
+                .bind_texture(glow::TEXTURE_1D, Some(self.view_gl.tex_fold_mountain.id()));
 
             self.gl.active_texture(glow::TEXTURE0);
-            self.gl.bind_texture(
-                glow::TEXTURE_1D,
-                Some(self.data.view_gl().tex_fold_valley.id()),
-            );
+            self.gl
+                .bind_texture(glow::TEXTURE_1D, Some(self.view_gl.tex_fold_valley.id()));
             gl_fixs.prg_paper_line_dash.draw(
                 (&u, &Uniforms2DDash { tex_2: 1 }),
                 (
-                    &self.data.view_gl().paper_vertices_edge_crease,
-                    &self.data.view_gl().paper_vertices_edge_kind,
+                    &self.view_gl.paper_vertices_edge_crease,
+                    &self.view_gl.paper_vertices_edge_kind,
                 ),
                 glow::TRIANGLES,
             );
@@ -3234,7 +3236,7 @@ impl GlobalContext {
             if self.data.has_selected_edge() {
                 gl_fixs.prg_paper_line.draw(
                     &u,
-                    &self.data.view_gl().paper_vertices_edge_sel,
+                    &self.view_gl.paper_vertices_edge_sel,
                     glow::TRIANGLES,
                 );
             }
@@ -3287,7 +3289,7 @@ impl GlobalContext {
             // Draw the texts
             if self.data.ui.show_texts {
                 self.gl.active_texture(glow::TEXTURE0);
-                for (ut, pt) in &self.data.view_gl().paper_text {
+                for (ut, pt) in &self.view_gl.paper_text {
                     self.gl.bind_texture(
                         glow::TEXTURE_2D,
                         Renderer::unmap_tex(
@@ -3394,7 +3396,7 @@ impl GlobalContext {
         let fs = std::io::BufReader::new(fs);
         let papercraft = Papercraft::load(fs)
             .with_context(|| tr!("Error loading file {}", file_name.display()))?;
-        self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
+        self.load_papercraft(papercraft)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
         if let Some(o) = self.options_opened.as_mut() {
             *o = self.data.papercraft().options().clone();
@@ -3451,7 +3453,7 @@ impl GlobalContext {
             self.data.ui.trans_scene.persp.y.y *= -1.0;
             self.gl.front_face(glow::CW);
 
-            self.data.pre_render(RebuildFlags::all(), &TextBuilderDummy);
+            self.rebuild_views(RebuildFlags::all(), &TextBuilderDummy);
             self.gl.viewport(0, 0, IMG_WIDTH, IMG_HEIGHT);
             self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
             self.gl.clear_depth_f32(1.0);
@@ -3532,7 +3534,7 @@ impl GlobalContext {
     }
     fn import_model(&mut self, file_name: &Path) -> Result<bool> {
         let (papercraft, is_native) = import_model_file(file_name)?;
-        self.data = PapercraftContext::from_papercraft(papercraft, &self.gl)?;
+        self.load_papercraft(papercraft)?;
         self.data.reset_views(self.sz_scene, self.sz_paper);
         if let Some(o) = self.options_opened.as_mut() {
             *o = self.data.papercraft().options().clone();
@@ -3546,7 +3548,7 @@ impl GlobalContext {
 
         // Preserve the main user visible settings...
         let prev_ui = self.data.ui.clone();
-        self.data = PapercraftContext::from_papercraft(new_papercraft, &self.gl)?;
+        self.load_papercraft(new_papercraft)?;
         self.rebuild = RebuildFlags::all();
         // ...except the trans_scene.obj
         // that actually depends on the new loaded model.
@@ -3587,13 +3589,52 @@ impl GlobalContext {
             log::error!("backup complete");
         }
     }
+    /// Replaces the document, rebuilding the GL objects that belong to it.
+    fn load_papercraft(&mut self, papercraft: Papercraft) -> Result<()> {
+        self.model_gl = ModelGl::new(&papercraft, &self.gl)?;
+        self.view_gl = ViewGl::new(&papercraft, &self.model_gl, &self.gl)?;
+        self.data = PapercraftContext::new(papercraft);
+        Ok(())
+    }
+
+    /// Applies the new options to the document and updates the option-derived
+    /// GL objects.
+    fn set_papercraft_options(&mut self, options: PaperOptions, push_undo_action: bool) {
+        let old_options = self.data.set_papercraft_options(options, push_undo_action);
+        let new_options = self.data.papercraft().options();
+        self.model_gl.set_options(new_options);
+        self.view_gl.set_options(&old_options, new_options);
+    }
+
+    /// Prepares the document and rebuilds the GL objects for a render.
+    fn rebuild_views(&mut self, rebuild: RebuildFlags, text_builder: &impl TextBuilder) {
+        self.data.prepare_render(rebuild);
+        let inputs = self.data.render_inputs();
+        if rebuild.contains(RebuildFlags::PAGES) {
+            self.view_gl.pages_rebuild(&inputs);
+        }
+        if rebuild.contains(RebuildFlags::PAPER) {
+            self.view_gl.paper_rebuild(
+                &inputs,
+                text_builder,
+                rebuild.contains(RebuildFlags::SHOW_TEXTS),
+            );
+        }
+        if rebuild.contains(RebuildFlags::SELECTION) {
+            self.view_gl.selection_rebuild(&inputs);
+        }
+        if rebuild.intersects(RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION) {
+            self.view_gl.scene_edge_rebuild(&inputs, &self.model_gl);
+        }
+    }
+
     fn pre_render_flags(&mut self, ui: &Ui, rebuild: RebuildFlags) {
         let text_helper = TextHelper {
             ui,
             font_id: self.font_default,
             font_render_size: self.font_render_size,
         };
-        self.data.pre_render(rebuild, &text_helper);
+        self.rebuild_views(rebuild, &text_helper);
     }
 }
 
@@ -4015,8 +4056,7 @@ impl imgui::UiBuilder for Box<GlobalContext> {
 
         // Check if the atlas textures are still valid.
         let text_ok = self
-            .data
-            .view_gl()
+            .view_gl
             .paper_text
             .iter()
             .all(|&(ut, _)| ui.io().font_atlas().check_texture_unique_id(ut));

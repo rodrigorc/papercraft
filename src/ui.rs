@@ -195,8 +195,6 @@ pub struct PreSelection {
 pub struct PapercraftContext {
     // The model
     papercraft: Papercraft,
-    model_gl: ModelGl,
-    view_gl: ViewGl,
 
     undo_stack: Vec<Vec<UndoAction>>,
     pub modified: bool,
@@ -669,13 +667,15 @@ impl PapercraftContext {
     pub fn papercraft(&self) -> &Papercraft {
         &self.papercraft
     }
-    pub fn model_gl(&self) -> &ModelGl {
-        &self.model_gl
-    }
-    pub fn view_gl(&self) -> &ViewGl {
-        &self.view_gl
-    }
-    pub fn set_papercraft_options(&mut self, options: PaperOptions, push_undo_action: bool) {
+    /// Applies the new paper options to the document, and returns the old ones.
+    ///
+    /// The GL objects that depend on the options are updated by the owner of the
+    /// `ViewGl`/`ModelGl`, which uses the returned old options to detect changes.
+    pub fn set_papercraft_options(
+        &mut self,
+        options: PaperOptions,
+        push_undo_action: bool,
+    ) -> PaperOptions {
         let island_pos = push_undo_action.then(|| {
             self.papercraft()
                 .islands()
@@ -684,41 +684,20 @@ impl PapercraftContext {
         });
 
         self.ui.show_textures = options.texture;
-        if let Some(tex) = &self.model_gl.textures {
-            unsafe {
-                tex.gl().active_texture(glow::TEXTURE0);
-                tex.gl()
-                    .bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
-                set_texture_filter(tex.gl(), options.tex_filter);
-            }
-        }
 
         let old_options = self
             .papercraft
             .set_options(options, /* relocate_pieces */ push_undo_action);
 
-        let new_options = self.papercraft.options();
-        if old_options.fold_pattern_mountain != new_options.fold_pattern_mountain {
-            build_dashed_texture(
-                &self.view_gl.tex_fold_mountain,
-                &new_options.fold_pattern_mountain,
-            );
-        }
-        if old_options.fold_pattern_valley != new_options.fold_pattern_valley {
-            build_dashed_texture(
-                &self.view_gl.tex_fold_valley,
-                &new_options.fold_pattern_valley,
-            );
-        }
-
         if let Some(island_pos) = island_pos {
             self.push_undo_action(vec![UndoAction::DocConfig {
-                options: Box::new(old_options),
+                options: Box::new(old_options.clone()),
                 island_pos,
             }]);
         }
+        old_options
     }
-    pub fn from_papercraft(papercraft: Papercraft, gl: &GlContext) -> Result<PapercraftContext> {
+    pub fn new(papercraft: Papercraft) -> PapercraftContext {
         // Get the bounding box, then move to the center and scale to a standard size
         let (v_min, v_max) = papercraft.model().bounding_box();
         let size = (v_max.x - v_min.x)
@@ -733,15 +712,11 @@ impl PapercraftContext {
         let (trans_scene, trans_paper) =
             default_transformations(obj, sz_dummy, sz_dummy, papercraft.options());
         let show_textures = papercraft.options().texture;
-        let model_gl = ModelGl::new(&papercraft, gl)?;
-        let view_gl = ViewGl::new(&papercraft, &model_gl, gl)?;
 
-        Ok(PapercraftContext {
+        PapercraftContext {
             papercraft,
             undo_stack: Vec::new(),
             modified: false,
-            model_gl,
-            view_gl,
             selected_face: None,
             selected_edges: None,
             selected_islands: Vec::new(),
@@ -765,14 +740,21 @@ impl PapercraftContext {
                 highlight_overlaps: false,
                 draw_paper: true,
             },
-        })
+        }
     }
 
-    pub fn pre_render(&mut self, rebuild: RebuildFlags, text_builder: &impl TextBuilder) {
+    /// The parts of the document that must be prepared before rendering.
+    ///
+    /// This only touches the document, never the GL objects.
+    pub fn prepare_render(&mut self, rebuild: RebuildFlags) {
         if rebuild.contains(RebuildFlags::ISLANDS | RebuildFlags::SHOW_TEXTS) {
             self.papercraft.rebuild_island_names();
         }
-        let inputs = RenderInputs {
+    }
+
+    /// Borrows the state needed to rebuild the GL objects.
+    pub fn render_inputs(&self) -> RenderInputs<'_> {
+        RenderInputs {
             papercraft: &self.papercraft,
             selected_face: self.selected_face,
             selected_edges: self.selected_edges.as_ref(),
@@ -782,22 +764,6 @@ impl PapercraftContext {
             xray_selection: self.ui.xray_selection,
             show_3d_lines: self.ui.show_3d_lines,
             paper_scale: self.ui.trans_paper.mx[0][0],
-        };
-        if rebuild.contains(RebuildFlags::PAGES) {
-            self.view_gl.pages_rebuild(&inputs);
-        }
-        if rebuild.contains(RebuildFlags::PAPER) {
-            self.view_gl.paper_rebuild(
-                &inputs,
-                text_builder,
-                rebuild.contains(RebuildFlags::SHOW_TEXTS),
-            );
-        }
-        if rebuild.contains(RebuildFlags::SELECTION) {
-            self.view_gl.selection_rebuild(&inputs);
-        }
-        if rebuild.intersects(RebuildFlags::SCENE_EDGE | RebuildFlags::SELECTION) {
-            self.view_gl.scene_edge_rebuild(&inputs, &self.model_gl);
         }
     }
 
@@ -1282,7 +1248,7 @@ impl ViewGl {
     ///
     /// The arrays start filled with the "unselected" values, so a view that
     /// never calls the rebuild methods still renders a sensible image.
-    fn new(papercraft: &Papercraft, model_gl: &ModelGl, gl: &GlContext) -> Result<ViewGl> {
+    pub fn new(papercraft: &Papercraft, model_gl: &ModelGl, gl: &GlContext) -> Result<ViewGl> {
         let vertices_sel =
             glr::DynamicVertexArray::from_data(gl, vec![MSTATUS_UNSEL; model_gl.vertices.len()])?;
         let scene_vertices_edge_status = glr::DynamicVertexArray::from_data(
@@ -1330,7 +1296,20 @@ impl ViewGl {
         })
     }
 
-    fn paper_rebuild(
+    /// Rebuilds the option-derived textures that changed.
+    ///
+    /// The other option-dependent GL objects (the page and margin geometry)
+    /// are rebuilt by `pages_rebuild`, which the owner calls on a PAGES rebuild.
+    pub fn set_options(&self, old_options: &PaperOptions, new_options: &PaperOptions) {
+        if old_options.fold_pattern_mountain != new_options.fold_pattern_mountain {
+            build_dashed_texture(&self.tex_fold_mountain, &new_options.fold_pattern_mountain);
+        }
+        if old_options.fold_pattern_valley != new_options.fold_pattern_valley {
+            build_dashed_texture(&self.tex_fold_valley, &new_options.fold_pattern_valley);
+        }
+    }
+
+    pub fn paper_rebuild(
         &mut self,
         inputs: &RenderInputs,
         text_builder: &impl TextBuilder,
@@ -1508,7 +1487,7 @@ impl ViewGl {
         }
     }
 
-    fn pages_rebuild(&mut self, inputs: &RenderInputs) {
+    pub fn pages_rebuild(&mut self, inputs: &RenderInputs) {
         let color = inputs.papercraft.options().paper_color.to_rgba();
         let mat = MaterialIndex::from(0);
         let mut page_vertices = Vec::new();
@@ -1594,7 +1573,7 @@ impl ViewGl {
         );
     }
 
-    fn scene_edge_rebuild(&mut self, inputs: &RenderInputs, model_gl: &ModelGl) {
+    pub fn scene_edge_rebuild(&mut self, inputs: &RenderInputs, model_gl: &ModelGl) {
         let scene_vertices_edge_status = self.scene_vertices_edge_status.data_mut();
 
         for (&i_edge, &edge_idx) in &model_gl.edge_map {
@@ -1658,7 +1637,7 @@ impl ViewGl {
         }
     }
 
-    fn selection_rebuild(&mut self, inputs: &RenderInputs) {
+    pub fn selection_rebuild(&mut self, inputs: &RenderInputs) {
         // Pre-selected islands are drawn as if selected
         let empty: &[IslandFaceKey] = &[];
         let (pre_add, pre_remove) = match inputs.pre_selection {
@@ -2272,6 +2251,7 @@ impl PapercraftContext {
         size: Vector2,
         pos: Vector2,
         mods: KeyMod,
+        paper_vertices: &[MVertex2D],
     ) -> RebuildFlags {
         let selection = self.scene_analyze_click(
             MouseMode::Face,
@@ -2292,8 +2272,8 @@ impl PapercraftContext {
         let mut n = 0.0;
         for i_face in self.papercraft.get_flat_faces(i_face) {
             let idx = 3 * usize::from(i_face);
-            for i in idx..idx + 3 {
-                center += self.view_gl.paper_vertices[i].pos_2d;
+            for v in &paper_vertices[idx..idx + 3] {
+                center += v.pos_2d;
                 n += 1.0;
             }
         }
@@ -2414,6 +2394,7 @@ impl PapercraftContext {
         pos_on_drag: Option<Vector2>,
         mods: KeyMod,
         dragging: bool,
+        paper_vertices: &[MVertex2D],
     ) -> RebuildFlags {
         let original_pos = self.paper_last_cursor_pos;
         let delta = pos - self.paper_last_cursor_pos;
@@ -2481,8 +2462,8 @@ impl PapercraftContext {
                     for (island_key, island) in self.papercraft.islands() {
                         let _ = self.papercraft.traverse_faces_no_matrix(island, |i_face| {
                             let idx = 3 * usize::from(i_face);
-                            for i in idx..idx + 3 {
-                                let pos = self.view_gl.paper_vertices[i].pos_2d;
+                            for v in &paper_vertices[idx..idx + 3] {
+                                let pos = v.pos_2d;
                                 if rect.contains(pos) {
                                     let sel =
                                         self.papercraft.island_face_key_by_key(island_key).unwrap();
@@ -3028,7 +3009,7 @@ pub struct ThumbnailData {
 }
 
 impl ModelGl {
-    fn new(papercraft: &Papercraft, gl: &GlContext) -> Result<ModelGl> {
+    pub fn new(papercraft: &Papercraft, gl: &GlContext) -> Result<ModelGl> {
         let model = papercraft.model();
         let images = model.textures().map(|tex| tex.pixbuf()).collect::<Vec<_>>();
 
@@ -3194,6 +3175,18 @@ impl ModelGl {
             scene_vertices_edge,
             edge_map,
         })
+    }
+
+    /// Applies the parts of an option change that affect the model textures.
+    pub fn set_options(&self, options: &PaperOptions) {
+        if let Some(tex) = &self.textures {
+            unsafe {
+                tex.gl().active_texture(glow::TEXTURE0);
+                tex.gl()
+                    .bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
+                set_texture_filter(tex.gl(), options.tex_filter);
+            }
+        }
     }
 }
 

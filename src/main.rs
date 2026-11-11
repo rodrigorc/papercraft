@@ -3147,34 +3147,32 @@ impl GlobalContext {
         self.rebuild = RebuildFlags::all();
         Ok(())
     }
-    fn create_thumbnail(&mut self) -> image::RgbaImage {
+
+    fn create_thumbnail(&self) -> image::RgbaImage {
         const IMG_WIDTH: i32 = 256;
         const IMG_HEIGHT: i32 = 256;
 
         // Render the scene to a new framebuffer. We could just capture the current scene,
         // but then the camera view and render options would be arbitrary.
-        let fbo = glr::Framebuffer::generate(&self.gl_fixs.gl).unwrap();
-        let rbo = glr::Renderbuffer::generate(&self.gl_fixs.gl).unwrap();
-        let rboz = glr::Renderbuffer::generate(&self.gl_fixs.gl).unwrap();
+        let gl = &self.gl_fixs.gl;
+        let fbo = glr::Framebuffer::generate(gl).unwrap();
+        let rbo = glr::Renderbuffer::generate(gl).unwrap();
+        let rboz = glr::Renderbuffer::generate(gl).unwrap();
 
         let fb_binder = BinderFramebuffer::bind(&fbo);
 
         unsafe {
             let rb_binder = glr::BinderRenderbuffer::bind(&rbo);
-            self.gl_fixs
-                .gl
-                .renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
-            self.gl_fixs.gl.framebuffer_renderbuffer(
+            gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, 1, 1);
+            gl.framebuffer_renderbuffer(
                 fb_binder.target(),
                 glow::COLOR_ATTACHMENT0,
                 glow::RENDERBUFFER,
                 Some(rbo.id()),
             );
             rb_binder.rebind(&rboz);
-            self.gl_fixs
-                .gl
-                .renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, 1, 1);
-            self.gl_fixs.gl.framebuffer_renderbuffer(
+            gl.renderbuffer_storage(rb_binder.target(), glow::DEPTH_COMPONENT, 1, 1);
+            gl.framebuffer_renderbuffer(
                 fb_binder.target(),
                 glow::DEPTH_ATTACHMENT,
                 glow::RENDERBUFFER,
@@ -3182,7 +3180,7 @@ impl GlobalContext {
             );
 
             let multisample = renderbuffer_storage_antialias(
-                &self.gl_fixs.gl,
+                gl,
                 IMG_WIDTH,
                 IMG_HEIGHT,
                 &fb_binder,
@@ -3190,60 +3188,65 @@ impl GlobalContext {
             );
             drop(rb_binder);
 
-            let thumb_data = self
-                .data
-                .prepare_thumbnail(vec2(IMG_WIDTH as f32, IMG_HEIGHT as f32));
-
+            let sz = vec2(IMG_WIDTH as f32, IMG_HEIGHT as f32);
+            let (mut trans_scene, _) = default_transformations(
+                self.data.ui.trans_scene.obj,
+                sz,
+                sz,
+                self.data.papercraft().options(),
+            );
+            // Give the thumbnail a nice flare with an angle
+            trans_scene.rotation = util_3d::Quaternion::from_axis_angle(
+                Vector3::new(1.0, 0.0, 0.0).normalize(),
+                Deg(20.0),
+            ) * util_3d::Quaternion::from_axis_angle(
+                Vector3::new(0.0, 1.0, 0.0).normalize(),
+                -Deg(40.0),
+            );
             // Render the scene upside down to make the image easier to export
-            self.data.ui.trans_scene.persp.y.y *= -1.0;
-            self.gl_fixs.gl.front_face(glow::CW);
+            trans_scene.persp.y.y *= -1.0;
+            trans_scene.recompute_obj();
 
-            self.rebuild_views(RebuildFlags::all(), &TextBuilderDummy);
-            self.gl_fixs.gl.viewport(0, 0, IMG_WIDTH, IMG_HEIGHT);
-            self.gl_fixs.gl.clear_color(0.0, 0.0, 0.0, 0.0);
-            self.gl_fixs.gl.clear_depth_f32(1.0);
-            self.gl_fixs
-                .gl
-                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            // we inverted Y but not X, so we are in the mirror universe
+            gl.front_face(glow::CW);
+
+            let gl_view = GlView::new(self.data.papercraft(), &self.gl_model, gl).unwrap();
+
+            gl.viewport(0, 0, IMG_WIDTH, IMG_HEIGHT);
+            gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            gl.clear_depth_f32(1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
             render_scene(
                 &self.gl_fixs,
-                &self.data.ui,
-                self.sz_scene,
-                1.0,
+                &trans_scene,
+                /* view_size */
+                vec2(1.0, 1.0), // this is to compute the line width, not used in thumbnails
+                /* show_textures */ true,
                 &self.gl_model,
-                &self.gl_view,
+                &gl_view,
             );
 
-            // Restore the normal configuration
-            self.gl_fixs.gl.front_face(glow::CCW);
-            self.data.restore_thumbnail(thumb_data);
-
-            // Rebuild everything on next render
-            self.add_rebuild(RebuildFlags::all());
+            // Restore the normal non-mirror universe
+            gl.front_face(glow::CCW);
 
             // Create a non-multisample FBO, if needed, and blit the rendered image
             let (fbo_noaa, rbo_noaa, fb_binder_read);
             if multisample > 0 {
                 drop(fb_binder);
 
-                fbo_noaa = glr::Framebuffer::generate(&self.gl_fixs.gl).unwrap();
-                rbo_noaa = glr::Renderbuffer::generate(&self.gl_fixs.gl).unwrap();
+                fbo_noaa = glr::Framebuffer::generate(gl).unwrap();
+                rbo_noaa = glr::Renderbuffer::generate(gl).unwrap();
                 fb_binder_read = BinderReadFramebuffer::bind(&fbo);
                 let fb_binder_draw = BinderDrawFramebuffer::bind(&fbo_noaa);
                 let rb_binder = BinderRenderbuffer::bind(&rbo_noaa);
-                self.gl_fixs.gl.renderbuffer_storage(
-                    rb_binder.target(),
-                    glow::RGBA8,
-                    IMG_WIDTH,
-                    IMG_HEIGHT,
-                );
-                self.gl_fixs.gl.framebuffer_renderbuffer(
+                gl.renderbuffer_storage(rb_binder.target(), glow::RGBA8, IMG_WIDTH, IMG_HEIGHT);
+                gl.framebuffer_renderbuffer(
                     fb_binder_draw.target(),
                     glow::COLOR_ATTACHMENT0,
                     glow::RENDERBUFFER,
                     Some(rbo_noaa.id()),
                 );
-                self.gl_fixs.gl.blit_framebuffer(
+                gl.blit_framebuffer(
                     0,
                     0,
                     IMG_WIDTH,
@@ -3259,10 +3262,10 @@ impl GlobalContext {
             }
 
             // Read the image
-            self.gl_fixs.gl.read_buffer(glow::COLOR_ATTACHMENT0);
-            self.gl_fixs.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
+            gl.read_buffer(glow::COLOR_ATTACHMENT0);
+            gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
             let mut pixbuf = image::RgbaImage::new(IMG_WIDTH as u32, IMG_HEIGHT as u32);
-            self.gl_fixs.gl.read_pixels(
+            gl.read_pixels(
                 0,
                 0,
                 IMG_WIDTH,
@@ -3393,9 +3396,9 @@ impl GlobalContext {
 
 fn render_scene(
     gl_fixs: &GlFixedObjects,
-    ui: &UiSettings,
-    sz_scene: Vector2,
-    scale: f32,
+    trans_scene: &Transformation3D,
+    view_size: Vector2,
+    show_textures: bool,
     gl_model: &GlModel,
     gl_view: &GlView,
 ) {
@@ -3405,12 +3408,12 @@ fn render_scene(
     let light1 = Vector3::new(0.8, 0.2, 0.4).normalize() * 0.25;
 
     let mut u = Uniforms3D {
-        m: ui.trans_scene.persp * ui.trans_scene.view,
-        mnormal: ui.trans_scene.mnormal, // should be transpose of inverse
+        m: trans_scene.persp * trans_scene.view,
+        mnormal: trans_scene.mnormal, // should be transpose of inverse
         lights: [light0, light1],
         tex: 0,
         texturize: 0,
-        view_size: sz_scene / (2.0 * scale),
+        view_size,
     };
     unsafe {
         gl.enable(glow::BLEND);
@@ -3424,7 +3427,7 @@ fn render_scene(
         );
 
         gl.bind_vertex_array(Some(gl_fixs.vao.id()));
-        if let (Some(tex), true) = (&gl_model.textures, ui.show_textures) {
+        if show_textures && let Some(tex) = &gl_model.textures {
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex.id()));
             u.texturize = 1;
@@ -3444,6 +3447,7 @@ fn render_scene(
             ),
             glow::TRIANGLES,
         );
+
         gl.bind_vertex_array(None);
     }
 }
@@ -4091,8 +4095,6 @@ impl imgui::UiBuilder for Box<GlobalContext> {
         self.pre_render_flags(ui, self.rebuild);
     }
     fn pre_render(&mut self, imgui: &mut imgui::CurrentContext<'_>) {
-        let scale = imgui.io().display_scale();
-
         if self.rebuild.intersects(RebuildFlags::ANY_REDRAW_SCENE) {
             if self.rebuild.contains(RebuildFlags::SCENE_FBO) {
                 let fbo = BinderFramebuffer::bind(&self.gl_fixs.fbo_scene);
@@ -4118,11 +4120,12 @@ impl imgui::UiBuilder for Box<GlobalContext> {
                     .gl
                     .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
             }
+            let scale = imgui.io().display_scale();
             render_scene(
                 &self.gl_fixs,
-                &self.data.ui,
-                self.sz_scene,
-                scale,
+                &self.data.ui.trans_scene,
+                self.sz_scene / (2.0 * scale),
+                self.data.ui.show_textures,
                 &self.gl_model,
                 &self.gl_view,
             );
@@ -4338,17 +4341,6 @@ impl TextBuilder for TextHelper<'_> {
             x += atlas_font_scale.scale(ttf.glyph_advance_width(glyph_id));
             prev_glyph_id = Some(glyph_id);
         }
-    }
-}
-
-struct TextBuilderDummy;
-
-impl TextBuilder for TextBuilderDummy {
-    fn make_text(
-        &self,
-        _p: &PrintableText,
-        _vs: &mut Vec<(TextureUniqueId, Vec<util_gl::MVertexText>)>,
-    ) {
     }
 }
 
